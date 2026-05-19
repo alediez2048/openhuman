@@ -122,7 +122,71 @@ pub struct ConnectionView {
     pub last_used_at: Option<DateTime<Utc>>,
     /// Human-readable mechanism label: "Composio", "Channel", "Webview",
     /// "Built-in", "MCP", "Generic HTTP".
-    pub mechanism_label: &'static str,
+    ///
+    /// Stored as `String` (not `&'static str`) so the type is `Deserialize`-
+    /// able for the `connections_list` RPC response shape.
+    pub mechanism_label: String,
+}
+
+/// Compact discriminator used for filtering responses from `connections_list`.
+///
+/// Mirrors the structural variants of [`ConnectionRef`] but flat — useful for
+/// UI filter chips and `kind_filter` request params.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum ConnectionKind {
+    Composio,
+    Channel,
+    Webview,
+    Builtin,
+    Mcp,
+    GenericHttp,
+}
+
+impl ConnectionKind {
+    /// Returns the matching kind for a given [`ConnectionRef`].
+    pub fn from_ref(r#ref: &ConnectionRef) -> Self {
+        match r#ref {
+            ConnectionRef::Composio { .. } => Self::Composio,
+            ConnectionRef::Channel { .. } => Self::Channel,
+            ConnectionRef::Webview { .. } => Self::Webview,
+            ConnectionRef::Builtin { .. } => Self::Builtin,
+            ConnectionRef::Mcp { .. } => Self::Mcp,
+            ConnectionRef::GenericHttp { .. } => Self::GenericHttp,
+        }
+    }
+
+    /// Stable lowercase slug used in serialized payloads and log lines.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Composio => "composio",
+            Self::Channel => "channel",
+            Self::Webview => "webview",
+            Self::Builtin => "builtin",
+            Self::Mcp => "mcp",
+            Self::GenericHttp => "generic_http",
+        }
+    }
+}
+
+/// Request payload for the `connections_list` RPC.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ConnectionsListRequest {
+    /// Optional kind allowlist. When `None` or empty, all kinds are returned.
+    #[serde(default)]
+    pub kind_filter: Option<Vec<ConnectionKind>>,
+    /// Optional case-insensitive substring match against `display_name`.
+    #[serde(default)]
+    pub search: Option<String>,
+}
+
+/// Response payload for the `connections_list` RPC.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ConnectionsListResponse {
+    /// Unified, filter-applied list of connections.
+    pub connections: Vec<ConnectionView>,
+    /// Wall-clock timestamp the aggregation completed at.
+    pub generated_at: DateTime<Utc>,
 }
 
 #[cfg(test)]

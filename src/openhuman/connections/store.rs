@@ -83,6 +83,66 @@ fn record_applied(conn: &Connection, version: i64) -> Result<()> {
     Ok(())
 }
 
+/// Lists every `GenericHttpConnection` row in `connections.db`, newest-first.
+///
+/// Read-only path used by the aggregator (P0-2). CRUD lands in P0-3.
+pub(crate) fn list_generic_http(
+    config: &Config,
+) -> Result<Vec<crate::openhuman::connections::types::GenericHttpConnection>> {
+    use crate::openhuman::connections::types::{AuthKind, GenericHttpConnection, SecretRef};
+    use chrono::DateTime;
+    with_connection(config, |conn| {
+        let mut stmt = conn.prepare(
+            "SELECT id, name, base_url, auth_kind, secret_ref, default_headers, created_at, updated_at
+             FROM generic_http_connections
+             ORDER BY updated_at DESC",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            let id: String = row.get(0)?;
+            let name: String = row.get(1)?;
+            let base_url: String = row.get(2)?;
+            let auth_kind_json: String = row.get(3)?;
+            let secret_ref_json: Option<String> = row.get(4)?;
+            let default_headers_json: String = row.get(5)?;
+            let created_at_raw: String = row.get(6)?;
+            let updated_at_raw: String = row.get(7)?;
+            let auth_kind: AuthKind = serde_json::from_str(&auth_kind_json)
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+            let secret_ref: Option<SecretRef> = match secret_ref_json {
+                Some(raw) => Some(
+                    serde_json::from_str(&raw)
+                        .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?,
+                ),
+                None => None,
+            };
+            let default_headers: Vec<(String, String)> =
+                serde_json::from_str(&default_headers_json)
+                    .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+            let created_at = DateTime::parse_from_rfc3339(&created_at_raw)
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?
+                .with_timezone(&chrono::Utc);
+            let updated_at = DateTime::parse_from_rfc3339(&updated_at_raw)
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?
+                .with_timezone(&chrono::Utc);
+            Ok(GenericHttpConnection {
+                id,
+                name,
+                base_url,
+                auth_kind,
+                secret_ref,
+                default_headers,
+                created_at,
+                updated_at,
+            })
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    })
+}
+
 #[cfg(test)]
 #[path = "store_tests.rs"]
 mod tests;
