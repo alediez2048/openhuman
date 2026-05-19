@@ -113,6 +113,7 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     // Composio integration controllers
     controllers.extend(crate::openhuman::composio::all_composio_registered_controllers());
     // Scheduled job management
+    controllers.extend(crate::openhuman::connections::all_connections_registered_controllers());
     controllers.extend(crate::openhuman::cron::all_cron_registered_controllers());
     // Webview APIs bridge — proxies connector calls (Gmail, …) through
     // a WebSocket to the Tauri shell so curl reaches the live webview.
@@ -265,6 +266,7 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::app_state::all_app_state_controller_schemas());
     schemas.extend(crate::openhuman::audio_toolkit::all_audio_toolkit_controller_schemas());
     schemas.extend(crate::openhuman::composio::all_composio_controller_schemas());
+    schemas.extend(crate::openhuman::connections::all_connections_controller_schemas());
     schemas.extend(crate::openhuman::cron::all_cron_controller_schemas());
     schemas.extend(crate::openhuman::webview_apis::all_webview_apis_controller_schemas());
     schemas.extend(crate::openhuman::agent::all_agent_controller_schemas());

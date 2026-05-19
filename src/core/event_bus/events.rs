@@ -435,6 +435,33 @@ pub enum DomainEvent {
     /// A component restart was observed.
     HealthRestarted { component: String },
 
+    // ── Connections (Phase 0 — Workflows & Automations) ─────────────────
+    /// A connection became newly available (Generic HTTP row added, OAuth
+    /// completed, webview account logged in, etc.). Subscribers in the
+    /// workflows domain (Phase 1) recompute `WorkflowHealth` for affected
+    /// workflows. The payload carries the `ConnectionRef` so subscribers
+    /// know *which* connection changed without an extra lookup.
+    ///
+    /// Payload uses an opaque JSON representation (`serde_json::Value`) to
+    /// avoid pulling the `connections::types` module into every event-bus
+    /// consumer. Subscribers that care about the structured shape parse it
+    /// via `serde_json::from_value` into `ConnectionRef`.
+    ConnectionAdded {
+        connection_ref_json: serde_json::Value,
+    },
+    /// A connection was disconnected, deleted, or otherwise rendered unusable.
+    /// Mirror of [`Self::ConnectionAdded`] — see its docs for the payload
+    /// rationale.
+    ConnectionRemoved {
+        connection_ref_json: serde_json::Value,
+    },
+    /// A connection's metadata changed (renamed, scope adjusted, base_url
+    /// updated for Generic HTTP, etc.). Health is not re-derived from a
+    /// rename, but observers tracking display names refresh.
+    ConnectionUpdated {
+        connection_ref_json: serde_json::Value,
+    },
+
     // ── Auth ────────────────────────────────────────────────────────────
     /// The local app session is no longer valid — typically detected when
     /// the backend returns 401 to an LLM inference call or a JSON-RPC
@@ -517,6 +544,10 @@ impl DomainEvent {
             | Self::SystemShutdownRequested { .. }
             | Self::HealthChanged { .. }
             | Self::HealthRestarted { .. } => "system",
+
+            Self::ConnectionAdded { .. }
+            | Self::ConnectionRemoved { .. }
+            | Self::ConnectionUpdated { .. } => "connection",
 
             Self::SessionExpired { .. } => "auth",
         }
