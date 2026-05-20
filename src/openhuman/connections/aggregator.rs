@@ -16,9 +16,12 @@
 //! - `collect_composio` (P0-2a) — calls `composio::ops::composio_list_connections`
 //!   under a `COMPOSIO_COLLECTOR_TIMEOUT` so a slow / failing Composio call
 //!   degrades the section to empty rather than blocking the whole hub.
-//!
-//! Still stubbed (return `Vec::new()`):
-//! - `collect_channels` (P0-2b), `collect_webview` (P0-2c).
+//! - `collect_channels` (P0-2b) — enumerates every channel via
+//!   `channels::controllers::all_channel_definitions()` and marks each row
+//!   `Connected` when its slug is in `connected_channel_slugs(config)`.
+//! - `collect_webview` (P0-2c) — calls `webview_accounts::detect_webview_logins`
+//!   and emits one row per webview provider (`whatsapp`, `linkedin`,
+//!   `slack`, `telegram`, …) with status keyed off the cookie probe.
 //!
 //! See `Automations/systemsdesign.md §2.1`, `ADR-003`, `ADR-006`.
 
@@ -176,19 +179,125 @@ async fn collect_composio(config: &Config) -> Result<Vec<ConnectionView>> {
     Ok(rows)
 }
 
-/// Native chat-channel providers (Slack/Discord/Telegram/...). **Stubbed in
-/// P0-2** — follow-up ticket P0-2b wires this against `channels` public APIs.
-async fn collect_channels(_config: &Config) -> Result<Vec<ConnectionView>> {
-    tracing::debug!(target: "connections", "[connections] channels collector — TODO P0-2b");
-    Ok(Vec::new())
+/// Native chat-channel providers (Slack/Discord/Telegram/...).
+///
+/// Surfaces every channel in the canonical catalog
+/// (`channels::controllers::all_channel_definitions`) with status keyed off
+/// the merged "is this slug connected" check in
+/// `channels::controllers::connected_channel_slugs` — the same authoritative
+/// source the chat runtime uses. Channels with no auth yet appear as
+/// `NotConnected` so the UI can offer a setup CTA.
+///
+/// Failures inside the credentials read degrade to an empty result with a
+/// `warn!` log so the rest of the aggregator still populates.
+async fn collect_channels(config: &Config) -> Result<Vec<ConnectionView>> {
+    let defs = crate::openhuman::channels::controllers::all_channel_definitions();
+    let connected: std::collections::HashSet<String> =
+        match crate::openhuman::channels::controllers::connected_channel_slugs(config).await {
+            Ok(slugs) => slugs.into_iter().collect(),
+            Err(e) => {
+                tracing::warn!(
+                    target: "connections",
+                    "[connections] channels collector — connected_channel_slugs failed: {e}"
+                );
+                std::collections::HashSet::new()
+            }
+        };
+
+    let rows: Vec<ConnectionView> = defs
+        .into_iter()
+        .map(|def| {
+            let slug = def.id.to_string();
+            let is_connected = connected.contains(&slug);
+            ConnectionView {
+                r#ref: ConnectionRef::Channel {
+                    provider: slug.clone(),
+                    channel_id: slug.clone(),
+                },
+                display_name: def.display_name.to_string(),
+                status: if is_connected {
+                    ConnectionStatus::Connected
+                } else {
+                    ConnectionStatus::NotConnected
+                },
+                last_used_at: None,
+                mechanism_label: "Channel".to_string(),
+            }
+        })
+        .collect();
+
+    tracing::debug!(
+        target: "connections",
+        "[connections] channels collector — count={} connected={}",
+        rows.len(),
+        connected.len()
+    );
+
+    Ok(rows)
 }
 
-/// CEF-hosted webview accounts (LinkedIn/Twitter/WhatsApp/...). **Stubbed in
-/// P0-2** — follow-up ticket P0-2c wires this against the Tauri-side webview
-/// account registry via a new read RPC.
+/// CEF-hosted webview accounts (Gmail / WhatsApp / Telegram / Slack / Discord
+/// / LinkedIn / Zoom / Google Messages).
+///
+/// Reads the cookie-store login heuristic exposed by
+/// `webview_accounts::detect_webview_logins`. Every supported provider
+/// surfaces as a row so the UI can show "Add account" CTAs for the ones the
+/// user hasn't logged into yet. `detect_webview_logins` never errors — at
+/// worst it reports all providers as logged-out.
 async fn collect_webview(_config: &Config) -> Result<Vec<ConnectionView>> {
-    tracing::debug!(target: "connections", "[connections] webview collector — TODO P0-2c");
-    Ok(Vec::new())
+    let logins = crate::openhuman::webview_accounts::detect_webview_logins();
+    let Some(map) = logins.as_object() else {
+        tracing::warn!(
+            target: "connections",
+            "[connections] webview collector — detect_webview_logins did not return an object"
+        );
+        return Ok(Vec::new());
+    };
+
+    let rows: Vec<ConnectionView> = map
+        .iter()
+        .map(|(slug, value)| {
+            let is_connected = value.as_bool().unwrap_or(false);
+            ConnectionView {
+                r#ref: ConnectionRef::Webview {
+                    provider: slug.clone(),
+                    account_id: slug.clone(),
+                },
+                display_name: capitalize_webview_label(slug),
+                status: if is_connected {
+                    ConnectionStatus::Connected
+                } else {
+                    ConnectionStatus::NotConnected
+                },
+                last_used_at: None,
+                mechanism_label: "Browser Account".to_string(),
+            }
+        })
+        .collect();
+
+    tracing::debug!(
+        target: "connections",
+        "[connections] webview collector — count={}",
+        rows.len()
+    );
+
+    Ok(rows)
+}
+
+/// Friendly label for a webview provider slug. Falls back to the
+/// uppercased-first-letter slug when the provider isn't in the curated map.
+fn capitalize_webview_label(slug: &str) -> String {
+    match slug {
+        "gmail" => "Gmail".to_string(),
+        "whatsapp" => "WhatsApp".to_string(),
+        "telegram" => "Telegram".to_string(),
+        "slack" => "Slack".to_string(),
+        "discord" => "Discord".to_string(),
+        "linkedin" => "LinkedIn".to_string(),
+        "zoom" => "Zoom".to_string(),
+        "google_messages" => "Google Messages".to_string(),
+        _ => capitalize(slug),
+    }
 }
 
 /// OpenHuman-backend-proxied built-in integrations (Twilio/Apify/...).

@@ -11,11 +11,13 @@ fn config_with_workspace(dir: &TempDir) -> Config {
     config
 }
 
-/// After P0-6, a fresh workspace surfaces:
-/// - 6 built-in integration rows (twilio/apify/google_places/parallel/seltz/stock_prices)
-/// - 1 MCP server row (the legacy `gitbooks` auto-registration)
-/// — and nothing else (composio/channels/webview/generic_http remain empty).
-const FRESH_BASELINE_ROWS: usize = 7;
+/// Fresh-workspace baseline after wiring every collector except Composio
+/// (which has no session token in tests, so it degrades to empty):
+/// - 6 built-in integration rows
+/// - 1 MCP server row (legacy `gitbooks`)
+/// - 4 channel definitions (telegram/discord/web/imessage)
+/// - 8 webview providers (gmail/whatsapp/telegram/slack/discord/linkedin/zoom/google_messages)
+const FRESH_BASELINE_ROWS: usize = 19;
 
 #[tokio::test]
 async fn connections_list_fresh_workspace_returns_builtin_and_mcp_baseline() {

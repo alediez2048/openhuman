@@ -11,37 +11,53 @@ fn config_with_workspace(dir: &TempDir) -> Config {
 }
 
 #[tokio::test]
-async fn list_all_surfaces_builtin_and_mcp_on_fresh_workspace() {
-    // Fresh workspace: composio/channels/webview/generic_http collectors all
-    // contribute zero rows; builtin contributes 6 (the static catalog) and
-    // mcp contributes the auto-registered `gitbooks` server.
+async fn list_all_surfaces_static_catalogs_on_fresh_workspace() {
+    // Fresh workspace baseline after wiring channels + webview collectors:
+    //   - 6 built-in integrations (twilio/apify/google_places/parallel/seltz/stock_prices)
+    //   - 1 MCP server (auto-registered legacy `gitbooks`)
+    //   - 4 chat channels (telegram/discord/web/imessage from all_channel_definitions)
+    //   - 8 webview accounts (PROVIDERS list in webview_accounts/ops.rs)
+    //   - 0 composio / generic_http (no session token, no DB rows)
     let dir = TempDir::new().unwrap();
     let config = config_with_workspace(&dir);
     let result = list_all(&config).await.unwrap();
 
-    let kinds: Vec<ConnectionKind> = result
-        .iter()
-        .map(|v| ConnectionKind::from_ref(&v.r#ref))
-        .collect();
-
-    let builtin_count = kinds
-        .iter()
-        .filter(|k| **k == ConnectionKind::Builtin)
-        .count();
-    let mcp_count = kinds.iter().filter(|k| **k == ConnectionKind::Mcp).count();
-    let other_count = kinds
-        .iter()
-        .filter(|k| **k != ConnectionKind::Builtin && **k != ConnectionKind::Mcp)
-        .count();
+    let count_of = |kind: ConnectionKind| -> usize {
+        result
+            .iter()
+            .filter(|v| ConnectionKind::from_ref(&v.r#ref) == kind)
+            .count()
+    };
 
     assert_eq!(
-        builtin_count, 6,
+        count_of(ConnectionKind::Builtin),
+        6,
         "all 6 built-in integrations should surface"
     );
-    assert_eq!(mcp_count, 1, "legacy gitbooks MCP server should surface");
     assert_eq!(
-        other_count, 0,
-        "no other mechanism should populate on fresh workspace"
+        count_of(ConnectionKind::Mcp),
+        1,
+        "legacy gitbooks MCP server should surface"
+    );
+    assert_eq!(
+        count_of(ConnectionKind::Channel),
+        4,
+        "all 4 channel definitions should surface (telegram/discord/web/imessage)"
+    );
+    assert_eq!(
+        count_of(ConnectionKind::Webview),
+        8,
+        "all 8 webview providers should surface (gmail/whatsapp/telegram/slack/discord/linkedin/zoom/google_messages)"
+    );
+    assert_eq!(
+        count_of(ConnectionKind::Composio),
+        0,
+        "composio collector should degrade to empty without a session token"
+    );
+    assert_eq!(
+        count_of(ConnectionKind::GenericHttp),
+        0,
+        "no generic_http rows on a fresh workspace"
     );
 }
 
