@@ -3,6 +3,9 @@ workflow
 create_issue
 review_pr
 sentry_bugs
+
+# Brainstorming companion (local mockups)
+.superpowers/
 remove_dupe_nonsense_issues
 
 # Diagnostic harness output (scripts/diagnose-cef-runtime.mjs)
