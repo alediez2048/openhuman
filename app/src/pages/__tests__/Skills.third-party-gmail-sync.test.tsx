@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import '../../test/mockDefaultSkillStatusHooks';
 import { renderWithProviders } from '../../test/test-utils';
-import Connections from '../Connections';
+import ConnectionsLegacy from '../ConnectionsLegacy';
 
 vi.mock('../../hooks/useChannelDefinitions', () => ({
   useChannelDefinitions: () => ({ definitions: [], loading: false, error: null }),
@@ -31,7 +31,7 @@ vi.mock('../../lib/composio/hooks', () => ({
 
 describe('Skills page — Gmail composio integration', () => {
   it('renders Gmail as a connected composio integration and opens its management modal', async () => {
-    renderWithProviders(<Connections />, { initialEntries: ['/skills'] });
+    renderWithProviders(<ConnectionsLegacy />, { initialEntries: ['/skills'] });
 
     const integrationsSection = screen
       .getByRole('heading', { name: 'Integrations' })

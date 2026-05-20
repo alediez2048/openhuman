@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import '../../test/mockDefaultSkillStatusHooks';
 import { renderWithProviders } from '../../test/test-utils';
-import Connections from '../Connections';
+import ConnectionsLegacy from '../ConnectionsLegacy';
 
 vi.mock('../../hooks/useChannelDefinitions', () => ({
   useChannelDefinitions: () => ({ definitions: [], loading: false, error: null }),
@@ -29,7 +29,7 @@ vi.mock('../../lib/composio/hooks', () => ({
 
 describe('Skills page — Notion composio integration', () => {
   it('renders Notion as a disconnected composio integration and opens its connect modal', async () => {
-    renderWithProviders(<Connections />, { initialEntries: ['/skills'] });
+    renderWithProviders(<ConnectionsLegacy />, { initialEntries: ['/skills'] });
 
     expect(screen.getByRole('heading', { name: 'Integrations' })).toBeInTheDocument();
     const notionTile = screen.getByRole('button', { name: /Notion.*Connect/i });

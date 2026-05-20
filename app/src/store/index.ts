@@ -16,6 +16,7 @@ import accountsReducer from './accountsSlice';
 import agentProfileReducer from './agentProfileSlice';
 import channelConnectionsReducer from './channelConnectionsSlice';
 import chatRuntimeReducer from './chatRuntimeSlice';
+import connectionsReducer from './connectionsSlice';
 import connectivityReducer from './connectivitySlice';
 import coreModeReducer from './coreModeSlice';
 import localeReducer from './localeSlice';
@@ -143,6 +144,7 @@ export const store = configureStore({
     chatRuntime: chatRuntimeReducer,
     agentProfiles: agentProfileReducer,
     channelConnections: persistedChannelConnectionsReducer,
+    connections: connectionsReducer,
     accounts: persistedAccountsReducer,
     notifications: persistedNotificationReducer,
     providerSurfaces: providerSurfacesReducer,
