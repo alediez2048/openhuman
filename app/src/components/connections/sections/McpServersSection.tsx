@@ -14,6 +14,8 @@
  * See `Automations/Tickets/phase-0-connections-hub/P0-6.md` and
  * `src/openhuman/connections/aggregator.rs::collect_mcp`.
  */
+import { useNavigate } from 'react-router-dom';
+
 import type { ConnectionView } from '../../../types/connections';
 import ConnectionCard from '../ConnectionCard';
 import SectionHeader from '../SectionHeader';
@@ -27,12 +29,15 @@ function serverIdOf(item: ConnectionView, fallbackIndex: number): string {
 }
 
 export default function McpServersSection({ items }: Props) {
+  const navigate = useNavigate();
+  const connectedCount = items.filter(c => c.status.kind === 'connected').length;
+
   return (
     <section data-testid="connections-section-mcp">
       <SectionHeader
         title="MCP Servers"
-        count={items.length}
-        subtitle="Your own + community-built MCP tools"
+        count={connectedCount}
+        subtitle={`${items.length} available · click to manage in intelligence settings`}
         // P0-6b: cta={<AddMcpButton />}
       />
       {items.length === 0 ? (
@@ -44,14 +49,18 @@ export default function McpServersSection({ items }: Props) {
           {items.map((c, i) => {
             const id = serverIdOf(c, i);
             return (
-              <ConnectionCard
+              <button
                 key={id}
-                name={c.display_name}
-                subtitle={c.mechanism_label}
-                status={c.status}
-                testId={`connection-card-mcp-${id}`}
-                // P0-6b: restart / enable-disable / Configure action slot.
-              />
+                type="button"
+                onClick={() => navigate('/intelligence')}
+                className="block w-full text-left rounded-xl hover:bg-stone-50 dark:hover:bg-neutral-800 focus:outline-none focus:ring-2 focus:ring-primary-500 transition-colors"
+                data-testid={`connection-card-mcp-${id}`}>
+                <ConnectionCard
+                  name={c.display_name}
+                  subtitle={c.mechanism_label}
+                  status={c.status}
+                />
+              </button>
             );
           })}
         </div>

@@ -4,10 +4,16 @@
  * a stable testid, and surfaces the empty-state copy when no items are passed.
  */
 import { render, screen } from '@testing-library/react';
+import { type ReactNode } from 'react';
+import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it } from 'vitest';
 
 import type { ConnectionView } from '../../../types/connections';
 import BuiltinIntegrationsSection from '../sections/BuiltinIntegrationsSection';
+
+function renderInRouter(ui: ReactNode) {
+  return render(<MemoryRouter>{ui}</MemoryRouter>);
+}
 
 function makeBuiltin(
   integration: string,
@@ -25,7 +31,7 @@ function makeBuiltin(
 
 describe('<BuiltinIntegrationsSection>', () => {
   it('renders the empty-state copy when items is empty', () => {
-    render(<BuiltinIntegrationsSection items={[]} />);
+    renderInRouter(<BuiltinIntegrationsSection items={[]} />);
     expect(screen.getByTestId('connections-section-builtin')).toBeInTheDocument();
     expect(screen.getByText(/Sign in to OpenHuman/i)).toBeInTheDocument();
   });
@@ -40,7 +46,7 @@ describe('<BuiltinIntegrationsSection>', () => {
       makeBuiltin('stock_prices', 'Stock Prices'),
     ];
 
-    render(<BuiltinIntegrationsSection items={items} />);
+    renderInRouter(<BuiltinIntegrationsSection items={items} />);
 
     expect(screen.getByTestId('connection-card-builtin-twilio')).toBeInTheDocument();
     expect(screen.getByTestId('connection-card-builtin-apify')).toBeInTheDocument();
@@ -51,12 +57,12 @@ describe('<BuiltinIntegrationsSection>', () => {
   });
 
   it('renders the per-integration description as the card subtitle', () => {
-    render(<BuiltinIntegrationsSection items={[makeBuiltin('twilio', 'Twilio')]} />);
+    renderInRouter(<BuiltinIntegrationsSection items={[makeBuiltin('twilio', 'Twilio')]} />);
     expect(screen.getByText(/SMS, voice calls/i)).toBeInTheDocument();
   });
 
   it('surfaces NotConnected status when no session token is present', () => {
-    render(
+    renderInRouter(
       <BuiltinIntegrationsSection
         items={[makeBuiltin('twilio', 'Twilio', { kind: 'not_connected' })]}
       />

@@ -4,10 +4,16 @@
  * surfaces the empty-state copy when no items are passed.
  */
 import { render, screen } from '@testing-library/react';
+import { type ReactNode } from 'react';
+import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it } from 'vitest';
 
 import type { ConnectionView } from '../../../types/connections';
 import McpServersSection from '../sections/McpServersSection';
+
+function renderInRouter(ui: ReactNode) {
+  return render(<MemoryRouter>{ui}</MemoryRouter>);
+}
 
 function makeMcp(serverId: string, displayName: string): ConnectionView {
   return {
@@ -21,14 +27,14 @@ function makeMcp(serverId: string, displayName: string): ConnectionView {
 
 describe('<McpServersSection>', () => {
   it('renders the empty-state copy when items is empty', () => {
-    render(<McpServersSection items={[]} />);
+    renderInRouter(<McpServersSection items={[]} />);
     expect(screen.getByTestId('connections-section-mcp')).toBeInTheDocument();
     expect(screen.getByText(/No MCP servers registered yet/i)).toBeInTheDocument();
   });
 
   it('renders one card per fixture row with stable testids per server_id', () => {
     const items = [makeMcp('gitbooks', 'gitbooks'), makeMcp('my-custom', 'my-custom')];
-    render(<McpServersSection items={items} />);
+    renderInRouter(<McpServersSection items={items} />);
 
     expect(screen.getByTestId('connection-card-mcp-gitbooks')).toBeInTheDocument();
     expect(screen.getByTestId('connection-card-mcp-my-custom')).toBeInTheDocument();
@@ -37,7 +43,7 @@ describe('<McpServersSection>', () => {
   });
 
   it('surfaces the mechanism label as subtitle on each card', () => {
-    render(<McpServersSection items={[makeMcp('gitbooks', 'gitbooks')]} />);
+    renderInRouter(<McpServersSection items={[makeMcp('gitbooks', 'gitbooks')]} />);
     // The header reads "MCP Servers"; the card subtitle reads "· MCP".
     // Scope the assertion to the card so the header doesn't shadow the subtitle.
     const card = screen.getByTestId('connection-card-mcp-gitbooks');

@@ -7,19 +7,19 @@
  * `<ChannelSetupModal>` for that channel; on close the Hub re-fetches
  * `connections_list` so the status badge updates.
  *
- * Channel definitions (auth modes, field specs, capabilities) are fetched
- * once via `channelConnectionsApi.listDefinitions()` and looked up by slug
- * at click time.
+ * Channel definitions come from `useChannelDefinitions()` which falls back
+ * to the locally-bundled `FALLBACK_DEFINITIONS` when the RPC isn't yet
+ * available — that way the cards are always clickable on first paint even
+ * if the network round-trip is in flight.
  *
  * Note: WhatsApp / LinkedIn / etc. are CEF webview accounts, surfaced
  * separately in `<WebviewAccountsSection>`.
  */
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 
-import { channelConnectionsApi } from '../../../services/api/channelConnectionsApi';
+import { useChannelDefinitions } from '../../../hooks/useChannelDefinitions';
 import { fetchConnections } from '../../../store/connectionsSlice';
 import { useAppDispatch } from '../../../store/hooks';
-import type { ChannelDefinition } from '../../../types/channels';
 import type { ConnectionView } from '../../../types/connections';
 import ChannelSetupModal from '../../channels/ChannelSetupModal';
 import ConnectionCard from '../ConnectionCard';
@@ -35,31 +35,11 @@ function channelSlugOf(c: ConnectionView, fallbackIndex: number): string {
 
 export default function ChannelsSection({ items }: Props) {
   const dispatch = useAppDispatch();
-  const [definitions, setDefinitions] = useState<Map<string, ChannelDefinition>>(new Map());
+  const { definitions } = useChannelDefinitions();
   const [openSlug, setOpenSlug] = useState<string | null>(null);
 
-  // One-shot fetch of the channel definition catalog. Definitions are
-  // process-stable on the Rust side; no need to poll.
-  useEffect(() => {
-    let mounted = true;
-    void channelConnectionsApi
-      .listDefinitions()
-      .then(defs => {
-        if (!mounted) return;
-        const next = new Map<string, ChannelDefinition>();
-        for (const d of defs) next.set(d.id, d);
-        setDefinitions(next);
-      })
-      .catch(err => {
-        console.warn('[connections] channels listDefinitions failed', err);
-      });
-    return () => {
-      mounted = false;
-    };
-  }, []);
-
   const connectedCount = items.filter(c => c.status.kind === 'connected').length;
-  const openDefinition = openSlug ? definitions.get(openSlug) : undefined;
+  const openDefinition = openSlug ? definitions.find(d => d.id === openSlug) : undefined;
 
   return (
     <section id="channels" data-testid="connections-section-channels">
@@ -76,15 +56,12 @@ export default function ChannelsSection({ items }: Props) {
         <div className="space-y-2">
           {items.map((c, i) => {
             const slug = channelSlugOf(c, i);
-            const def = definitions.get(slug);
-            const clickable = def != null;
             return (
               <button
                 key={`channel-${slug}`}
                 type="button"
-                disabled={!clickable}
                 onClick={() => setOpenSlug(slug)}
-                className="block w-full text-left disabled:cursor-default"
+                className="block w-full text-left rounded-xl hover:bg-stone-50 dark:hover:bg-neutral-800 focus:outline-none focus:ring-2 focus:ring-primary-500 transition-colors"
                 data-testid={`connection-card-channel-${slug}`}>
                 <ConnectionCard
                   name={c.display_name}

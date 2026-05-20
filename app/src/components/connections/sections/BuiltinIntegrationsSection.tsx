@@ -15,6 +15,8 @@
  * See `Automations/Tickets/phase-0-connections-hub/P0-6.md` and
  * `src/openhuman/connections/aggregator.rs::collect_builtin`.
  */
+import { useNavigate } from 'react-router-dom';
+
 import type { ConnectionView } from '../../../types/connections';
 import ConnectionCard from '../ConnectionCard';
 import SectionHeader from '../SectionHeader';
@@ -43,12 +45,14 @@ function integrationIdOf(item: ConnectionView, fallbackIndex: number): string {
 }
 
 export default function BuiltinIntegrationsSection({ items }: Props) {
+  const navigate = useNavigate();
+  const connectedCount = items.filter(c => c.status.kind === 'connected').length;
   return (
     <section data-testid="connections-section-builtin">
       <SectionHeader
         title="Built-in Integrations"
-        count={items.length}
-        subtitle="Twilio, Apify, Google Places, Parallel, Seltz, Stock Prices"
+        count={connectedCount}
+        subtitle={`${items.length} available · click to manage in intelligence settings`}
       />
       {items.length === 0 ? (
         <div className="text-sm text-stone-500 dark:text-neutral-400 px-3.5 py-4 bg-stone-50 dark:bg-neutral-800 rounded-xl">
@@ -59,14 +63,14 @@ export default function BuiltinIntegrationsSection({ items }: Props) {
           {items.map((c, i) => {
             const id = integrationIdOf(c, i);
             return (
-              <ConnectionCard
+              <button
                 key={id}
-                name={c.display_name}
-                subtitle={subtitleFor(c)}
-                status={c.status}
-                testId={`connection-card-builtin-${id}`}
-                // P0-6a: per-account toggle + credential-rotation action slot.
-              />
+                type="button"
+                onClick={() => navigate('/intelligence')}
+                className="block w-full text-left rounded-xl hover:bg-stone-50 dark:hover:bg-neutral-800 focus:outline-none focus:ring-2 focus:ring-primary-500 transition-colors"
+                data-testid={`connection-card-builtin-${id}`}>
+                <ConnectionCard name={c.display_name} subtitle={subtitleFor(c)} status={c.status} />
+              </button>
             );
           })}
         </div>

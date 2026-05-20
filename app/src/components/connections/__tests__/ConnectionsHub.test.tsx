@@ -11,6 +11,7 @@ import { Provider } from 'react-redux';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
 
+import channelConnectionsReducer from '../../../store/channelConnectionsSlice';
 import connectionsReducer from '../../../store/connectionsSlice';
 import type { ConnectionView } from '../../../types/connections';
 import ConnectionsHub from '../ConnectionsHub';
@@ -50,8 +51,11 @@ const FIXTURE_CONNECTIONS: ConnectionView[] = [
 ];
 
 function makeStore(prefilled: ConnectionView[]) {
+  // ChannelsSection reaches into state.channelConnections via
+  // useChannelDefinitions — include the slice with its default initial
+  // state so the section renders without crashing.
   const store = configureStore({
-    reducer: { connections: connectionsReducer },
+    reducer: { connections: connectionsReducer, channelConnections: channelConnectionsReducer },
     preloadedState: {
       connections: {
         connections: prefilled,

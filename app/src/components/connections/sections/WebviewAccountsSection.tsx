@@ -7,10 +7,12 @@
  * `webview_accounts::detect_webview_logins` — `Connected` when at least
  * one known session cookie is present, `NotConnected` otherwise.
  *
- * Full reuse of the existing `webviewAccountService` for "Add account"
- * / "Re-login" is filed as **P0-5c** — for now the cards are read-only;
- * users still sign in from the dedicated CEF webview windows.
+ * Clicking a card navigates to `/chat`, which is where the live webview
+ * sidebar lives — that surface owns the bounds + lifecycle required to
+ * spawn a CEF webview. Inline modal-style sign-in is filed as **P0-5c**.
  */
+import { useNavigate } from 'react-router-dom';
+
 import type { ConnectionView } from '../../../types/connections';
 import ConnectionCard from '../ConnectionCard';
 import SectionHeader from '../SectionHeader';
@@ -24,13 +26,15 @@ function providerSlugOf(c: ConnectionView, fallbackIndex: number): string {
 }
 
 export default function WebviewAccountsSection({ items }: Props) {
+  const navigate = useNavigate();
   const connectedCount = items.filter(c => c.status.kind === 'connected').length;
+
   return (
     <section data-testid="connections-section-webview">
       <SectionHeader
         title="Browser Accounts"
         count={connectedCount}
-        subtitle={`${items.length} available · CEF-hosted login sessions`}
+        subtitle={`${items.length} available · CEF-hosted login sessions · click to manage in chat`}
       />
       {items.length === 0 ? (
         <div className="text-sm text-stone-500 dark:text-neutral-400 px-3.5 py-4 bg-stone-50 dark:bg-neutral-800 rounded-xl">
@@ -41,13 +45,18 @@ export default function WebviewAccountsSection({ items }: Props) {
           {items.map((c, i) => {
             const slug = providerSlugOf(c, i);
             return (
-              <ConnectionCard
+              <button
                 key={`webview-${slug}`}
-                name={c.display_name}
-                subtitle={c.mechanism_label}
-                status={c.status}
-                testId={`connection-card-webview-${slug}`}
-              />
+                type="button"
+                onClick={() => navigate('/chat')}
+                className="block w-full text-left rounded-xl hover:bg-stone-50 dark:hover:bg-neutral-800 focus:outline-none focus:ring-2 focus:ring-primary-500 transition-colors"
+                data-testid={`connection-card-webview-${slug}`}>
+                <ConnectionCard
+                  name={c.display_name}
+                  subtitle={c.mechanism_label}
+                  status={c.status}
+                />
+              </button>
             );
           })}
         </div>
