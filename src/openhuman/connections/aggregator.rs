@@ -26,10 +26,10 @@
 //! See `Automations/systemsdesign.md §2.1`, `ADR-003`, `ADR-006`.
 
 use crate::openhuman::config::Config;
-use crate::openhuman::connections::store;
 use crate::openhuman::connections::types::{
     ConnectionKind, ConnectionRef, ConnectionStatus, ConnectionView,
 };
+use crate::openhuman::connections::{store, verification};
 use anyhow::Result;
 use std::time::Duration;
 
@@ -166,6 +166,9 @@ async fn collect_composio(config: &Config) -> Result<Vec<ConnectionView>> {
                 status,
                 last_used_at: None,
                 mechanism_label: "Composio".to_string(),
+                // Composio status is already authoritative (the backend says
+                // ACTIVE/CONNECTED via real-time API); no probe needed.
+                verification: None,
             }
         })
         .collect();
@@ -222,6 +225,9 @@ async fn collect_channels(config: &Config) -> Result<Vec<ConnectionView>> {
                 },
                 last_used_at: None,
                 mechanism_label: "Channel".to_string(),
+                verification: verification::lookup(&verification::VerificationKey::channel(
+                    slug.clone(),
+                )),
             }
         })
         .collect();
@@ -271,6 +277,9 @@ async fn collect_webview(_config: &Config) -> Result<Vec<ConnectionView>> {
                 },
                 last_used_at: None,
                 mechanism_label: "Browser Account".to_string(),
+                // Cookie/IndexedDB probe is already strong evidence of an
+                // actual session — no separate verification cache needed.
+                verification: None,
             }
         })
         .collect();
@@ -357,6 +366,9 @@ async fn collect_builtin(config: &Config) -> Result<Vec<ConnectionView>> {
             status: status.clone(),
             last_used_at: None,
             mechanism_label: "Built-in".to_string(),
+            // Built-in status is purely session-token presence today; no
+            // per-integration probe to cache. P0-6a will revisit.
+            verification: None,
         })
         .collect())
 }
@@ -382,6 +394,9 @@ async fn collect_mcp(config: &Config) -> Result<Vec<ConnectionView>> {
             status: ConnectionStatus::Connected,
             last_used_at: None,
             mechanism_label: "MCP".to_string(),
+            verification: verification::lookup(&verification::VerificationKey::mcp(
+                def.name.clone(),
+            )),
         })
         .collect();
 
@@ -405,14 +420,22 @@ async fn collect_generic_http(config: &Config) -> Result<Vec<ConnectionView>> {
 
     Ok(rows
         .into_iter()
-        .map(|row| ConnectionView {
-            r#ref: ConnectionRef::GenericHttp {
-                connection_id: row.id.clone(),
-            },
-            display_name: row.name,
-            status: ConnectionStatus::Connected,
-            last_used_at: Some(row.updated_at),
-            mechanism_label: "Generic HTTP".to_string(),
+        .map(|row| {
+            let verification =
+                verification::lookup(&verification::VerificationKey::generic_http(row.id.clone()));
+            ConnectionView {
+                r#ref: ConnectionRef::GenericHttp {
+                    connection_id: row.id.clone(),
+                },
+                display_name: row.name,
+                // Until a real probe lands the row, status reflects only
+                // "row exists in DB." Pair with `verification` to know if
+                // the endpoint actually responds.
+                status: ConnectionStatus::Connected,
+                last_used_at: Some(row.updated_at),
+                mechanism_label: "Generic HTTP".to_string(),
+                verification,
+            }
         })
         .collect())
 }

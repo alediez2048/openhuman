@@ -128,6 +128,19 @@ pub struct ConnectionView {
     /// Stored as `String` (not `&'static str`) so the type is `Deserialize`-
     /// able for the `connections_list` RPC response shape.
     pub mechanism_label: String,
+    /// Last probe outcome from this core session, when available.
+    ///
+    /// `None` = never probed (UI shows "Configured" / "Unverified"; the
+    /// `status` field alone licenses no claim of liveness).
+    /// `Some(Live)` = last probe succeeded; UI shows green "Connected".
+    /// `Some(Failed)` = last probe failed; UI shows orange "Error" with
+    /// the reason.
+    ///
+    /// Populated by the aggregator from the in-memory cache in
+    /// `verification.rs`; written to by probe RPCs (`connections_test`,
+    /// `connections_mcp_test`).
+    #[serde(default)]
+    pub verification: Option<crate::openhuman::connections::verification::Verification>,
 }
 
 /// Compact discriminator used for filtering responses from `connections_list`.

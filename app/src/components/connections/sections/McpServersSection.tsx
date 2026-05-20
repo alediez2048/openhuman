@@ -43,6 +43,8 @@ export default function McpServersSection({ items }: Props) {
               name={c.display_name}
               icon={mcpIcon(id)}
               status={c.status}
+              verification={c.verification}
+              requireVerification
               onClick={() => setManaging(c)}
               title={`${c.display_name} — click to manage`}
               testId={`connection-card-mcp-${id}`}

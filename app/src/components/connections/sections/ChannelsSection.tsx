@@ -65,6 +65,8 @@ export default function ChannelsSection({ items }: Props) {
                 name={c.display_name}
                 icon={channelIcon(slug)}
                 status={c.status}
+                verification={c.verification}
+                requireVerification
                 onClick={() => setOpenSlug(slug)}
                 title={`${c.display_name} — ${description}`}
                 testId={`connection-card-channel-${slug}`}

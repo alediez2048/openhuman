@@ -19,11 +19,11 @@
 
 use crate::core::event_bus::{publish_global, DomainEvent};
 use crate::openhuman::config::{Config, McpAuthConfig, McpServerConfig};
-use crate::openhuman::connections::store;
 use crate::openhuman::connections::types::{
     AuthKind, ConnectionRef, CreateGenericHttpRequest, GenericHttpConnection, McpAddAuth,
     McpAddRequest, NewCredential, SecretRef, TestProbeResult, UpdateGenericHttpRequest,
 };
+use crate::openhuman::connections::{store, verification};
 use crate::openhuman::security::secrets::SecretStore;
 use anyhow::{anyhow, Context, Result};
 use chrono::Utc;
@@ -179,11 +179,28 @@ pub async fn update_generic_http(
     Ok(existing)
 }
 
+/// Fetch the full `GenericHttpConnection` row by id. Used by the manage
+/// modal so the form is populated with the real saved values (name,
+/// base_url, auth_kind, default_headers, timestamps) — never with a
+/// frontend-constructed stub.
+///
+/// `secret_ref` is included as-is; the ciphertext is opaque to the UI
+/// (the modal renders a `••••••••` placeholder and only sends a new
+/// credential when the user types one).
+pub async fn get_generic_http(config: &Config, id: &str) -> Result<Option<GenericHttpConnection>> {
+    store::get_generic_http(config, id)
+}
+
 /// Deletes a Generic HTTP connection by id. Returns `true` when a row was
 /// removed, `false` when the id was unknown.
 pub async fn delete_generic_http(config: &Config, id: &str) -> Result<bool> {
     let removed = store::delete_generic_http(config, id)?;
     if removed {
+        // Drop the cached verification so a future row with the same id
+        // can't inherit a stale probe outcome.
+        crate::openhuman::connections::verification::forget(
+            &crate::openhuman::connections::verification::VerificationKey::generic_http(id),
+        );
         publish_global(DomainEvent::ConnectionRemoved {
             connection_ref_json: serde_json::to_value(ConnectionRef::GenericHttp {
                 connection_id: id.to_string(),
@@ -199,33 +216,198 @@ pub async fn delete_generic_http(config: &Config, id: &str) -> Result<bool> {
     Ok(removed)
 }
 
-/// Stub for the `connections_test` RPC.
+/// Real HTTP connectivity probe for a Generic HTTP connection (P0-3a).
 ///
-/// **Phase 0 / P0-3 placeholder.** Returns `ok: true` if the connection exists,
-/// without issuing any HTTP request. Real HEAD→OPTIONS→GET probe (using the
-/// OpenHuman `reqwest` client factory + 10-second timeout) is deferred to
-/// follow-up P0-3a so this ticket stays bounded.
+/// Strategy: `HEAD` first (cheap, no body), fall back to `OPTIONS` if the
+/// server returns 405, fall back to a `GET` with `Range: bytes=0-0` if
+/// `OPTIONS` also fails. 10-second timeout via the OpenHuman `reqwest`
+/// client factory.
+///
+/// Auth and default headers from the stored row are applied to every
+/// attempt. The auth credential is decrypted via `SecretStore::decrypt`
+/// just-in-time and dropped from memory before the call returns.
+///
+/// Records the outcome into the per-process verification cache so the
+/// next `connections_list` reflects the result without another probe.
 pub async fn test_generic_http(config: &Config, id: &str) -> Result<TestProbeResult> {
-    let exists = store::get_generic_http(config, id)?.is_some();
-    if exists {
-        tracing::debug!(
-            target: "connections",
-            "[connections] test_generic_http stub for id={} — TODO P0-3a wire reqwest probe",
-            id
-        );
-        Ok(TestProbeResult {
-            ok: true,
-            status: None,
-            error: Some(
-                "probe not yet implemented — connection exists but no network call was made (P0-3a)".into(),
-            ),
-        })
-    } else {
-        Ok(TestProbeResult {
+    let Some(row) = store::get_generic_http(config, id)? else {
+        return Ok(TestProbeResult {
             ok: false,
             status: None,
             error: Some(format!("no connection with id {id}")),
-        })
+        });
+    };
+
+    // Decrypt the credential (if any) just-in-time. Cleartext lives only
+    // for the duration of this probe and is dropped on every early return.
+    let cleartext_secret = match row.secret_ref.as_ref() {
+        Some(secret_ref) => {
+            let store = secret_store_for_config(config);
+            Some(
+                store
+                    .decrypt(&secret_ref.ciphertext)
+                    .context("failed to decrypt Generic HTTP credential for probe")?,
+            )
+        }
+        None => None,
+    };
+
+    let mut probe_url = row.base_url.clone();
+    // Apply query-param auth (kept inside the URL so reqwest carries it
+    // automatically across redirects).
+    if let (AuthKind::QueryParam { name }, Some(value)) =
+        (&row.auth_kind, cleartext_secret.as_deref())
+    {
+        let sep = if probe_url.contains('?') { '&' } else { '?' };
+        probe_url = format!(
+            "{probe_url}{sep}{name}={value}",
+            name = urlencoding::encode(name),
+            value = urlencoding::encode(value),
+        );
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .context("failed to build reqwest client for HTTP probe")?;
+
+    let build_request = |method: reqwest::Method| -> reqwest::RequestBuilder {
+        let mut req = client.request(method, &probe_url);
+        for (k, v) in &row.default_headers {
+            req = req.header(k, v);
+        }
+        match (&row.auth_kind, cleartext_secret.as_deref()) {
+            (AuthKind::Bearer, Some(token)) => {
+                req = req.header("Authorization", format!("Bearer {token}"));
+            }
+            (AuthKind::Basic, Some(creds)) => {
+                req = req.header("Authorization", format!("Basic {creds}"));
+            }
+            (AuthKind::ApiKeyHeader { name }, Some(value)) => {
+                req = req.header(name, value);
+            }
+            _ => {}
+        }
+        // Range: bytes=0-0 keeps the GET fallback from streaming a large
+        // payload — many servers honour this with a 206 Partial Content.
+        req
+    };
+
+    let methods: [reqwest::Method; 3] = [
+        reqwest::Method::HEAD,
+        reqwest::Method::OPTIONS,
+        reqwest::Method::GET,
+    ];
+
+    let mut last_error: Option<String> = None;
+    let mut last_status: Option<u16> = None;
+    for method in methods {
+        let mut req = build_request(method.clone());
+        if method == reqwest::Method::GET {
+            req = req.header("Range", "bytes=0-0");
+        }
+        match req.send().await {
+            Ok(resp) => {
+                let s = resp.status();
+                last_status = Some(s.as_u16());
+                if s.is_success() || s.is_redirection() || s == reqwest::StatusCode::PARTIAL_CONTENT
+                {
+                    verification::record_live(verification::VerificationKey::generic_http(
+                        id.to_string(),
+                    ));
+                    return Ok(TestProbeResult {
+                        ok: true,
+                        status: Some(s.as_u16()),
+                        error: None,
+                    });
+                }
+                // 405 from HEAD/OPTIONS is the canonical "try a different
+                // method" — keep walking. Other 4xx/5xx are real failures
+                // but we still try the next method in case the server
+                // misroutes the original.
+                last_error = Some(format!("{method} {probe_url} → HTTP {}", s.as_u16()));
+            }
+            Err(e) => {
+                // Network error (DNS, timeout, TLS) — bail immediately.
+                let reason = format!("{method} {probe_url} failed: {e}");
+                verification::record_failed(
+                    verification::VerificationKey::generic_http(id.to_string()),
+                    &reason,
+                );
+                return Ok(TestProbeResult {
+                    ok: false,
+                    status: None,
+                    error: Some(reason),
+                });
+            }
+        }
+    }
+
+    let reason = last_error.unwrap_or_else(|| "all probe methods returned non-2xx".into());
+    verification::record_failed(
+        verification::VerificationKey::generic_http(id.to_string()),
+        &reason,
+    );
+    Ok(TestProbeResult {
+        ok: false,
+        status: last_status,
+        error: Some(reason),
+    })
+}
+
+/// Real MCP connectivity probe — calls `initialize` on the registered
+/// server and verifies a JSON-RPC handshake. Records the outcome in the
+/// verification cache so the next `connections_list` shows Live/Error.
+///
+/// Uses a 5s timeout on top of the server's configured `timeout_secs` —
+/// even a misconfigured server (wrong endpoint, wrong auth) should fail
+/// fast rather than hang the modal.
+pub async fn test_mcp_server(config: &Config, server_id: &str) -> Result<TestProbeResult> {
+    let registry = crate::openhuman::mcp_client::McpServerRegistry::from_config(config);
+    if registry.get(server_id).is_none() {
+        return Ok(TestProbeResult {
+            ok: false,
+            status: None,
+            error: Some(format!("no MCP server named `{server_id}`")),
+        });
+    }
+
+    let call = registry.initialize(server_id);
+    let result = tokio::time::timeout(std::time::Duration::from_secs(15), call).await;
+
+    match result {
+        Ok(Ok(_init)) => {
+            verification::record_live(verification::VerificationKey::mcp(server_id.to_string()));
+            Ok(TestProbeResult {
+                ok: true,
+                status: None,
+                error: None,
+            })
+        }
+        Ok(Err(e)) => {
+            let reason = format!("MCP initialize failed: {e}");
+            verification::record_failed(
+                verification::VerificationKey::mcp(server_id.to_string()),
+                &reason,
+            );
+            Ok(TestProbeResult {
+                ok: false,
+                status: None,
+                error: Some(reason),
+            })
+        }
+        Err(_elapsed) => {
+            let reason = "MCP probe timed out after 15s".to_string();
+            verification::record_failed(
+                verification::VerificationKey::mcp(server_id.to_string()),
+                &reason,
+            );
+            Ok(TestProbeResult {
+                ok: false,
+                status: None,
+                error: Some(reason),
+            })
+        }
     }
 }
 

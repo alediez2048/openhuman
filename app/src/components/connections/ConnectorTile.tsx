@@ -16,13 +16,30 @@
  */
 import { type ReactNode } from 'react';
 
-import type { ConnectionStatus } from '../../types/connections';
+import type { ConnectionStatus, Verification } from '../../types/connections';
 
 interface ConnectorTileProps {
   name: string;
   /** Branded logo, SVG, or emoji rendered above the title. */
   icon: ReactNode;
   status: ConnectionStatus;
+  /**
+   * Last probe outcome from this core session. When present, **overrides**
+   * `status` for the visible pill — verification is strictly more
+   * authoritative than "row exists in DB". `null`/undefined falls back to
+   * the section's mechanism-specific status semantics.
+   */
+  verification?: Verification | null;
+  /**
+   * When `true`, a Connected `status` is downgraded to "Configured" unless
+   * we have a real probe outcome to back it up. Used by HTTP/MCP/Channels
+   * sections where the `status` field only means "row exists in DB" or
+   * "registry membership," not "actually responds." Composio / Webview /
+   * Built-in pass `false` (the default) because their status is already
+   * derived from authoritative evidence (Composio API, cookie probe,
+   * session token).
+   */
+  requireVerification?: boolean;
   /** Optional one-liner under the status pill. Most sections omit. */
   description?: string;
   /** Click handler; `undefined` makes the tile non-interactive. */
@@ -34,9 +51,54 @@ interface ConnectorTileProps {
   testId?: string;
 }
 
-function StatusPill({ status }: { status: ConnectionStatus }) {
+function StatusPill({
+  status,
+  verification,
+  requireVerification,
+}: {
+  status: ConnectionStatus;
+  verification?: Verification | null;
+  requireVerification: boolean;
+}) {
+  // Verification is strictly more authoritative than the binary status —
+  // if we actually pinged the service, we report what happened.
+  if (verification) {
+    if (verification.result.kind === 'live') {
+      return (
+        <span
+          className="inline-flex items-center gap-1 text-[11px] text-sage-700 dark:text-sage-400"
+          title={`Verified ${new Date(verification.last_probed_at).toLocaleString()}`}>
+          <span className="w-1.5 h-1.5 rounded-full bg-sage-500" />
+          Verified
+        </span>
+      );
+    }
+    return (
+      <span
+        className="inline-flex items-center gap-1 text-[11px] text-coral-600"
+        title={verification.result.reason}>
+        <span className="w-1.5 h-1.5 rounded-full bg-coral-500" />
+        Probe failed
+      </span>
+    );
+  }
   switch (status.kind) {
     case 'connected':
+      // For mechanisms whose status is already authoritative (Composio,
+      // Webview cookie probe, Built-in session token), Connected stays
+      // green. For HTTP/MCP/Channels we downgrade to "Configured" until
+      // a probe runs — `status: Connected` alone only means "row exists
+      // in DB / registry."
+      if (requireVerification) {
+        return (
+          <span
+            className="inline-flex items-center gap-1 text-[11px] text-stone-500 dark:text-neutral-400"
+            title="Configured but never verified — open the manage modal and run Test to probe.">
+            <span className="w-1.5 h-1.5 rounded-full bg-stone-400" />
+            Configured
+          </span>
+        );
+      }
       return (
         <span className="inline-flex items-center gap-1 text-[11px] text-sage-700 dark:text-sage-400">
           <span className="w-1.5 h-1.5 rounded-full bg-sage-500" />
@@ -72,6 +134,8 @@ export default function ConnectorTile({
   name,
   icon,
   status,
+  verification,
+  requireVerification = false,
   description,
   onClick,
   disabled,
@@ -97,7 +161,11 @@ export default function ConnectorTile({
       <div className="text-xs font-medium text-stone-900 dark:text-neutral-100 truncate max-w-full">
         {name}
       </div>
-      <StatusPill status={status} />
+      <StatusPill
+        status={status}
+        verification={verification}
+        requireVerification={requireVerification}
+      />
       {description ? (
         <div className="text-[10px] text-stone-500 dark:text-neutral-400 truncate max-w-full">
           {description}

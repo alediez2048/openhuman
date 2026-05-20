@@ -29,6 +29,7 @@ pub mod rpc;
 pub mod schemas;
 pub mod store;
 pub mod types;
+pub mod verification;
 
 pub use schemas::{all_connections_controller_schemas, all_connections_registered_controllers};
 pub use types::{

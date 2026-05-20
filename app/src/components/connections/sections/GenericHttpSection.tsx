@@ -78,30 +78,30 @@ export default function GenericHttpSection({ items }: Props) {
               name={c.display_name}
               icon={httpIcon(null)}
               status={c.status}
+              verification={c.verification}
+              requireVerification
               onClick={async () => {
-                // Tile click opens the modal in edit mode. We need the full
-                // GenericHttpConnection (with auth_kind, etc.) which isn't on
-                // the aggregator's ConnectionView. The aggregator omits
-                // secrets/headers by design — but the section already knows
-                // the row exists, so we open the modal with a minimal stub
-                // and let the modal's effects backfill from the list call
-                // if needed. For now we open in create-like mode using the
-                // display name as a placeholder; full edit ergonomics land
-                // when the modal gains a per-id fetch (P0-3b).
-                setModal({
-                  open: true,
-                  existing: {
-                    id: connectionId,
-                    name: c.display_name,
-                    base_url: '',
-                    auth_kind: { kind: 'none' },
-                    secret_ref: null,
-                    default_headers: [],
-                    created_at: new Date().toISOString(),
-                    updated_at: new Date().toISOString(),
-                  },
-                });
                 setToast(null);
+                // Fetch the real persisted row before opening the modal —
+                // the aggregator's ConnectionView only carries name +
+                // status, not the full auth_kind / base_url / headers
+                // shape the modal needs. Constructing a stub here (the
+                // pre-P0-3b behaviour) lied to the user by showing empty
+                // form fields for a row that actually had data.
+                try {
+                  const real = await connectionsApi.getGenericHttp(connectionId);
+                  if (!real) {
+                    setToast({
+                      kind: 'err',
+                      text: 'Connection no longer exists. The list will refresh.',
+                    });
+                    refresh();
+                    return;
+                  }
+                  setModal({ open: true, existing: real });
+                } catch (e) {
+                  setToast({ kind: 'err', text: e instanceof Error ? e.message : String(e) });
+                }
               }}
               title={`${c.display_name} — open to test / edit / delete`}
               testId={`connection-card-generic-http-${connectionId}`}

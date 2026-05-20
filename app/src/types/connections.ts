@@ -49,6 +49,8 @@ export interface ConnectionView {
   status: ConnectionStatus;
   last_used_at?: string | null;
   mechanism_label: string;
+  /** Last probe outcome from this core session. `null` = never probed. */
+  verification?: Verification | null;
 }
 
 export interface GenericHttpConnection {
@@ -138,4 +140,13 @@ export interface McpServerConfig {
   enabled: boolean;
   timeout_secs: number;
   auth: McpAddAuth;
+}
+
+// ── Verification (real probe outcomes) ─────────────────────────────────
+
+export type VerificationResult = { kind: 'live' } | { kind: 'failed'; reason: string };
+
+export interface Verification {
+  last_probed_at: string;
+  result: VerificationResult;
 }

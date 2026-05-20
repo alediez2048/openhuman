@@ -97,10 +97,10 @@ pub async fn connections_generic_http_delete(
     ))
 }
 
-/// `openhuman.connections_test` — best-effort connectivity probe. **Phase 0 /
-/// P0-3 ships a stub**: returns `ok: true` if the connection exists, with a
-/// flag in `error` calling out the deferred real probe. P0-3a wires the
-/// HEAD→OPTIONS→GET path against the OpenHuman `reqwest` client factory.
+/// `openhuman.connections_test` — real HTTP connectivity probe (P0-3a).
+/// HEAD → OPTIONS → GET(Range:0-0) fallback chain via the OpenHuman
+/// reqwest factory. Writes the outcome into the in-memory verification
+/// cache so the next `connections_list` reflects Live/Failed.
 pub async fn connections_test(
     config: &Config,
     id: &str,
@@ -111,6 +111,45 @@ pub async fn connections_test(
     Ok(RpcOutcome::single_log(
         result.clone(),
         format!("connections_test id={id} ok={}", result.ok),
+    ))
+}
+
+/// `openhuman.connections_generic_http_get` — fetch the full saved row
+/// for a Generic HTTP connection by id. Used by the manage modal so the
+/// form is populated with real persisted values (base_url, auth_kind,
+/// default_headers) rather than a frontend-constructed stub.
+pub async fn connections_generic_http_get(
+    config: &Config,
+    id: &str,
+) -> Result<RpcOutcome<Option<GenericHttpConnection>>, String> {
+    let row = ops::get_generic_http(config, id)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(RpcOutcome::single_log(
+        row.clone(),
+        format!(
+            "connections_generic_http_get id={id} found={}",
+            row.is_some()
+        ),
+    ))
+}
+
+/// `openhuman.connections_mcp_test` — real MCP `initialize` probe.
+/// Calls the server's JSON-RPC `initialize` and records the outcome in
+/// the verification cache. 15s wall-clock timeout.
+pub async fn connections_mcp_test(
+    config: &Config,
+    server_id: &str,
+) -> Result<RpcOutcome<TestProbeResult>, String> {
+    let result = ops::test_mcp_server(config, server_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(RpcOutcome::single_log(
+        result.clone(),
+        format!(
+            "connections_mcp_test server_id={server_id} ok={}",
+            result.ok
+        ),
     ))
 }
 

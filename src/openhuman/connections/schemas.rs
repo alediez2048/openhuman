@@ -22,9 +22,11 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("generic_http_create"),
         schemas("generic_http_update"),
         schemas("generic_http_delete"),
+        schemas("generic_http_get"),
         schemas("test"),
         schemas("mcp_add"),
         schemas("mcp_remove"),
+        schemas("mcp_test"),
     ]
 }
 
@@ -48,6 +50,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
             handler: handle_generic_http_delete,
         },
         RegisteredController {
+            schema: schemas("generic_http_get"),
+            handler: handle_generic_http_get,
+        },
+        RegisteredController {
             schema: schemas("test"),
             handler: handle_test,
         },
@@ -58,6 +64,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("mcp_remove"),
             handler: handle_mcp_remove,
+        },
+        RegisteredController {
+            schema: schemas("mcp_test"),
+            handler: handle_mcp_test,
         },
     ]
 }
@@ -197,6 +207,40 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 required: true,
             }],
         },
+        "generic_http_get" => ControllerSchema {
+            namespace: "connections",
+            function: "generic_http_get",
+            description: "Fetch the full saved GenericHttpConnection row by id. The manage modal calls this so the form populates with real persisted values rather than a frontend-constructed stub.",
+            inputs: vec![FieldSchema {
+                name: "id",
+                ty: TypeSchema::String,
+                comment: "Identifier of the Generic HTTP connection to fetch.",
+                required: true,
+            }],
+            outputs: vec![FieldSchema {
+                name: "connection",
+                ty: TypeSchema::Ref("GenericHttpConnection"),
+                comment: "The full row, or null when the id is unknown.",
+                required: false,
+            }],
+        },
+        "mcp_test" => ControllerSchema {
+            namespace: "connections",
+            function: "mcp_test",
+            description: "Real MCP connectivity probe — calls initialize on the server and records the outcome in the verification cache. 15s timeout.",
+            inputs: vec![FieldSchema {
+                name: "server_id",
+                ty: TypeSchema::String,
+                comment: "MCP server name to probe.",
+                required: true,
+            }],
+            outputs: vec![FieldSchema {
+                name: "result",
+                ty: TypeSchema::Ref("TestProbeResult"),
+                comment: "Probe outcome — failures return ok=false with a reason rather than an error.",
+                required: true,
+            }],
+        },
         "mcp_remove" => ControllerSchema {
             namespace: "connections",
             function: "mcp_remove",
@@ -308,6 +352,34 @@ fn handle_test(params: Map<String, Value>) -> ControllerFuture {
             .ok_or_else(|| "missing required param 'id'".to_string())?
             .to_string();
         to_json(crate::openhuman::connections::rpc::connections_test(&config, &id).await?)
+    })
+}
+
+fn handle_generic_http_get(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let id = params
+            .get("id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "missing required param 'id'".to_string())?
+            .to_string();
+        to_json(
+            crate::openhuman::connections::rpc::connections_generic_http_get(&config, &id).await?,
+        )
+    })
+}
+
+fn handle_mcp_test(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let server_id = params
+            .get("server_id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "missing required param 'server_id'".to_string())?
+            .to_string();
+        to_json(
+            crate::openhuman::connections::rpc::connections_mcp_test(&config, &server_id).await?,
+        )
     })
 }
 

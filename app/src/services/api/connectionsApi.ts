@@ -92,6 +92,21 @@ export const connectionsApi = {
     return unwrapRpcOutcome(raw);
   },
 
+  getGenericHttp: async (id: GenericHttpConnectionId): Promise<GenericHttpConnection | null> => {
+    const raw = await callCoreRpc<
+      GenericHttpConnection | null | RpcOutcomeEnvelope<GenericHttpConnection | null>
+    >({ method: 'openhuman.connections_generic_http_get', params: { id } });
+    return unwrapRpcOutcome(raw);
+  },
+
+  mcpTest: async (serverId: string): Promise<TestProbeResult> => {
+    const raw = await callCoreRpc<TestProbeResult | RpcOutcomeEnvelope<TestProbeResult>>({
+      method: 'openhuman.connections_mcp_test',
+      params: { server_id: serverId },
+    });
+    return unwrapRpcOutcome(raw);
+  },
+
   mcpAdd: async (req: McpAddRequest): Promise<McpServerConfig> => {
     const raw = await callCoreRpc<McpServerConfig | RpcOutcomeEnvelope<McpServerConfig>>({
       method: 'openhuman.connections_mcp_add',

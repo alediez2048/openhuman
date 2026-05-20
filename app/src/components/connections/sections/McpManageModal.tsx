@@ -30,8 +30,32 @@ interface Props {
 export default function McpManageModal({ serverId, displayName, status, onClose }: Props) {
   const dispatch = useAppDispatch();
   const [removing, setRemoving] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testToast, setTestToast] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const backdropRef = useRef<HTMLDivElement | null>(null);
+
+  const onTest = async () => {
+    setError(null);
+    setTestToast(null);
+    setTesting(true);
+    try {
+      const r = await connectionsApi.mcpTest(serverId);
+      setTestToast({
+        kind: r.ok ? 'ok' : 'err',
+        text: r.ok
+          ? 'Verified — MCP initialize handshake succeeded.'
+          : (r.error ?? 'Probe failed.'),
+      });
+      // Re-fetch aggregator so the Hub tile pill picks up the new
+      // verification state from the cache.
+      void dispatch(fetchConnections());
+    } catch (e) {
+      setTestToast({ kind: 'err', text: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setTesting(false);
+    }
+  };
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -99,19 +123,41 @@ export default function McpManageModal({ serverId, displayName, status, onClose 
           </div>
         ) : null}
 
+        {testToast ? (
+          <div
+            className={`mb-3 px-3 py-2 text-xs rounded-lg ${
+              testToast.kind === 'ok'
+                ? 'text-sage-700 bg-sage-50 border border-sage-200'
+                : 'text-coral-700 bg-coral-50 border border-coral-200'
+            }`}
+            role="status">
+            {testToast.text}
+          </div>
+        ) : null}
+
         <div className="flex items-center justify-between pt-2">
-          <button
-            type="button"
-            onClick={onRemove}
-            disabled={removing}
-            className="px-3 py-1.5 text-sm text-coral-600 hover:bg-coral-50 dark:hover:bg-coral-950/30 rounded-md disabled:opacity-50"
-            data-testid="mcp-manage-remove">
-            {removing ? 'Removing…' : 'Remove server'}
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onTest}
+              disabled={removing || testing}
+              className="px-3 py-1.5 text-sm text-stone-700 dark:text-neutral-200 hover:bg-stone-100 dark:hover:bg-neutral-800 rounded-md disabled:opacity-50"
+              data-testid="mcp-manage-test">
+              {testing ? 'Testing…' : 'Test'}
+            </button>
+            <button
+              type="button"
+              onClick={onRemove}
+              disabled={removing || testing}
+              className="px-3 py-1.5 text-sm text-coral-600 hover:bg-coral-50 dark:hover:bg-coral-950/30 rounded-md disabled:opacity-50"
+              data-testid="mcp-manage-remove">
+              {removing ? 'Removing…' : 'Remove server'}
+            </button>
+          </div>
           <button
             type="button"
             onClick={onClose}
-            disabled={removing}
+            disabled={removing || testing}
             className="px-3.5 py-1.5 text-sm text-stone-700 dark:text-neutral-300 hover:bg-stone-100 dark:hover:bg-neutral-800 rounded-md disabled:opacity-50">
             Close
           </button>

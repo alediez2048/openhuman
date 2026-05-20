@@ -92,6 +92,7 @@ fn kind_filter_logic_excludes_non_matching_views() {
             status: ConnectionStatus::Connected,
             last_used_at: None,
             mechanism_label: "Composio".to_string(),
+            verification: None,
         },
         ConnectionView {
             r#ref: ConnectionRef::Channel {
@@ -102,6 +103,7 @@ fn kind_filter_logic_excludes_non_matching_views() {
             status: ConnectionStatus::Connected,
             last_used_at: None,
             mechanism_label: "Channel".to_string(),
+            verification: None,
         },
     ];
 
@@ -124,6 +126,7 @@ fn search_substring_matches_display_name_case_insensitively() {
             status: ConnectionStatus::Connected,
             last_used_at: None,
             mechanism_label: "Composio".to_string(),
+            verification: None,
         },
         ConnectionView {
             r#ref: ConnectionRef::Composio {
@@ -134,6 +137,7 @@ fn search_substring_matches_display_name_case_insensitively() {
             status: ConnectionStatus::Connected,
             last_used_at: None,
             mechanism_label: "Composio".to_string(),
+            verification: None,
         },
     ];
 
