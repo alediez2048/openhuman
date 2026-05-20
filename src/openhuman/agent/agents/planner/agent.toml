@@ -62,4 +62,9 @@ named = [
     "composio_list_connections",
     "composio_list_tools",
     "composio_execute",
+    # Unified connections read — covers every mechanism, not just Composio.
+    "list_connections",
+    "mcp_list_servers",
+    "mcp_list_tools",
+    "mcp_call_tool",
 ]

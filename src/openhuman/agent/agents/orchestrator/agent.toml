@@ -110,6 +110,19 @@ named = [
     "spawn_worker_thread",
     "spawn_parallel_agents",
     "composio_list_connections",
+    # `list_connections` is the authoritative read across every connection
+    # mechanism (Composio + chat channels + browser accounts + MCP servers
+    # + Generic HTTP + built-in integrations). Call this — not
+    # `composio_list_connections` — when the user asks "do I have X
+    # connected?" The composio-only listing is a subset and was the source
+    # of "no higgsfield mcp" false negatives.
+    "list_connections",
+    # MCP read tools so the agent can introspect registered servers
+    # without delegating. Pairs with `list_connections` to actually use
+    # what the Hub surfaces.
+    "mcp_list_servers",
+    "mcp_list_tools",
+    "mcp_call_tool",
     # Time + scheduling — lets the orchestrator answer "what time is it",
     # "remind me in 10 minutes", "every morning at 8" directly rather than
     # delegating or telling the user it can't. `current_time` grounds
