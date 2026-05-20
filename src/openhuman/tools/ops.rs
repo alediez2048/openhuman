@@ -275,25 +275,21 @@ pub fn all_tools_with_runtime(
     // user-reported "no higgsfield mcp in connected integrations" bug.
     tools.push(Box::new(ConnectionsListTool::new(Arc::clone(&config))));
 
-    // Generic remote MCP bridge tools. These let the agent enumerate
-    // named MCP servers and forward `tools/call` through the core
-    // instead of hardcoding one bespoke MCP integration per server.
-    let mcp_registry =
-        Arc::new(crate::openhuman::mcp_client::McpServerRegistry::from_config(root_config));
-    if !mcp_registry.is_empty() {
-        tools.push(Box::new(McpListServersTool::new(Arc::clone(&mcp_registry))));
-        tools.push(Box::new(McpListToolsTool::new(Arc::clone(&mcp_registry))));
-        tools.push(Box::new(McpCallTool::new(
-            Arc::clone(&mcp_registry),
-            security.clone(),
-        )));
-        tracing::debug!(
-            count = mcp_registry.list().len(),
-            "[mcp_client] registered generic MCP bridge tools"
-        );
-    } else {
-        tracing::debug!("[mcp_client] no MCP servers registered — bridge tools skipped");
-    }
+    // Generic remote MCP bridge tools. Each tool rebuilds the
+    // McpServerRegistry from the current Config on every execute() call —
+    // a server added via `connections_mcp_add` mid-session is
+    // immediately visible without a core restart. The tools are
+    // *always* registered (no boot-time gate on the initial registry
+    // being non-empty), because the user might add their first MCP
+    // server after the agent boots and we must not require a restart
+    // to discover it.
+    tools.push(Box::new(McpListServersTool::new(Arc::clone(&config))));
+    tools.push(Box::new(McpListToolsTool::new(Arc::clone(&config))));
+    tools.push(Box::new(McpCallTool::new(
+        Arc::clone(&config),
+        security.clone(),
+    )));
+    tracing::debug!("[mcp_client] registered generic MCP bridge tools (registry rebuilt per call)");
 
     // Web search — always registered. Result/timeout budget
     // knobs still come from `config.web_search`, but there is no

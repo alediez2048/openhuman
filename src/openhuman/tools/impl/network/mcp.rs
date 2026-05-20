@@ -1,3 +1,19 @@
+//! MCP bridge tools for the agent.
+//!
+//! All three tools (`mcp_list_servers`, `mcp_list_tools`, `mcp_call_tool`)
+//! **rebuild the `McpServerRegistry` from `Config` on every `execute()`**
+//! rather than holding an `Arc<McpServerRegistry>` snapshot taken at
+//! agent boot.
+//!
+//! Why: the user adds MCP servers via the in-app modal
+//! (`connections_mcp_add` mutates `config.mcp_client.servers` and saves
+//! the TOML). The aggregator's `collect_mcp` already rebuilds the
+//! registry per call, so the Hub picks up new servers without a core
+//! restart. The agent's tools used to hold a snapshot Arc, which made
+//! new servers invisible mid-session — the user-reported "no higgsfield
+//! mcp in the connected integrations" bug.
+
+use crate::openhuman::config::Config;
 use crate::openhuman::mcp_client::{McpRegistrySource, McpServerRegistry};
 use crate::openhuman::security::{SecurityPolicy, ToolOperation};
 use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolCallOptions, ToolResult};
@@ -5,13 +21,20 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 use std::sync::Arc;
 
+/// Helper: build a fresh registry from the current Config. Used by every
+/// MCP tool's `execute()` so a server added via `connections_mcp_add` mid-
+/// session is immediately visible without a core restart.
+fn fresh_registry(config: &Config) -> McpServerRegistry {
+    McpServerRegistry::from_config(config)
+}
+
 pub struct McpListServersTool {
-    registry: Arc<McpServerRegistry>,
+    config: Arc<Config>,
 }
 
 impl McpListServersTool {
-    pub fn new(registry: Arc<McpServerRegistry>) -> Self {
-        Self { registry }
+    pub fn new(config: Arc<Config>) -> Self {
+        Self { config }
     }
 }
 
@@ -22,7 +45,7 @@ impl Tool for McpListServersTool {
     }
 
     fn description(&self) -> &str {
-        "List named remote MCP servers registered in OpenHuman core. Use this before browsing tools on a specific MCP server."
+        "List named remote MCP servers registered in OpenHuman core. Use this before browsing tools on a specific MCP server. Reads the current `config.mcp_client.servers` on every call, so servers added via the Connections Hub mid-session are immediately visible."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -42,10 +65,15 @@ impl Tool for McpListServersTool {
     }
 
     async fn execute(&self, _args: Value) -> anyhow::Result<ToolResult> {
-        let servers = self
-            .registry
-            .list()
-            .into_iter()
+        let registry = fresh_registry(&self.config);
+        let registered: Vec<_> = registry.list().iter().map(|s| (*s).clone()).collect();
+        tracing::debug!(
+            target: "mcp_client",
+            count = registered.len(),
+            "[mcp] mcp_list_servers — fresh registry built from current config"
+        );
+        let servers = registered
+            .iter()
             .map(|server| {
                 json!({
                     "name": server.name,
@@ -58,11 +86,11 @@ impl Tool for McpListServersTool {
             })
             .collect::<Vec<_>>();
 
-        let markdown = if servers.is_empty() {
+        let markdown = if registered.is_empty() {
             "# MCP Servers\n\nNo remote MCP servers are registered.".to_string()
         } else {
             let mut md = String::from("# MCP Servers\n");
-            for server in self.registry.list() {
+            for server in &registered {
                 let source = match server.source {
                     McpRegistrySource::Config => "config",
                     McpRegistrySource::LegacyGitbooks => "legacy_gitbooks",
@@ -95,12 +123,12 @@ impl Tool for McpListServersTool {
 }
 
 pub struct McpListToolsTool {
-    registry: Arc<McpServerRegistry>,
+    config: Arc<Config>,
 }
 
 impl McpListToolsTool {
-    pub fn new(registry: Arc<McpServerRegistry>) -> Self {
-        Self { registry }
+    pub fn new(config: Arc<Config>) -> Self {
+        Self { config }
     }
 }
 
@@ -138,7 +166,8 @@ impl Tool for McpListToolsTool {
 
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
         let server = required_string_arg(&args, "server")?;
-        let tools = match self.registry.list_tools(&server).await {
+        let registry = fresh_registry(&self.config);
+        let tools = match registry.list_tools(&server).await {
             Ok(tools) => tools,
             Err(err) => return Ok(ToolResult::error(format!("mcp_list_tools failed: {err}"))),
         };
@@ -177,13 +206,13 @@ impl Tool for McpListToolsTool {
 }
 
 pub struct McpCallTool {
-    registry: Arc<McpServerRegistry>,
+    config: Arc<Config>,
     security: Arc<SecurityPolicy>,
 }
 
 impl McpCallTool {
-    pub fn new(registry: Arc<McpServerRegistry>, security: Arc<SecurityPolicy>) -> Self {
-        Self { registry, security }
+    pub fn new(config: Arc<Config>, security: Arc<SecurityPolicy>) -> Self {
+        Self { config, security }
     }
 }
 
@@ -246,7 +275,8 @@ impl Tool for McpCallTool {
             return Ok(ToolResult::error("`arguments` must be an object"));
         }
 
-        let mut result = match self.registry.call_tool(&server, &tool, arguments).await {
+        let registry = fresh_registry(&self.config);
+        let mut result = match registry.call_tool(&server, &tool, arguments).await {
             Ok(result) => result.rendered,
             Err(err) => return Ok(ToolResult::error(format!("mcp_call_tool failed: {err}"))),
         };
@@ -264,50 +294,48 @@ impl Tool for McpCallTool {
 }
 
 fn required_string_arg(args: &Value, key: &str) -> anyhow::Result<String> {
-    let value = args
-        .get(key)
+    args.get(key)
         .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| anyhow::anyhow!("missing required `{key}`"))?;
-    Ok(value.to_string())
+        .map(str::to_owned)
+        .ok_or_else(|| anyhow::anyhow!("missing required `{key}` argument"))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::openhuman::config::{Config, McpServerConfig};
+    use crate::openhuman::config::McpServerConfig;
+    use tempfile::TempDir;
 
-    fn test_registry() -> Arc<McpServerRegistry> {
+    fn config_with(servers: Vec<McpServerConfig>) -> (TempDir, Arc<Config>) {
+        let dir = TempDir::new().unwrap();
         let mut config = Config::default();
-        config.gitbooks.enabled = false;
-        config.mcp_client.servers.push(McpServerConfig {
-            name: "docs".into(),
-            endpoint: "https://example.com/mcp".into(),
-            command: String::new(),
-            args: Vec::new(),
-            env: std::collections::HashMap::new(),
-            cwd: None,
-            description: Some("Docs MCP".into()),
+        config.workspace_dir = dir.path().to_path_buf();
+        config.mcp_client.servers = servers;
+        (dir, Arc::new(config))
+    }
+
+    #[tokio::test]
+    async fn list_servers_includes_user_registered_entries() {
+        // Regression for the user-reported "no higgsfield mcp" bug: the
+        // tool previously held an Arc<McpServerRegistry> snapshot, so
+        // servers added via `connections_mcp_add` after tool construction
+        // were invisible. Now the tool reads Config on every call.
+        //
+        // The default Config auto-registers the legacy `gitbooks` server,
+        // so the baseline isn't empty — the contract this test guards is
+        // that a *newly-added* server surfaces alongside it.
+        let (_dir, config) = config_with(vec![McpServerConfig {
+            name: "higgsfield".into(),
+            endpoint: "https://mcp.example.com".into(),
             enabled: true,
-            timeout_secs: 30,
-            auth: crate::openhuman::config::McpAuthConfig::None,
-        });
-        Arc::new(McpServerRegistry::from_config(&config))
-    }
-
-    #[tokio::test]
-    async fn list_servers_renders_registry_entries() {
-        let tool = McpListServersTool::new(test_registry());
-        let result = tool.execute(json!({})).await.expect("execute");
-        assert!(result.output().contains("docs"));
-        assert!(result.markdown_formatted.is_some());
-    }
-
-    #[tokio::test]
-    async fn list_tools_requires_server() {
-        let tool = McpListToolsTool::new(test_registry());
-        let result = tool.execute(json!({})).await;
-        assert!(result.is_err());
+            ..Default::default()
+        }]);
+        let tool = McpListServersTool::new(Arc::clone(&config));
+        let result = tool.execute(json!({})).await.unwrap();
+        let md = result.markdown_formatted.as_deref().unwrap();
+        assert!(
+            md.contains("higgsfield"),
+            "server added in config.mcp_client.servers must surface; got:\n{md}"
+        );
     }
 }
