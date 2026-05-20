@@ -17,6 +17,38 @@ describe('connectionsApi', () => {
     callCoreRpcMock.mockResolvedValue({});
   });
 
+  describe('envelope unwrapping', () => {
+    it('list() unwraps the { result, logs } envelope from RpcOutcome::single_log', async () => {
+      const payload = { connections: [], generated_at: '2026-05-20T00:00:00Z' };
+      callCoreRpcMock.mockResolvedValueOnce({
+        result: payload,
+        logs: ['connections_list aggregated 7, returning 7'],
+      });
+      const out = await connectionsApi.list();
+      // Without unwrap, `out.connections` would be undefined and the hub
+      // would crash with "Cannot read properties of undefined (reading 'filter')".
+      expect(out).toEqual(payload);
+      expect(out.connections).toEqual([]);
+    });
+
+    it('list() passes through bare values (RpcOutcome::new with no logs)', async () => {
+      const payload = { connections: [], generated_at: '2026-05-20T00:00:00Z' };
+      callCoreRpcMock.mockResolvedValueOnce(payload);
+      const out = await connectionsApi.list();
+      expect(out).toEqual(payload);
+    });
+
+    it('test() unwraps envelope-shaped TestProbeResult responses', async () => {
+      callCoreRpcMock.mockResolvedValueOnce({
+        result: { ok: true, status: null, error: 'P0-3 stub' },
+        logs: ['connections_test id=abc ok=true'],
+      });
+      const out = await connectionsApi.test('abc');
+      expect(out.ok).toBe(true);
+      expect(out.error).toBe('P0-3 stub');
+    });
+  });
+
   it('list() calls openhuman.connections_list with the request payload', async () => {
     await connectionsApi.list({ search: 'gmail' });
     expect(callCoreRpcMock).toHaveBeenCalledWith({

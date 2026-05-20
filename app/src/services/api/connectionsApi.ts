@@ -5,6 +5,14 @@
  * _delete` (P0-3), and `connections_test` (P0-3 stub) via `callCoreRpc`.
  * Frontend code should always go through this module — never `callCoreRpc`
  * directly — so we have a single audit point for the connections surface.
+ *
+ * ## Envelope unwrapping
+ *
+ * The Rust controllers all publish a one-line `tracing::info` summary via
+ * `RpcOutcome::single_log(...)`. When `into_cli_compatible_json()` sees logs
+ * it wraps the typed value in `{ result, logs }`; with no logs it returns the
+ * bare value. `unwrapRpcOutcome` collapses both shapes so callers always get
+ * the typed value back.
  */
 import type {
   ConnectionsListRequest,
@@ -17,28 +25,68 @@ import type {
 } from '../../types/connections';
 import { callCoreRpc } from '../coreRpcClient';
 
+/** `RpcOutcome::into_cli_compatible_json()` envelope when logs were attached. */
+interface RpcOutcomeEnvelope<T> {
+  result: T;
+  logs?: string[];
+}
+
+/**
+ * Collapses the `{ result, logs }` envelope produced by
+ * `RpcOutcome::single_log` on the Rust side. Bare values (RpcOutcome::new with
+ * no logs) pass through unchanged.
+ */
+function unwrapRpcOutcome<T>(raw: T | RpcOutcomeEnvelope<T>): T {
+  if (
+    raw !== null &&
+    typeof raw === 'object' &&
+    'result' in (raw as object) &&
+    'logs' in (raw as object) &&
+    Array.isArray((raw as RpcOutcomeEnvelope<T>).logs)
+  ) {
+    return (raw as RpcOutcomeEnvelope<T>).result;
+  }
+  return raw as T;
+}
+
 export const connectionsApi = {
-  list: (req: ConnectionsListRequest = {}): Promise<ConnectionsListResponse> =>
-    callCoreRpc<ConnectionsListResponse>({ method: 'openhuman.connections_list', params: req }),
+  list: async (req: ConnectionsListRequest = {}): Promise<ConnectionsListResponse> => {
+    const raw = await callCoreRpc<
+      ConnectionsListResponse | RpcOutcomeEnvelope<ConnectionsListResponse>
+    >({ method: 'openhuman.connections_list', params: req });
+    return unwrapRpcOutcome(raw);
+  },
 
-  createGenericHttp: (req: CreateGenericHttpRequest): Promise<GenericHttpConnection> =>
-    callCoreRpc<GenericHttpConnection>({
-      method: 'openhuman.connections_generic_http_create',
-      params: { request: req },
-    }),
+  createGenericHttp: async (req: CreateGenericHttpRequest): Promise<GenericHttpConnection> => {
+    const raw = await callCoreRpc<
+      GenericHttpConnection | RpcOutcomeEnvelope<GenericHttpConnection>
+    >({ method: 'openhuman.connections_generic_http_create', params: { request: req } });
+    return unwrapRpcOutcome(raw);
+  },
 
-  updateGenericHttp: (
+  updateGenericHttp: async (
     id: GenericHttpConnectionId,
     req: UpdateGenericHttpRequest
-  ): Promise<GenericHttpConnection> =>
-    callCoreRpc<GenericHttpConnection>({
-      method: 'openhuman.connections_generic_http_update',
-      params: { id, request: req },
-    }),
+  ): Promise<GenericHttpConnection> => {
+    const raw = await callCoreRpc<
+      GenericHttpConnection | RpcOutcomeEnvelope<GenericHttpConnection>
+    >({ method: 'openhuman.connections_generic_http_update', params: { id, request: req } });
+    return unwrapRpcOutcome(raw);
+  },
 
-  deleteGenericHttp: (id: GenericHttpConnectionId): Promise<boolean> =>
-    callCoreRpc<boolean>({ method: 'openhuman.connections_generic_http_delete', params: { id } }),
+  deleteGenericHttp: async (id: GenericHttpConnectionId): Promise<boolean> => {
+    const raw = await callCoreRpc<boolean | RpcOutcomeEnvelope<boolean>>({
+      method: 'openhuman.connections_generic_http_delete',
+      params: { id },
+    });
+    return unwrapRpcOutcome(raw);
+  },
 
-  test: (id: GenericHttpConnectionId): Promise<TestProbeResult> =>
-    callCoreRpc<TestProbeResult>({ method: 'openhuman.connections_test', params: { id } }),
+  test: async (id: GenericHttpConnectionId): Promise<TestProbeResult> => {
+    const raw = await callCoreRpc<TestProbeResult | RpcOutcomeEnvelope<TestProbeResult>>({
+      method: 'openhuman.connections_test',
+      params: { id },
+    });
+    return unwrapRpcOutcome(raw);
+  },
 };

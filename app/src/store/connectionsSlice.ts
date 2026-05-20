@@ -58,7 +58,12 @@ const connectionsSlice = createSlice({
       .addCase(
         fetchConnections.fulfilled,
         (state, action: PayloadAction<ConnectionsListResponse>) => {
-          state.connections = action.payload.connections;
+          // Defensive fallback: even though `connectionsApi.list` unwraps the
+          // `{ result, logs }` envelope, an unexpected wire shape must not
+          // crash the hub. Empty array keeps the UI in a renderable state.
+          state.connections = Array.isArray(action.payload?.connections)
+            ? action.payload.connections
+            : [];
           state.loadStatus = 'success';
           state.lastFetchedAt = Date.now();
         }
