@@ -52,7 +52,7 @@ export default function BuiltinIntegrationsSection({ items }: Props) {
       <SectionHeader
         title="Built-in Integrations"
         count={connectedCount}
-        subtitle={`${items.length} available · click to manage in intelligence settings`}
+        subtitle={`${items.length} available · backend-proxied agent tools you don’t need to authorize separately`}
       />
       {items.length === 0 ? (
         <div className="text-sm text-stone-500 dark:text-neutral-400 px-3.5 py-4 bg-stone-50 dark:bg-neutral-800 rounded-xl">

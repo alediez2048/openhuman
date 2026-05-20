@@ -37,7 +37,7 @@ export default function McpServersSection({ items }: Props) {
       <SectionHeader
         title="MCP Servers"
         count={connectedCount}
-        subtitle={`${items.length} available · click to manage in intelligence settings`}
+        subtitle={`${items.length} available · custom tool surfaces the agent can call via the Model Context Protocol`}
         // P0-6b: cta={<AddMcpButton />}
       />
       {items.length === 0 ? (
@@ -57,7 +57,7 @@ export default function McpServersSection({ items }: Props) {
                 data-testid={`connection-card-mcp-${id}`}>
                 <ConnectionCard
                   name={c.display_name}
-                  subtitle={c.mechanism_label}
+                  subtitle="External MCP server — extends the agent's tool surface"
                   status={c.status}
                 />
               </button>

@@ -33,6 +33,16 @@ function channelSlugOf(c: ConnectionView, fallbackIndex: number): string {
   return c.ref.type === 'channel' ? c.ref.provider : `unknown-${fallbackIndex}`;
 }
 
+/** Per-channel description shown as the card subtitle. */
+const CHANNEL_DESCRIPTIONS: Record<string, string> = {
+  telegram: 'Receive and send Telegram messages — managed-DM relay, bot tokens, or webhook auth.',
+  discord:
+    'Operate inside Discord servers via OAuth or a bot token. Supports threads, reactions, and DM relay.',
+  web: 'Embed a chat widget on your website. Visitors talk to the agent via OpenHuman’s relay.',
+  imessage:
+    'Receive iMessages via the local AppleScript bridge. macOS-only; configure allowed contacts.',
+};
+
 export default function ChannelsSection({ items }: Props) {
   const dispatch = useAppDispatch();
   const { definitions } = useChannelDefinitions();
@@ -46,7 +56,7 @@ export default function ChannelsSection({ items }: Props) {
       <SectionHeader
         title="Chat Channels"
         count={connectedCount}
-        subtitle={`${items.length} available · Telegram, Discord, Web, iMessage`}
+        subtitle={`${items.length} available · native messaging integrations agents send/receive on`}
       />
       {items.length === 0 ? (
         <div className="text-sm text-stone-500 dark:text-neutral-400 px-3.5 py-4 bg-stone-50 dark:bg-neutral-800 rounded-xl">
@@ -56,6 +66,7 @@ export default function ChannelsSection({ items }: Props) {
         <div className="space-y-2">
           {items.map((c, i) => {
             const slug = channelSlugOf(c, i);
+            const description = CHANNEL_DESCRIPTIONS[slug] ?? c.mechanism_label;
             return (
               <button
                 key={`channel-${slug}`}
@@ -63,11 +74,7 @@ export default function ChannelsSection({ items }: Props) {
                 onClick={() => setOpenSlug(slug)}
                 className="block w-full text-left rounded-xl hover:bg-stone-50 dark:hover:bg-neutral-800 focus:outline-none focus:ring-2 focus:ring-primary-500 transition-colors"
                 data-testid={`connection-card-channel-${slug}`}>
-                <ConnectionCard
-                  name={c.display_name}
-                  subtitle={c.mechanism_label}
-                  status={c.status}
-                />
+                <ConnectionCard name={c.display_name} subtitle={description} status={c.status} />
               </button>
             );
           })}
