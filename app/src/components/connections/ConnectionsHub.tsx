@@ -178,14 +178,23 @@ export default function ConnectionsHub() {
 
       {loadStatus !== 'error' ? (
         <div className="space-y-4">
-          <ComposioSection items={byKind.composio} />
-          <div ref={channelsAnchorRef}>
-            <ChannelsSection items={byKind.channel} />
-          </div>
-          <WebviewAccountsSection items={byKind.webview} />
-          <BuiltinIntegrationsSection items={byKind.builtin} />
-          <McpServersSection items={byKind.mcp} />
-          <GenericHttpSection items={byKind.generic_http} />
+          {/* When a kind filter chip is active, only the sections matching
+              that filter render. Otherwise (the "All" chip case) every
+              section renders so a user always sees the full surface. */}
+          {activeKinds.has('composio') ? <ComposioSection items={byKind.composio} /> : null}
+          {activeKinds.has('channel') ? (
+            <div ref={channelsAnchorRef}>
+              <ChannelsSection items={byKind.channel} />
+            </div>
+          ) : null}
+          {activeKinds.has('webview') ? <WebviewAccountsSection items={byKind.webview} /> : null}
+          {activeKinds.has('builtin') ? (
+            <BuiltinIntegrationsSection items={byKind.builtin} />
+          ) : null}
+          {activeKinds.has('mcp') ? <McpServersSection items={byKind.mcp} /> : null}
+          {activeKinds.has('generic_http') ? (
+            <GenericHttpSection items={byKind.generic_http} />
+          ) : null}
         </div>
       ) : null}
     </div>

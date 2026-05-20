@@ -13,10 +13,12 @@
 //!   integrations (twilio/apify/google_places/parallel/seltz/stock_prices)
 //!   and derives status from the presence of an `IntegrationClient`.
 //! - `collect_mcp` (P0-6) — reads `McpServerRegistry::from_config(config)`.
+//! - `collect_composio` (P0-2a) — calls `composio::ops::composio_list_connections`
+//!   under a `COMPOSIO_COLLECTOR_TIMEOUT` so a slow / failing Composio call
+//!   degrades the section to empty rather than blocking the whole hub.
 //!
 //! Still stubbed (return `Vec::new()`):
-//! - `collect_composio` (P0-2a), `collect_channels` (P0-2b),
-//!   `collect_webview` (P0-2c).
+//! - `collect_channels` (P0-2b), `collect_webview` (P0-2c).
 //!
 //! See `Automations/systemsdesign.md §2.1`, `ADR-003`, `ADR-006`.
 
@@ -26,6 +28,23 @@ use crate::openhuman::connections::types::{
     ConnectionKind, ConnectionRef, ConnectionStatus, ConnectionView,
 };
 use anyhow::Result;
+use std::time::Duration;
+
+/// Hard ceiling on the Composio HTTP call inside the aggregator. Composio
+/// network round-trips can stretch under load; without a bound, every Hub
+/// page load would wait on the worst tail. 3s is generous for a healthy
+/// backend and short enough that a regression doesn't make the Hub feel
+/// broken.
+const COMPOSIO_COLLECTOR_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// Uppercase the first ASCII character of `s` for display.
+fn capitalize(s: &str) -> String {
+    let mut chars = s.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().chain(chars).collect(),
+        None => String::new(),
+    }
+}
 
 /// Collects every connection across all 6 mechanisms in parallel.
 ///
@@ -78,11 +97,74 @@ pub async fn list_all(config: &Config) -> Result<Vec<ConnectionView>> {
     Ok(all)
 }
 
-/// Composio toolkits + connected accounts. **Stubbed in P0-2** — follow-up
-/// ticket P0-2a wires this against `composio::ops::list_connected_toolkits`.
-async fn collect_composio(_config: &Config) -> Result<Vec<ConnectionView>> {
-    tracing::debug!(target: "connections", "[connections] composio collector — TODO P0-2a");
-    Ok(Vec::new())
+/// Composio connected accounts (`composio::ops::composio_list_connections`).
+///
+/// One `ConnectionView` per active Composio connection. `display_name`
+/// prefers the account email when present, otherwise falls back to the
+/// toolkit slug. Status mirrors the Composio backend status field:
+/// `ACTIVE` / `CONNECTED` → `Connected`, everything else → `NotConnected`
+/// (the UI surfaces error states the same way Composio's own dashboards do).
+///
+/// Failures (no session token, network errors, timeouts) degrade to an
+/// empty result + a `warn!` log; the rest of the aggregator still
+/// populates. See `COMPOSIO_COLLECTOR_TIMEOUT`.
+async fn collect_composio(config: &Config) -> Result<Vec<ConnectionView>> {
+    let call = crate::openhuman::composio::ops::composio_list_connections(config);
+    let outcome = match tokio::time::timeout(COMPOSIO_COLLECTOR_TIMEOUT, call).await {
+        Ok(Ok(outcome)) => outcome,
+        Ok(Err(e)) => {
+            tracing::warn!(
+                target: "connections",
+                "[connections] composio collector skipped: {e}"
+            );
+            return Ok(Vec::new());
+        }
+        Err(_elapsed) => {
+            tracing::warn!(
+                target: "connections",
+                "[connections] composio collector timed out after {}s",
+                COMPOSIO_COLLECTOR_TIMEOUT.as_secs()
+            );
+            return Ok(Vec::new());
+        }
+    };
+
+    let rows: Vec<ConnectionView> = outcome
+        .value
+        .connections
+        .into_iter()
+        .map(|c| {
+            let status_upper = c.status.to_uppercase();
+            let status = if status_upper == "ACTIVE" || status_upper == "CONNECTED" {
+                ConnectionStatus::Connected
+            } else {
+                ConnectionStatus::NotConnected
+            };
+            // Capitalize the toolkit slug for display ("gmail" → "Gmail").
+            // The Composio Rust type does not carry the account email today
+            // (it's TS-only on later backend versions), so the slug is the
+            // best we can do without another backend call.
+            let display_name = capitalize(&c.toolkit);
+            ConnectionView {
+                r#ref: ConnectionRef::Composio {
+                    toolkit_id: c.toolkit.clone(),
+                    account_id: Some(c.id.clone()),
+                },
+                display_name,
+                status,
+                last_used_at: None,
+                mechanism_label: "Composio".to_string(),
+            }
+        })
+        .collect();
+
+    tracing::debug!(
+        target: "connections",
+        "[connections] composio collector — count={}",
+        rows.len()
+    );
+
+    Ok(rows)
 }
 
 /// Native chat-channel providers (Slack/Discord/Telegram/...). **Stubbed in
