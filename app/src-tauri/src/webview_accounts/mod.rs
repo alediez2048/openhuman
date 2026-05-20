@@ -58,9 +58,11 @@ fn provider_url(provider: &str) -> Option<&'static str> {
         "zoom" => Some("https://zoom.us/"),
         "browserscan" => Some("https://www.browserscan.net/bot-detection"),
         // Connections Hub additions — sign-in-only (no scanner module yet).
-        "twitter" => Some("https://x.com/messages"),
-        "instagram" => Some("https://www.instagram.com/direct/inbox/"),
-        "messenger" => Some("https://www.messenger.com/"),
+        // Start each at the login/home URL so a logged-out CEF session sees
+        // the sign-in flow directly instead of bouncing through a redirect.
+        "twitter" => Some("https://x.com/i/flow/login"),
+        "instagram" => Some("https://www.instagram.com/accounts/login/"),
+        "messenger" => Some("https://www.messenger.com/login"),
         _ => None,
     }
 }
@@ -148,10 +150,40 @@ fn provider_allowed_hosts(provider: &str) -> &'static [&'static str] {
             "www.googleapis.com",
         ],
         "browserscan" => &["browserscan.net"],
-        // Connections Hub sign-in surface — narrow allowlists (auth + CDN).
-        "twitter" => &["x.com", "twitter.com", "twimg.com"],
-        "instagram" => &["instagram.com", "cdninstagram.com", "fbcdn.net"],
-        "messenger" => &["messenger.com", "facebook.com", "fbcdn.net"],
+        // Connections Hub sign-in surface — narrow allowlists. Each includes
+        // CDN + the auth dependencies the provider's login flow actually
+        // requests (reCAPTCHA, Google fonts, etc.) so the embedded webview
+        // doesn't deadlock on a third-party host the renderer can't load.
+        "twitter" => &[
+            "x.com",
+            "twitter.com",
+            "twimg.com",
+            // Twitter/X login uses Arkose Labs CAPTCHA + Google reCAPTCHA
+            // fallback and pulls assets from these hosts. Without them the
+            // login page paints blank.
+            "arkoselabs.com",
+            "funcaptcha.com",
+            "google.com",
+            "gstatic.com",
+            "recaptcha.net",
+            "accounts.google.com",
+        ],
+        "instagram" => &[
+            "instagram.com",
+            "cdninstagram.com",
+            "fbcdn.net",
+            // Meta auth flows pull from facebook.com + assets in fbsbx.com.
+            "facebook.com",
+            "fbsbx.com",
+        ],
+        "messenger" => &[
+            "messenger.com",
+            "facebook.com",
+            "fbcdn.net",
+            "fbsbx.com",
+            // Some Messenger sign-in paths route through Meta's accounts host.
+            "accountscenter.facebook.com",
+        ],
         _ => &[],
     }
 }
