@@ -5,12 +5,18 @@
 //! API only. Failures degrade gracefully: a broken collector logs at `warn`
 //! and contributes zero rows; the remaining mechanisms still populate.
 //!
-//! ## Current wiring status (P0-2)
+//! ## Current wiring status
 //!
-//! Only `collect_generic_http` is fully wired against this domain's own
-//! `connections.db`. The other five collectors are stubs that return an empty
-//! vector with a `TODO` log line; per-mechanism wiring is split into
-//! follow-up tickets (P0-2a..P0-2e) to keep this PR small.
+//! Wired:
+//! - `collect_generic_http` (P0-2) — reads this domain's own `connections.db`.
+//! - `collect_builtin` (P0-6) — enumerates the 6 backend-proxied agent
+//!   integrations (twilio/apify/google_places/parallel/seltz/stock_prices)
+//!   and derives status from the presence of an `IntegrationClient`.
+//! - `collect_mcp` (P0-6) — reads `McpServerRegistry::from_config(config)`.
+//!
+//! Still stubbed (return `Vec::new()`):
+//! - `collect_composio` (P0-2a), `collect_channels` (P0-2b),
+//!   `collect_webview` (P0-2c).
 //!
 //! See `Automations/systemsdesign.md §2.1`, `ADR-003`, `ADR-006`.
 
@@ -95,18 +101,97 @@ async fn collect_webview(_config: &Config) -> Result<Vec<ConnectionView>> {
 }
 
 /// OpenHuman-backend-proxied built-in integrations (Twilio/Apify/...).
-/// **Stubbed in P0-2** — follow-up ticket P0-2d wires this against the
-/// `integrations` domain's enabled-flag pattern + scope config.
-async fn collect_builtin(_config: &Config) -> Result<Vec<ConnectionView>> {
-    tracing::debug!(target: "connections", "[connections] builtin collector — TODO P0-2d");
-    Ok(Vec::new())
+///
+/// These are not local-config-toggled — they are agent tools that proxy
+/// through the OpenHuman backend and are gated by:
+/// 1. Presence of a session JWT (resolved by `integrations::build_client`).
+/// 2. Per-account availability (delivered by the backend pricing endpoint).
+///
+/// Phase 0 surfaces them read-only. Status is derived from (1): when
+/// `build_client(&config)` returns `Some`, every integration is reported as
+/// `Connected`; otherwise `NotConnected` with a generic
+/// "Sign in to enable" affordance owned by the frontend section.
+///
+/// Toggle / credential rotation lands as a follow-up (`P0-6a`) once the
+/// backend exposes a per-account integration-enabled surface.
+async fn collect_builtin(config: &Config) -> Result<Vec<ConnectionView>> {
+    /// `(integration_id, display_label)` for every backend-proxied integration.
+    /// Mirrors the public surface in `openhuman/integrations/mod.rs`.
+    const BUILTINS: &[(&str, &str)] = &[
+        ("twilio", "Twilio"),
+        ("apify", "Apify"),
+        ("google_places", "Google Places"),
+        ("parallel", "Parallel"),
+        ("seltz", "Seltz"),
+        ("stock_prices", "Stock Prices"),
+    ];
+
+    // `build_client` does file I/O to read the session JWT — wrap in
+    // spawn_blocking so we never block the async runtime.
+    let config_clone = config.clone();
+    let has_session = tokio::task::spawn_blocking(move || {
+        crate::openhuman::integrations::build_client(&config_clone).is_some()
+    })
+    .await
+    .map_err(|e| anyhow::anyhow!("builtin collector task panicked: {e}"))?;
+
+    let status = if has_session {
+        ConnectionStatus::Connected
+    } else {
+        ConnectionStatus::NotConnected
+    };
+
+    tracing::debug!(
+        target: "connections",
+        "[connections] builtin collector — has_session={has_session} count={}",
+        BUILTINS.len()
+    );
+
+    Ok(BUILTINS
+        .iter()
+        .map(|(id, label)| ConnectionView {
+            r#ref: ConnectionRef::Builtin {
+                integration: (*id).to_string(),
+            },
+            display_name: (*label).to_string(),
+            status: status.clone(),
+            last_used_at: None,
+            mechanism_label: "Built-in".to_string(),
+        })
+        .collect())
 }
 
-/// MCP servers + their exposed tools. **Stubbed in P0-2** — follow-up ticket
-/// P0-2e wires this against `mcp_client`/`mcp_server` public registries.
-async fn collect_mcp(_config: &Config) -> Result<Vec<ConnectionView>> {
-    tracing::debug!(target: "connections", "[connections] mcp collector — TODO P0-2e");
-    Ok(Vec::new())
+/// MCP servers configured under `config.mcp_client.servers` plus the legacy
+/// `gitbooks` server when `config.gitbooks.enabled`.
+///
+/// Read-only in Phase 0. Restart / enable / disable lands as `P0-6b`; today
+/// the registry has no in-process "restart" verb (HTTP clients are lazy,
+/// stdio clients are per-call), so this collector only surfaces presence.
+async fn collect_mcp(config: &Config) -> Result<Vec<ConnectionView>> {
+    let registry = crate::openhuman::mcp_client::McpServerRegistry::from_config(config);
+
+    let rows: Vec<ConnectionView> = registry
+        .list()
+        .into_iter()
+        .map(|def| ConnectionView {
+            r#ref: ConnectionRef::Mcp {
+                server_id: def.name.clone(),
+                tool_name: None,
+            },
+            display_name: def.name.clone(),
+            status: ConnectionStatus::Connected,
+            last_used_at: None,
+            mechanism_label: "MCP".to_string(),
+        })
+        .collect();
+
+    tracing::debug!(
+        target: "connections",
+        "[connections] mcp collector — count={}",
+        rows.len()
+    );
+
+    Ok(rows)
 }
 
 /// Generic HTTP connection rows from this domain's own `connections.db`.

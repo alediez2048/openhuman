@@ -11,15 +11,21 @@ fn config_with_workspace(dir: &TempDir) -> Config {
     config
 }
 
+/// After P0-6, a fresh workspace surfaces:
+/// - 6 built-in integration rows (twilio/apify/google_places/parallel/seltz/stock_prices)
+/// - 1 MCP server row (the legacy `gitbooks` auto-registration)
+/// — and nothing else (composio/channels/webview/generic_http remain empty).
+const FRESH_BASELINE_ROWS: usize = 7;
+
 #[tokio::test]
-async fn connections_list_empty_workspace_returns_ok_with_empty_vec() {
+async fn connections_list_fresh_workspace_returns_builtin_and_mcp_baseline() {
     let dir = TempDir::new().unwrap();
     let config = config_with_workspace(&dir);
 
     let outcome = connections_list(&config, ConnectionsListRequest::default())
         .await
         .unwrap();
-    assert!(outcome.value.connections.is_empty());
+    assert_eq!(outcome.value.connections.len(), FRESH_BASELINE_ROWS);
     assert!(
         !outcome.logs.is_empty(),
         "should log the aggregation summary"
@@ -36,7 +42,9 @@ async fn connections_list_search_does_not_panic_on_empty_input() {
         search: Some("".to_string()),
     };
     let outcome = connections_list(&config, req).await.unwrap();
-    assert!(outcome.value.connections.is_empty());
+    // Empty search string short-circuits to a no-op filter (still returns the
+    // P0-6 fresh-workspace baseline).
+    assert_eq!(outcome.value.connections.len(), FRESH_BASELINE_ROWS);
 }
 
 #[tokio::test]
@@ -50,6 +58,21 @@ async fn connections_list_kind_filter_with_empty_vec_is_no_op() {
     };
     let outcome = connections_list(&config, req).await.unwrap();
     // empty kind_filter is treated as "no filter" — no retain pass invoked.
+    assert_eq!(outcome.value.connections.len(), FRESH_BASELINE_ROWS);
+}
+
+#[tokio::test]
+async fn connections_list_kind_filter_isolates_generic_http_from_baseline() {
+    // With the P0-6 baseline of 7 rows, a `GenericHttp`-only filter on a fresh
+    // workspace should produce zero rows (the baseline has no generic_http).
+    let dir = TempDir::new().unwrap();
+    let config = config_with_workspace(&dir);
+
+    let req = ConnectionsListRequest {
+        kind_filter: Some(vec![ConnectionKind::GenericHttp]),
+        search: None,
+    };
+    let outcome = connections_list(&config, req).await.unwrap();
     assert!(outcome.value.connections.is_empty());
 }
 
