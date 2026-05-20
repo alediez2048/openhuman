@@ -1,21 +1,18 @@
 /**
  * Built-in integrations section of the Connections Hub.
  *
- * Tile grid matching every other section. One tile per backend-proxied
- * agent integration (Twilio / Apify / Google Places / Parallel / Seltz /
- * Stock Prices). Status comes from session-token presence in
- * `collect_builtin` — `Connected` once the user has signed in to the
- * OpenHuman backend, `NotConnected` otherwise.
- *
- * Clicking a tile navigates to `/intelligence` for credential management
- * until per-account toggle/credential rotation ships (filed as **P0-6a**).
+ * Tile grid matching every other section. Click a tile → opens
+ * `<BuiltinDetailModal>` with status + description + a deep-link to
+ * `/intelligence`. There's no local toggle (P0-6a still deferred — the
+ * backend hasn't exposed a per-account integration-enabled surface yet).
  */
-import { useNavigate } from 'react-router-dom';
+import { useState } from 'react';
 
 import type { ConnectionView } from '../../../types/connections';
 import { builtinIcon } from '../connectorIcons';
 import ConnectorTile from '../ConnectorTile';
 import SectionHeader from '../SectionHeader';
+import BuiltinDetailModal from './BuiltinDetailModal';
 
 interface Props {
   items: ConnectionView[];
@@ -35,8 +32,9 @@ function integrationIdOf(item: ConnectionView, fallbackIndex: number): string {
 }
 
 export default function BuiltinIntegrationsSection({ items }: Props) {
-  const navigate = useNavigate();
+  const [detail, setDetail] = useState<ConnectionView | null>(null);
   const connectedCount = items.filter(c => c.status.kind === 'connected').length;
+
   return (
     <section data-testid="connections-section-builtin">
       <SectionHeader
@@ -59,7 +57,7 @@ export default function BuiltinIntegrationsSection({ items }: Props) {
                 name={c.display_name}
                 icon={builtinIcon(id)}
                 status={c.status}
-                onClick={() => navigate('/intelligence')}
+                onClick={() => setDetail(c)}
                 title={`${c.display_name} — ${description}`}
                 testId={`connection-card-builtin-${id}`}
               />
@@ -67,6 +65,16 @@ export default function BuiltinIntegrationsSection({ items }: Props) {
           })}
         </div>
       )}
+
+      {detail ? (
+        <BuiltinDetailModal
+          integrationId={integrationIdOf(detail, 0)}
+          displayName={detail.display_name}
+          description={BUILTIN_DESCRIPTIONS[integrationIdOf(detail, 0)] ?? detail.mechanism_label}
+          status={detail.status}
+          onClose={() => setDetail(null)}
+        />
+      ) : null}
     </section>
   );
 }

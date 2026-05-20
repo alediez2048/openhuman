@@ -1,18 +1,18 @@
 /**
  * MCP servers section of the Connections Hub.
  *
- * Tile grid matching every other section. One tile per registered MCP
- * server (from `McpServerRegistry::from_config`) plus a `+ Add custom`
- * tile that opens the McpAddModal — no more redirect to /intelligence.
+ * Tile grid matching every other section. Click a server tile → opens
+ * `<McpManageModal>` with a Remove action. Click the `+ Add custom` tile
+ * → opens `<McpAddModal>`.
  */
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 
 import type { ConnectionView } from '../../../types/connections';
 import { mcpIcon } from '../connectorIcons';
 import ConnectorTile, { AddCustomTile } from '../ConnectorTile';
 import SectionHeader from '../SectionHeader';
 import McpAddModal from './McpAddModal';
+import McpManageModal from './McpManageModal';
 
 interface Props {
   items: ConnectionView[];
@@ -23,8 +23,8 @@ function serverIdOf(item: ConnectionView, fallbackIndex: number): string {
 }
 
 export default function McpServersSection({ items }: Props) {
-  const navigate = useNavigate();
   const [addOpen, setAddOpen] = useState(false);
+  const [managing, setManaging] = useState<ConnectionView | null>(null);
   const connectedCount = items.filter(c => c.status.kind === 'connected').length;
 
   return (
@@ -43,8 +43,8 @@ export default function McpServersSection({ items }: Props) {
               name={c.display_name}
               icon={mcpIcon(id)}
               status={c.status}
-              onClick={() => navigate('/intelligence')}
-              title={`${c.display_name} — extends the agent's tool surface`}
+              onClick={() => setManaging(c)}
+              title={`${c.display_name} — click to manage`}
               testId={`connection-card-mcp-${id}`}
             />
           );
@@ -57,6 +57,14 @@ export default function McpServersSection({ items }: Props) {
       </div>
 
       {addOpen ? <McpAddModal onClose={() => setAddOpen(false)} /> : null}
+      {managing ? (
+        <McpManageModal
+          serverId={serverIdOf(managing, 0)}
+          displayName={managing.display_name}
+          status={managing.status}
+          onClose={() => setManaging(null)}
+        />
+      ) : null}
     </section>
   );
 }
