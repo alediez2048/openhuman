@@ -13,10 +13,19 @@ pub(crate) const COOKIES_DB_ENV: &str = "OPENHUMAN_CEF_COOKIES_DB";
 
 /// A provider we surface in the welcome snapshot.
 ///
-/// `host_suffix` is matched against Chromium's `host_key` column with a
-/// trailing-wildcard SQL `LIKE`. `session_cookie_names` are the cookie
-/// `name` values that indicate an active login — any one match is
-/// sufficient.
+/// Two probe paths, OR'd together — a provider is "logged in" if **either**
+/// fires:
+///
+/// 1. Cookie probe — `host_suffix` is matched against Chromium's `host_key`
+///    column with a trailing-wildcard SQL `LIKE`; `session_cookie_names`
+///    are the cookie `name` values that indicate an active login. Used by
+///    Slack / Discord / LinkedIn / WhatsApp Web / X / Instagram / Messenger.
+///
+/// 2. IndexedDB probe — `indexeddb_origin` names the Chromium
+///    `IndexedDB/<origin>_<port>.indexeddb.leveldb/` directory that the
+///    provider populates on sign-in. Used by Telegram Web (which stores
+///    its auth blob entirely in IndexedDB, no cookies). When `None`, this
+///    path is skipped.
 struct Provider {
     /// Stable key surfaced in the JSON snapshot (e.g. `"gmail"`).
     key: &'static str,
@@ -28,6 +37,11 @@ struct Provider {
     /// Cookie names that indicate a logged-in session. Picked per-provider
     /// to avoid false positives from analytics/consent cookies.
     session_cookie_names: &'static [&'static str],
+    /// Optional IndexedDB origin directory prefix to probe as a fallback
+    /// (e.g. `"https_web.telegram.org_0"`). When present, the absence of a
+    /// matching cookie is no longer authoritative — the IndexedDB folder
+    /// must also be empty before we report `logged_in: false`.
+    indexeddb_origin: Option<&'static str>,
 }
 
 /// Providers the welcome agent cares about. Keep this list aligned
@@ -43,41 +57,53 @@ pub(crate) const PROVIDERS: &[Provider] = &[
         key: "whatsapp",
         host_suffix: "web.whatsapp.com",
         session_cookie_names: &["wa_ul", "wa_build"],
+        indexeddb_origin: None,
     },
     Provider {
+        // Telegram Web stores its auth keys (`dc1_auth_key`, etc.) in
+        // IndexedDB rather than cookies. Cookies remain in the probe so a
+        // future Telegram change that adds a session cookie still fires;
+        // the IndexedDB path is the primary signal today.
         key: "telegram",
         host_suffix: "web.telegram.org",
         session_cookie_names: &["stel_ssid", "stel_token"],
+        indexeddb_origin: Some("https_web.telegram.org_0"),
     },
     Provider {
         key: "slack",
         host_suffix: ".slack.com",
         session_cookie_names: &["d", "d-s"],
+        indexeddb_origin: None,
     },
     Provider {
         key: "discord",
         host_suffix: ".discord.com",
         session_cookie_names: &["__Secure-recent_session", "__Secure-authjs.session-token"],
+        indexeddb_origin: None,
     },
     Provider {
         key: "linkedin",
         host_suffix: ".linkedin.com",
         session_cookie_names: &["li_at"],
+        indexeddb_origin: None,
     },
     Provider {
         key: "twitter",
         host_suffix: ".x.com",
         session_cookie_names: &["auth_token"],
+        indexeddb_origin: None,
     },
     Provider {
         key: "instagram",
         host_suffix: ".instagram.com",
         session_cookie_names: &["sessionid"],
+        indexeddb_origin: None,
     },
     Provider {
         key: "messenger",
         host_suffix: ".messenger.com",
         session_cookie_names: &["xs", "c_user"],
+        indexeddb_origin: None,
     },
 ];
 
@@ -161,10 +187,22 @@ pub fn detect_webview_logins() -> Value {
         }
     };
 
+    // Resolve the IndexedDB root once. `path` points at the Cookies SQLite
+    // file inside the Default profile (`{profile}/Default/Cookies`); the
+    // IndexedDB store sits next to it at `{profile}/Default/IndexedDB/`.
+    let indexeddb_root = path.parent().map(|p| p.join("IndexedDB"));
+
     for p in PROVIDERS {
-        let logged_in = provider_has_session_cookie(&conn, p);
+        let cookie_match = provider_has_session_cookie(&conn, p);
+        let indexeddb_match = match (p.indexeddb_origin, indexeddb_root.as_deref()) {
+            (Some(origin), Some(root)) => provider_has_indexeddb(root, origin),
+            _ => false,
+        };
+        let logged_in = cookie_match || indexeddb_match;
         tracing::debug!(
             provider = p.key,
+            cookie_match,
+            indexeddb_match,
             logged_in,
             "[webview_accounts] probed provider login state"
         );
@@ -172,6 +210,26 @@ pub fn detect_webview_logins() -> Value {
     }
 
     Value::Object(out)
+}
+
+/// Return `true` when Chromium has a non-empty IndexedDB store for the
+/// given origin (e.g. `https_web.telegram.org_0`). Providers like Telegram
+/// Web store their auth blob (`dc1_auth_key`, etc.) here rather than in
+/// cookies, so cookie presence is not a reliable login signal for them.
+///
+/// Chromium lays IndexedDB out as `<root>/<origin>.indexeddb.leveldb/`
+/// containing LevelDB sst/log files. We treat "directory exists + has at
+/// least one file" as logged-in. False positives are theoretically possible
+/// (a previous session that was signed out but left files behind) — in
+/// practice Telegram Web clears the directory on sign-out, so this is a
+/// reasonable heuristic until a richer probe is wired.
+fn provider_has_indexeddb(root: &std::path::Path, origin: &str) -> bool {
+    let dir = root.join(format!("{origin}.indexeddb.leveldb"));
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(it) => it,
+        Err(_) => return false,
+    };
+    entries.flatten().next().is_some()
 }
 
 /// Return `true` when the cookie DB has at least one row whose host_key
@@ -364,6 +422,60 @@ mod tests {
         std::env::set_var(COOKIES_DB_ENV, &db);
         let v = detect_webview_logins();
         assert_eq!(v["linkedin"], Value::Bool(false));
+        std::env::remove_var(COOKIES_DB_ENV);
+    }
+
+    #[test]
+    fn detects_telegram_via_indexeddb_when_no_session_cookie() {
+        // Telegram Web stores its session entirely in IndexedDB
+        // (`dc1_auth_key`, etc.) — no cookies. The probe must still report
+        // logged_in=true via the IndexedDB-folder existence fallback.
+        let _lock = lock_env();
+        let tmp = TempDir::new().unwrap();
+        let cookies_db = tmp.path().join("Default").join("Cookies");
+        std::fs::create_dir_all(cookies_db.parent().unwrap()).unwrap();
+        // Empty cookies DB — no Telegram session cookie at all.
+        make_cookies_db(&cookies_db, &[]);
+
+        // Populate the IndexedDB directory Chromium would create for
+        // `https://web.telegram.org`.
+        let idb = tmp
+            .path()
+            .join("Default")
+            .join("IndexedDB")
+            .join("https_web.telegram.org_0.indexeddb.leveldb");
+        std::fs::create_dir_all(&idb).unwrap();
+        std::fs::write(idb.join("CURRENT"), b"MANIFEST-000001\n").unwrap();
+
+        std::env::set_var(COOKIES_DB_ENV, &cookies_db);
+        let v = detect_webview_logins();
+        assert_eq!(v["telegram"], Value::Bool(true));
+        // Sanity: providers without IndexedDB markers stay false.
+        assert_eq!(v["whatsapp"], Value::Bool(false));
+        std::env::remove_var(COOKIES_DB_ENV);
+    }
+
+    #[test]
+    fn empty_telegram_indexeddb_dir_is_not_a_login() {
+        // A leftover empty IndexedDB directory (e.g. created by Chromium
+        // before navigation completed, or after a sign-out clearing pass)
+        // must not be reported as a login.
+        let _lock = lock_env();
+        let tmp = TempDir::new().unwrap();
+        let cookies_db = tmp.path().join("Default").join("Cookies");
+        std::fs::create_dir_all(cookies_db.parent().unwrap()).unwrap();
+        make_cookies_db(&cookies_db, &[]);
+        let idb = tmp
+            .path()
+            .join("Default")
+            .join("IndexedDB")
+            .join("https_web.telegram.org_0.indexeddb.leveldb");
+        std::fs::create_dir_all(&idb).unwrap();
+        // Empty directory — no LevelDB files.
+
+        std::env::set_var(COOKIES_DB_ENV, &cookies_db);
+        let v = detect_webview_logins();
+        assert_eq!(v["telegram"], Value::Bool(false));
         std::env::remove_var(COOKIES_DB_ENV);
     }
 
