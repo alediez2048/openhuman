@@ -1,19 +1,13 @@
 /**
  * Chat-channels section of the Connections Hub.
  *
- * Renders one card per chat channel OpenHuman supports (Telegram, Discord,
- * Web, iMessage). Status comes from the aggregator (`connected_channel_slugs`
- * — same source the chat runtime uses). Clicking a card opens the existing
- * `<ChannelSetupModal>` for that channel; on close the Hub re-fetches
- * `connections_list` so the status badge updates.
+ * Tile grid that matches every other section. One tile per chat channel
+ * (Telegram / Discord / Web / iMessage); click opens the legacy
+ * `<ChannelSetupModal>` with the matching `ChannelDefinition`.
  *
  * Channel definitions come from `useChannelDefinitions()` which falls back
- * to the locally-bundled `FALLBACK_DEFINITIONS` when the RPC isn't yet
- * available — that way the cards are always clickable on first paint even
- * if the network round-trip is in flight.
- *
- * Note: WhatsApp / LinkedIn / etc. are CEF webview accounts, surfaced
- * separately in `<WebviewAccountsSection>`.
+ * to bundled `FALLBACK_DEFINITIONS` so the tiles are always clickable on
+ * first paint even before the RPC round-trip completes.
  */
 import { useState } from 'react';
 
@@ -22,7 +16,8 @@ import { fetchConnections } from '../../../store/connectionsSlice';
 import { useAppDispatch } from '../../../store/hooks';
 import type { ConnectionView } from '../../../types/connections';
 import ChannelSetupModal from '../../channels/ChannelSetupModal';
-import ConnectionCard from '../ConnectionCard';
+import { channelIcon } from '../connectorIcons';
+import ConnectorTile from '../ConnectorTile';
 import SectionHeader from '../SectionHeader';
 
 interface Props {
@@ -33,14 +28,11 @@ function channelSlugOf(c: ConnectionView, fallbackIndex: number): string {
   return c.ref.type === 'channel' ? c.ref.provider : `unknown-${fallbackIndex}`;
 }
 
-/** Per-channel description shown as the card subtitle. */
 const CHANNEL_DESCRIPTIONS: Record<string, string> = {
-  telegram: 'Receive and send Telegram messages — managed-DM relay, bot tokens, or webhook auth.',
-  discord:
-    'Operate inside Discord servers via OAuth or a bot token. Supports threads, reactions, and DM relay.',
-  web: 'Embed a chat widget on your website. Visitors talk to the agent via OpenHuman’s relay.',
-  imessage:
-    'Receive iMessages via the local AppleScript bridge. macOS-only; configure allowed contacts.',
+  telegram: 'Managed-DM, bot tokens, or webhooks',
+  discord: 'OAuth or bot token — DMs and threads',
+  web: 'Embedded chat widget for your site',
+  imessage: 'macOS AppleScript bridge',
 };
 
 export default function ChannelsSection({ items }: Props) {
@@ -63,19 +55,20 @@ export default function ChannelsSection({ items }: Props) {
           No chat channels available.
         </div>
       ) : (
-        <div className="space-y-2">
+        <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
           {items.map((c, i) => {
             const slug = channelSlugOf(c, i);
             const description = CHANNEL_DESCRIPTIONS[slug] ?? c.mechanism_label;
             return (
-              <button
+              <ConnectorTile
                 key={`channel-${slug}`}
-                type="button"
+                name={c.display_name}
+                icon={channelIcon(slug)}
+                status={c.status}
                 onClick={() => setOpenSlug(slug)}
-                className="block w-full text-left rounded-xl hover:bg-stone-50 dark:hover:bg-neutral-800 focus:outline-none focus:ring-2 focus:ring-primary-500 transition-colors"
-                data-testid={`connection-card-channel-${slug}`}>
-                <ConnectionCard name={c.display_name} subtitle={description} status={c.status} />
-              </button>
+                title={`${c.display_name} — ${description}`}
+                testId={`connection-card-channel-${slug}`}
+              />
             );
           })}
         </div>

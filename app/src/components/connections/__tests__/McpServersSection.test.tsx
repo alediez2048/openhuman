@@ -26,13 +26,15 @@ function makeMcp(serverId: string, displayName: string): ConnectionView {
 }
 
 describe('<McpServersSection>', () => {
-  it('renders the empty-state copy when items is empty', () => {
+  it('renders the section header + add-custom tile even when items is empty', () => {
     renderInRouter(<McpServersSection items={[]} />);
     expect(screen.getByTestId('connections-section-mcp')).toBeInTheDocument();
-    expect(screen.getByText(/No MCP servers registered yet/i)).toBeInTheDocument();
+    // The "+ Add custom MCP server" tile is always present so the user can
+    // register a new server even when no servers exist yet.
+    expect(screen.getByTestId('connection-card-mcp-add')).toBeInTheDocument();
   });
 
-  it('renders one card per fixture row with stable testids per server_id', () => {
+  it('renders one tile per fixture row with stable testids per server_id', () => {
     const items = [makeMcp('gitbooks', 'gitbooks'), makeMcp('my-custom', 'my-custom')];
     renderInRouter(<McpServersSection items={items} />);
 
@@ -42,11 +44,9 @@ describe('<McpServersSection>', () => {
     expect(screen.getByText('my-custom')).toBeInTheDocument();
   });
 
-  it('surfaces the mechanism label as subtitle on each card', () => {
+  it('shows the add-custom tile alongside connected servers', () => {
     renderInRouter(<McpServersSection items={[makeMcp('gitbooks', 'gitbooks')]} />);
-    // The header reads "MCP Servers"; the card subtitle reads "· MCP".
-    // Scope the assertion to the card so the header doesn't shadow the subtitle.
-    const card = screen.getByTestId('connection-card-mcp-gitbooks');
-    expect(card.textContent).toMatch(/MCP/);
+    expect(screen.getByTestId('connection-card-mcp-gitbooks')).toBeInTheDocument();
+    expect(screen.getByTestId('connection-card-mcp-add')).toBeInTheDocument();
   });
 });

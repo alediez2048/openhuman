@@ -1,26 +1,22 @@
 /**
  * Browser-account (webview-scraped) section of the Connections Hub.
  *
- * Renders one card per CEF-hosted webview provider OpenHuman knows about.
- * Status comes from the cookie-store probe in
- * `webview_accounts::detect_webview_logins`.
+ * Tile-grid layout that matches every other section. Each tile is one
+ * CEF-hosted provider; clicking a supported provider opens an inline
+ * `<BrowserAccountConnectModal>` that hosts the live `<WebviewHost>` so
+ * the user can sign in directly in the Hub.
  *
  * **What Browser Accounts are.** OpenHuman embeds a real Chromium browser
- * (CEF) for providers that don't have first-class APIs or where the user
- * wants the agent to act exactly as they would. Signing in here gives the
- * agent read/write access by interacting with the rendered page via CDP —
- * fundamentally different from Composio integrations which use OAuth APIs.
- *
- * Clicking a supported provider opens an inline `<BrowserAccountConnectModal>`
- * that hosts the live `<WebviewHost>` — the user signs in directly in the
- * Hub. Gmail and Google Messages are still surfaced read-only because they
- * lack a CEF-hosted account contract today (cookie probe only).
+ * for providers without first-class APIs (or where the user wants the
+ * agent to act as themselves). Distinct from API-based Composio
+ * integrations — clarified in the section subtitle.
  */
 import { useState } from 'react';
 
 import type { AccountProvider } from '../../../types/accounts';
 import type { ConnectionView } from '../../../types/connections';
-import ConnectionCard from '../ConnectionCard';
+import { webviewIcon } from '../connectorIcons';
+import ConnectorTile from '../ConnectorTile';
 import SectionHeader from '../SectionHeader';
 import BrowserAccountConnectModal from './BrowserAccountConnectModal';
 
@@ -30,22 +26,16 @@ interface Props {
 
 /** Per-provider description that tells the user what the browser account is for. */
 const WEBVIEW_DESCRIPTIONS: Record<string, string> = {
-  whatsapp: 'Read and send messages through WhatsApp Web — no Business API required.',
-  telegram: 'Reach Telegram chats via the web client (DMs, channels, supergroups).',
-  slack: 'Browse Slack workspaces, threads, and DMs as your signed-in user.',
-  discord: 'Operate inside Discord servers and DMs through the web client.',
-  linkedin: 'Use LinkedIn DMs, search, and feed actions that have no public API.',
-  twitter: 'Send/receive DMs and post on X (Twitter) through the web client.',
-  instagram: 'Reach Instagram DMs and profile actions the official API doesn’t expose.',
-  messenger: 'Operate inside Facebook Messenger — DMs, group chats, reactions.',
+  whatsapp: 'WhatsApp Web — DMs and groups',
+  telegram: 'Telegram Web — DMs and channels',
+  slack: 'Slack — workspaces and DMs',
+  discord: 'Discord — servers and DMs',
+  linkedin: 'LinkedIn — DMs and feed',
+  twitter: 'X — DMs and posting',
+  instagram: 'Instagram — DMs and profile',
+  messenger: 'Messenger — DMs and group chats',
 };
 
-/**
- * Cookie-probe slugs that map to a fully-supported `AccountProvider` (the
- * Tauri shell has a CEF webview registration with provider_url + allowed
- * hosts). Every probe slug should map to a provider — keep this aligned
- * with `PROVIDERS` in `src/openhuman/webview_accounts/ops.rs`.
- */
 const PROBE_TO_PROVIDER: Record<string, AccountProvider | undefined> = {
   whatsapp: 'whatsapp',
   telegram: 'telegram',
@@ -70,34 +60,33 @@ export default function WebviewAccountsSection({ items }: Props) {
       <SectionHeader
         title="Browser Accounts"
         count={connectedCount}
-        subtitle={`${items.length} available · embedded Chromium sessions (not the same as API-based Composio integrations)`}
+        subtitle={`${items.length} available · embedded Chromium sessions (not the same as API-based Composio)`}
       />
       {items.length === 0 ? (
         <div className="text-sm text-stone-500 dark:text-neutral-400 px-3.5 py-4 bg-stone-50 dark:bg-neutral-800 rounded-xl">
           No browser accounts available.
         </div>
       ) : (
-        <div className="space-y-2">
+        <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
           {items.map((c, i) => {
             const slug = providerSlugOf(c, i);
             const provider = PROBE_TO_PROVIDER[slug];
             const description = WEBVIEW_DESCRIPTIONS[slug] ?? 'CEF-hosted browser account.';
-            const supported = provider != null;
             return (
-              <button
+              <ConnectorTile
                 key={`webview-${slug}`}
-                type="button"
-                disabled={!supported}
-                onClick={() => provider && setOpenProvider(provider)}
-                className="block w-full text-left rounded-xl hover:bg-stone-50 dark:hover:bg-neutral-800 focus:outline-none focus:ring-2 focus:ring-primary-500 transition-colors disabled:cursor-default disabled:hover:bg-transparent"
-                data-testid={`connection-card-webview-${slug}`}
+                name={c.display_name}
+                icon={webviewIcon(slug)}
+                status={c.status}
+                onClick={provider ? () => setOpenProvider(provider) : undefined}
+                disabled={!provider}
                 title={
-                  supported
-                    ? `Click to sign in to ${c.display_name}`
+                  provider
+                    ? `Click to sign in to ${c.display_name}\n${description}`
                     : 'Web sign-in not yet supported for this provider'
-                }>
-                <ConnectionCard name={c.display_name} subtitle={description} status={c.status} />
-              </button>
+                }
+                testId={`connection-card-webview-${slug}`}
+              />
             );
           })}
         </div>

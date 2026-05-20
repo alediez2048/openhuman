@@ -56,9 +56,10 @@ describe('<BuiltinIntegrationsSection>', () => {
     expect(screen.getByTestId('connection-card-builtin-stock_prices')).toBeInTheDocument();
   });
 
-  it('renders the per-integration description as the card subtitle', () => {
+  it('renders the per-integration description in the tile tooltip', () => {
     renderInRouter(<BuiltinIntegrationsSection items={[makeBuiltin('twilio', 'Twilio')]} />);
-    expect(screen.getByText(/SMS, voice calls/i)).toBeInTheDocument();
+    const tile = screen.getByTestId('connection-card-builtin-twilio');
+    expect(tile.getAttribute('title')).toMatch(/SMS, voice/i);
   });
 
   it('surfaces NotConnected status when no session token is present', () => {
@@ -67,6 +68,7 @@ describe('<BuiltinIntegrationsSection>', () => {
         items={[makeBuiltin('twilio', 'Twilio', { kind: 'not_connected' })]}
       />
     );
-    expect(screen.getByText(/Not connected/i)).toBeInTheDocument();
+    // Tile shows the short "Connect" pill for the not_connected status.
+    expect(screen.getByText(/^Connect$/i)).toBeInTheDocument();
   });
 });

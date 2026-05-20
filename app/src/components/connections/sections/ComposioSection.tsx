@@ -24,6 +24,7 @@ import type { ConnectionStatus, ConnectionView } from '../../../types/connection
 import ComposioConnectModal from '../../composio/ComposioConnectModal';
 import { composioToolkitMeta, KNOWN_COMPOSIO_TOOLKITS } from '../../composio/toolkitMeta';
 import type { SkillCategory } from '../../skills/skillCategories';
+import ConnectorTile from '../ConnectorTile';
 import SectionHeader from '../SectionHeader';
 
 interface Props {
@@ -62,54 +63,17 @@ function connectionsBySlug(connections: ConnectionView[]): Map<string, Connectio
   return map;
 }
 
-function StatusLabel({ status }: { status: ConnectionStatus }) {
-  switch (status.kind) {
-    case 'connected':
-      return (
-        <span className="inline-flex items-center gap-1 text-xs text-sage-700 dark:text-sage-400">
-          <span className="w-1.5 h-1.5 rounded-full bg-sage-500" />
-          Connected
-        </span>
-      );
-    case 'error':
-      return (
-        <span
-          className="inline-flex items-center gap-1 text-xs text-coral-600"
-          title={status.reason}>
-          <span className="w-1.5 h-1.5 rounded-full bg-coral-500" />
-          Error
-        </span>
-      );
-    case 'disabled':
-      return (
-        <span className="inline-flex items-center gap-1 text-xs text-stone-500 dark:text-neutral-400">
-          <span className="w-1.5 h-1.5 rounded-full bg-stone-300" />
-          Disabled
-        </span>
-      );
-    case 'not_connected':
-      return (
-        <span className="inline-flex items-center gap-1 text-xs text-stone-400 dark:text-neutral-500">
-          Connect
-        </span>
-      );
-  }
-}
-
 function ToolkitTile({ row, onClick }: { row: CatalogRow; onClick: () => void }) {
   const meta = composioToolkitMeta(row.slug);
   return (
-    <button
-      type="button"
+    <ConnectorTile
+      name={meta.name}
+      icon={meta.icon}
+      status={row.status}
       onClick={onClick}
-      data-testid={`connection-card-composio-${row.slug}`}
-      className="flex flex-col items-center justify-center gap-1.5 px-2 py-3 bg-white dark:bg-neutral-900 border border-stone-200 dark:border-neutral-700 rounded-xl shadow-subtle hover:shadow-soft hover:border-primary-300 dark:hover:border-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 transition-all text-center cursor-pointer">
-      <div className="mb-0.5">{meta.icon}</div>
-      <div className="text-xs font-medium text-stone-900 dark:text-neutral-100 truncate max-w-full">
-        {meta.name}
-      </div>
-      <StatusLabel status={row.status} />
-    </button>
+      title={`${meta.name} — Composio managed-auth toolkit`}
+      testId={`connection-card-composio-${row.slug}`}
+    />
   );
 }
 

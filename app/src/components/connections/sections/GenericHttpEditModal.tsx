@@ -22,6 +22,12 @@ interface Props {
   open: boolean;
   onClose: () => void;
   onSaved: () => void;
+  /** Optional "Test" action shown in edit mode. Receives the connection id. */
+  onTest?: (id: string) => void | Promise<void>;
+  /** Optional "Delete" action shown in edit mode. Receives the connection id. */
+  onDelete?: (id: string) => void | Promise<void>;
+  /** Optional inline status banner pushed by the section after onTest. */
+  toast?: { kind: 'ok' | 'err'; text: string } | null;
 }
 
 type AuthKindTag = AuthKind['kind'];
@@ -49,7 +55,15 @@ function buildAuthKind(tag: AuthKindTag, paramName: string): AuthKind {
   }
 }
 
-export default function GenericHttpEditModal({ mode, open, onClose, onSaved }: Props) {
+export default function GenericHttpEditModal({
+  mode,
+  open,
+  onClose,
+  onSaved,
+  onTest,
+  onDelete,
+  toast,
+}: Props) {
   const isEdit = typeof mode === 'object' && mode.kind === 'edit';
   const existing = isEdit ? (mode as Extract<Mode, { kind: 'edit' }>).existing : null;
 
@@ -234,21 +248,57 @@ export default function GenericHttpEditModal({ mode, open, onClose, onSaved }: P
           </div>
         ) : null}
 
-        <div className="flex items-center justify-end gap-2 pt-2">
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={submitting}
-            className="px-3 py-1.5 text-sm text-stone-600 hover:text-stone-900 dark:text-neutral-400 dark:hover:text-neutral-100 disabled:opacity-50">
-            Cancel
-          </button>
-          <button
-            type="submit"
-            disabled={submitting}
-            className="px-3.5 py-1.5 text-sm font-medium text-white bg-primary-500 hover:bg-primary-600 rounded-lg disabled:opacity-60"
-            data-testid="generic-http-modal-save">
-            {submitting ? 'Saving…' : isEdit ? 'Save changes' : 'Add connection'}
-          </button>
+        {toast ? (
+          <div
+            className={`mb-3 px-3 py-2 text-xs rounded-lg ${
+              toast.kind === 'ok'
+                ? 'text-sage-700 bg-sage-50 border border-sage-200'
+                : 'text-coral-700 bg-coral-50 border border-coral-200'
+            }`}
+            role="status">
+            {toast.text}
+          </div>
+        ) : null}
+
+        <div className="flex items-center justify-between gap-2 pt-2">
+          <div className="flex items-center gap-2">
+            {isEdit && existing && onTest ? (
+              <button
+                type="button"
+                onClick={() => onTest(existing.id)}
+                disabled={submitting}
+                className="px-3 py-1.5 text-sm text-stone-700 dark:text-neutral-200 hover:bg-stone-100 dark:hover:bg-neutral-800 rounded-md disabled:opacity-50"
+                data-testid="generic-http-modal-test">
+                Test
+              </button>
+            ) : null}
+            {isEdit && existing && onDelete ? (
+              <button
+                type="button"
+                onClick={() => onDelete(existing.id)}
+                disabled={submitting}
+                className="px-3 py-1.5 text-sm text-coral-600 hover:bg-coral-50 dark:hover:bg-coral-950/30 rounded-md disabled:opacity-50"
+                data-testid="generic-http-modal-delete">
+                Delete
+              </button>
+            ) : null}
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={submitting}
+              className="px-3 py-1.5 text-sm text-stone-600 hover:text-stone-900 dark:text-neutral-400 dark:hover:text-neutral-100 disabled:opacity-50">
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={submitting}
+              className="px-3.5 py-1.5 text-sm font-medium text-white bg-primary-500 hover:bg-primary-600 rounded-lg disabled:opacity-60"
+              data-testid="generic-http-modal-save">
+              {submitting ? 'Saving…' : isEdit ? 'Save changes' : 'Add connection'}
+            </button>
+          </div>
         </div>
       </form>
     </div>
