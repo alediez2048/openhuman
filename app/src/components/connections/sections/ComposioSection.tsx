@@ -17,8 +17,11 @@
 import { useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 
-import { useAppSelector } from '../../../store/hooks';
+import { useComposioIntegrations } from '../../../lib/composio/hooks';
+import { fetchConnections } from '../../../store/connectionsSlice';
+import { useAppDispatch, useAppSelector } from '../../../store/hooks';
 import type { ConnectionStatus, ConnectionView } from '../../../types/connections';
+import ComposioConnectModal from '../../composio/ComposioConnectModal';
 import { composioToolkitMeta, KNOWN_COMPOSIO_TOOLKITS } from '../../composio/toolkitMeta';
 import type { SkillCategory } from '../../skills/skillCategories';
 import SectionHeader from '../SectionHeader';
@@ -93,26 +96,39 @@ function StatusLabel({ status }: { status: ConnectionStatus }) {
   }
 }
 
-function ToolkitTile({ row }: { row: CatalogRow }) {
+function ToolkitTile({ row, onClick }: { row: CatalogRow; onClick: () => void }) {
   const meta = composioToolkitMeta(row.slug);
   return (
-    <div
+    <button
+      type="button"
+      onClick={onClick}
       data-testid={`connection-card-composio-${row.slug}`}
-      className="flex flex-col items-center justify-center gap-1.5 px-2 py-3 bg-white dark:bg-neutral-900 border border-stone-200 dark:border-neutral-700 rounded-xl shadow-subtle hover:shadow-soft transition-shadow text-center">
+      className="flex flex-col items-center justify-center gap-1.5 px-2 py-3 bg-white dark:bg-neutral-900 border border-stone-200 dark:border-neutral-700 rounded-xl shadow-subtle hover:shadow-soft hover:border-primary-300 dark:hover:border-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 transition-all text-center cursor-pointer">
       <div className="mb-0.5">{meta.icon}</div>
       <div className="text-xs font-medium text-stone-900 dark:text-neutral-100 truncate max-w-full">
         {meta.name}
       </div>
       <StatusLabel status={row.status} />
-    </div>
+    </button>
   );
 }
 
 export default function ComposioSection({ items: _items }: Props) {
   const allConnections = useAppSelector(s => s.connections.connections);
+  const dispatch = useAppDispatch();
   const [searchParams] = useSearchParams();
   const search = (searchParams.get('search') ?? '').trim().toLowerCase();
   const [activeCategory, setActiveCategory] = useState<SkillCategory | 'All'>('All');
+  const [openSlug, setOpenSlug] = useState<string | null>(null);
+
+  // ComposioConnectModal needs the live Composio connection object + a
+  // refresh callback so the polling roundtrip flips Connected back to the
+  // Hub. The existing `useComposioIntegrations` hook owns the polling
+  // contract — reuse it instead of duplicating the polling state machine.
+  const composio = useComposioIntegrations();
+  const openConnection = openSlug
+    ? composio.connectionByToolkit.get(openSlug.toLowerCase())
+    : undefined;
 
   const rows = useMemo<CatalogRow[]>(() => {
     const byToolkit = connectionsBySlug(allConnections);
@@ -179,10 +195,29 @@ export default function ComposioSection({ items: _items }: Props) {
       ) : (
         <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
           {rows.map(row => (
-            <ToolkitTile key={`composio-tile-${row.slug}`} row={row} />
+            <ToolkitTile
+              key={`composio-tile-${row.slug}`}
+              row={row}
+              onClick={() => setOpenSlug(row.slug)}
+            />
           ))}
         </div>
       )}
+
+      {openSlug ? (
+        <ComposioConnectModal
+          toolkit={composioToolkitMeta(openSlug)}
+          connection={openConnection}
+          onChanged={() => {
+            // Refresh both data sources: the Composio hook (so the modal's
+            // local state flips immediately) and the aggregator (so the
+            // Hub-level status badge re-renders).
+            void composio.refresh();
+            void dispatch(fetchConnections());
+          }}
+          onClose={() => setOpenSlug(null)}
+        />
+      ) : null}
     </section>
   );
 }
