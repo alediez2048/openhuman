@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { SkillSummary } from '../../services/api/skillsApi';
 import '../../test/mockDefaultSkillStatusHooks';
 import { renderWithProviders } from '../../test/test-utils';
-import Skills from '../Skills';
+import Connections from '../Connections';
 
 vi.mock('../../hooks/useChannelDefinitions', () => ({
   useChannelDefinitions: () => ({ definitions: [], loading: false, error: null }),
@@ -57,7 +57,7 @@ vi.mock('../../lib/composio/hooks', () => ({
 
 describe('Skills page — discovered skill cards', () => {
   it('renders user / project / legacy scope labels and exposes Uninstall only for user-scope', async () => {
-    renderWithProviders(<Skills />, { initialEntries: ['/skills'] });
+    renderWithProviders(<Connections />, { initialEntries: ['/skills'] });
 
     const otherHeading = await screen.findByRole('heading', { name: 'Other' });
     const otherCard = otherHeading.closest('.rounded-2xl') as HTMLElement;
@@ -81,7 +81,7 @@ describe('Skills page — discovered skill cards', () => {
   });
 
   it('opens the detail drawer when the View CTA is clicked', async () => {
-    renderWithProviders(<Skills />, { initialEntries: ['/skills'] });
+    renderWithProviders(<Connections />, { initialEntries: ['/skills'] });
 
     const otherHeading = await screen.findByRole('heading', { name: 'Other' });
     const userRow = within(otherHeading.closest('.rounded-2xl') as HTMLElement)

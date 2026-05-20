@@ -56,9 +56,12 @@ const makeTabs = (t: (key: string) => string) => [
     ),
   },
   {
-    id: 'skills',
+    // id was 'skills' before P0-4 (Workflows & Automations Phase 0). The
+    // route + tab id were renamed to 'connections'; the label key was
+    // already 'nav.connections'.
+    id: 'connections',
     label: t('nav.connections'),
-    path: '/skills',
+    path: '/connections',
     icon: (
       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path
@@ -205,7 +208,8 @@ const BottomTabBar = () => {
             // Maps tab ids to their walkthrough target names.
             const walkthroughAttr: Record<string, string> = {
               chat: 'tab-chat',
-              skills: 'tab-skills',
+              // Renamed from `skills: 'tab-skills'` in P0-4.
+              connections: 'tab-connections',
               notifications: 'tab-notifications',
               settings: 'tab-settings',
             };

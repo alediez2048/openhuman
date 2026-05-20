@@ -285,9 +285,15 @@ interface SkillItem {
   discoveredSkill?: SkillSummary;
 }
 
-// ─── Main Skills Page ──────────────────────────────────────────────────────────
+// ─── Main Connections Page ─────────────────────────────────────────────────────
+//
+// Renamed from `Skills` in P0-4 of the Workflows & Automations Phase 0.
+// The internal component contents (Composio "Skills" feature) keep their
+// existing names because that's the OpenHuman backend concept. Only the
+// page-level component + route are renamed to "Connections".
+// See Automations/Tickets/phase-0-connections-hub/P0-4.md.
 
-export default function Skills() {
+export default function Connections() {
   const { t } = useT();
   const location = useLocation();
   const navigate = useNavigate();

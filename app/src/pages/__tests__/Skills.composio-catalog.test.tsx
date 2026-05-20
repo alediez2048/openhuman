@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import '../../test/mockDefaultSkillStatusHooks';
 import { renderWithProviders } from '../../test/test-utils';
-import Skills from '../Skills';
+import Connections from '../Connections';
 
 let composioRefresh = vi.fn();
 let composioError: string | null = null;
@@ -41,7 +41,7 @@ describe('Skills page — Composio catalog fallback', () => {
   });
 
   it('shows known composio integrations in the integrations icon grid when the live toolkit list is empty', () => {
-    renderWithProviders(<Skills />, { initialEntries: ['/skills'] });
+    renderWithProviders(<Connections />, { initialEntries: ['/skills'] });
 
     expect(screen.getByRole('heading', { name: 'Integrations' })).toBeInTheDocument();
     expect(screen.getByText('Discord')).toBeInTheDocument();
@@ -70,7 +70,7 @@ describe('Skills page — Composio catalog fallback', () => {
   it('shows a stale/error state instead of disconnected toolkits when composio loading fails', () => {
     composioError = 'Backend unavailable';
 
-    renderWithProviders(<Skills />, { initialEntries: ['/skills'] });
+    renderWithProviders(<Connections />, { initialEntries: ['/skills'] });
 
     expect(screen.getByText('Connections are showing stale status')).toBeInTheDocument();
     expect(screen.getByText('Backend unavailable')).toBeInTheDocument();
@@ -95,7 +95,7 @@ describe('Skills page — Composio catalog fallback', () => {
       ['gmail', { id: 'ca_expired', toolkit: 'gmail', status: 'EXPIRED' }],
     ]);
 
-    renderWithProviders(<Skills />, { initialEntries: ['/skills'] });
+    renderWithProviders(<Connections />, { initialEntries: ['/skills'] });
 
     const integrationsSection = screen
       .getByRole('heading', { name: 'Integrations' })

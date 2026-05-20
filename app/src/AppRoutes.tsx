@@ -5,7 +5,7 @@ import ProtectedRoute from './components/ProtectedRoute';
 import PublicRoute from './components/PublicRoute';
 import HumanPage from './features/human/HumanPage';
 import Accounts from './pages/Accounts';
-import Channels from './pages/Channels';
+import Connections from './pages/Connections';
 import Home from './pages/Home';
 import Intelligence from './pages/Intelligence';
 import Invites from './pages/Invites';
@@ -13,7 +13,6 @@ import Notifications from './pages/Notifications';
 import Onboarding from './pages/onboarding/Onboarding';
 import Rewards from './pages/Rewards';
 import Settings from './pages/Settings';
-import Skills from './pages/Skills';
 import Welcome from './pages/Welcome';
 
 const AppRoutes = () => {
@@ -67,14 +66,18 @@ const AppRoutes = () => {
         }
       />
 
+      {/* /skills and /channels were unified into /connections in Phase 0
+          of Workflows & Automations (see Automations/prd.md §5). The legacy
+          paths redirect; HashRouter preserves muscle memory + deep links. */}
       <Route
-        path="/skills"
+        path="/connections"
         element={
           <ProtectedRoute requireAuth={true}>
-            <Skills />
+            <Connections />
           </ProtectedRoute>
         }
       />
+      <Route path="/skills" element={<Navigate to="/connections" replace />} />
 
       {/* Unified chat = agent + connected web apps. Replaces the old
           /conversations and /accounts routes. */}
@@ -87,14 +90,7 @@ const AppRoutes = () => {
         }
       />
 
-      <Route
-        path="/channels"
-        element={
-          <ProtectedRoute requireAuth={true}>
-            <Channels />
-          </ProtectedRoute>
-        }
-      />
+      <Route path="/channels" element={<Navigate to="/connections#channels" replace />} />
 
       <Route
         path="/invites"
