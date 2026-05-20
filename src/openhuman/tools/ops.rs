@@ -267,6 +267,14 @@ pub fn all_tools_with_runtime(
         tracing::debug!("[gitbooks] registered gitbooks_search + gitbooks_get_page");
     }
 
+    // Unified Connections Hub tool. Gives the agent a single read against
+    // the Phase 0 aggregator (Composio + channels + browser accounts +
+    // MCP + Generic HTTP + built-in integrations). Before this tool the
+    // agent only had `composio_list_connections`, which made it falsely
+    // believe Composio was the entire connection surface — see the
+    // user-reported "no higgsfield mcp in connected integrations" bug.
+    tools.push(Box::new(ConnectionsListTool::new(Arc::clone(&config))));
+
     // Generic remote MCP bridge tools. These let the agent enumerate
     // named MCP servers and forward `tools/call` through the core
     // instead of hardcoding one bespoke MCP integration per server.

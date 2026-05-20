@@ -1,5 +1,6 @@
 mod clob_auth;
 mod composio;
+mod connections;
 mod curl;
 mod gitbooks;
 mod gmail_unsubscribe;
@@ -12,6 +13,7 @@ mod web_fetch;
 mod web_search;
 
 pub use composio::{ComposioAction, ComposioConnectedAccount, ComposioTool};
+pub use connections::ConnectionsListTool;
 pub use curl::CurlTool;
 pub use gitbooks::{GitbooksGetPageTool, GitbooksSearchTool};
 pub use gmail_unsubscribe::GmailUnsubscribeTool;
