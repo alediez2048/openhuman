@@ -86,11 +86,29 @@ export default function BrowserAccountConnectModal({ provider, onClose }: Props)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accountId, provider]);
 
-  // On unmount, kick the aggregator so the Hub's status badge can update if
-  // the user actually signed in. Cookie probe is the source of truth.
+  // Poll the aggregator while the modal is open so the Hub's status badge
+  // flips to "Connected" as soon as CEF flushes the new session cookies to
+  // disk. The cookie probe reads through `mode=ro&immutable=1` so it only
+  // sees what's on disk — and CEF batches cookie writes in memory before
+  // flushing (typically every few seconds after a new value is set).
+  //
+  // On unmount, schedule one extra delayed fetch so a sign-in completed
+  // right before the user clicks Close still gets picked up after CEF's
+  // pending flush lands. `hideWebviewAccount` (called by WebviewHost
+  // unmount) doesn't synchronously flush cookies — without the delay, the
+  // post-close fetch would race the flush and miss the just-completed
+  // login.
   useEffect(() => {
-    return () => {
+    const POLL_MS = 4_000;
+    const CLOSE_DELAY_MS = 2_500;
+    const intervalId = window.setInterval(() => {
       void dispatch(fetchConnections());
+    }, POLL_MS);
+    return () => {
+      window.clearInterval(intervalId);
+      window.setTimeout(() => {
+        void dispatch(fetchConnections());
+      }, CLOSE_DELAY_MS);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
