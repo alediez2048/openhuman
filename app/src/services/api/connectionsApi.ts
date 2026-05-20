@@ -20,6 +20,8 @@ import type {
   CreateGenericHttpRequest,
   GenericHttpConnection,
   GenericHttpConnectionId,
+  McpAddRequest,
+  McpServerConfig,
   TestProbeResult,
   UpdateGenericHttpRequest,
 } from '../../types/connections';
@@ -86,6 +88,22 @@ export const connectionsApi = {
     const raw = await callCoreRpc<TestProbeResult | RpcOutcomeEnvelope<TestProbeResult>>({
       method: 'openhuman.connections_test',
       params: { id },
+    });
+    return unwrapRpcOutcome(raw);
+  },
+
+  mcpAdd: async (req: McpAddRequest): Promise<McpServerConfig> => {
+    const raw = await callCoreRpc<McpServerConfig | RpcOutcomeEnvelope<McpServerConfig>>({
+      method: 'openhuman.connections_mcp_add',
+      params: { request: req },
+    });
+    return unwrapRpcOutcome(raw);
+  },
+
+  mcpRemove: async (name: string): Promise<boolean> => {
+    const raw = await callCoreRpc<boolean | RpcOutcomeEnvelope<boolean>>({
+      method: 'openhuman.connections_mcp_remove',
+      params: { name },
     });
     return unwrapRpcOutcome(raw);
   },

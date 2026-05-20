@@ -18,15 +18,16 @@
 //! See NFR-2.3.2 + ADR-006.
 
 use crate::core::event_bus::{publish_global, DomainEvent};
-use crate::openhuman::config::Config;
+use crate::openhuman::config::{Config, McpAuthConfig, McpServerConfig};
 use crate::openhuman::connections::store;
 use crate::openhuman::connections::types::{
-    AuthKind, ConnectionRef, CreateGenericHttpRequest, GenericHttpConnection, NewCredential,
-    SecretRef, TestProbeResult, UpdateGenericHttpRequest,
+    AuthKind, ConnectionRef, CreateGenericHttpRequest, GenericHttpConnection, McpAddAuth,
+    McpAddRequest, NewCredential, SecretRef, TestProbeResult, UpdateGenericHttpRequest,
 };
 use crate::openhuman::security::secrets::SecretStore;
 use anyhow::{anyhow, Context, Result};
 use chrono::Utc;
+use std::collections::HashMap;
 use uuid::Uuid;
 
 /// Creates a `SecretStore` rooted at the same data directory `credentials/ops.rs`
@@ -226,6 +227,151 @@ pub async fn test_generic_http(config: &Config, id: &str) -> Result<TestProbeRes
             error: Some(format!("no connection with id {id}")),
         })
     }
+}
+
+// ── MCP add / remove (P0-6b) ─────────────────────────────────────────────
+
+/// Register a new MCP server in `config.mcp_client.servers` and persist
+/// the config to disk. The aggregator's `collect_mcp` collector builds a
+/// fresh `McpServerRegistry` on every call, so the new server appears on
+/// the next `connections_list` refresh without a core restart.
+///
+/// Validation:
+/// - `name` must be non-empty and unique within the existing roster.
+/// - Exactly one of `endpoint` / `command` must be set (HTTP vs stdio
+///   transports are mutually exclusive in `McpServerConfig`).
+/// - For HTTP, the endpoint must start with `http://` or `https://`.
+///
+/// Returns the canonical `McpServerConfig` that was persisted so callers
+/// can echo it back without re-reading the config.
+pub async fn add_mcp_server(config: &Config, req: McpAddRequest) -> Result<McpServerConfig> {
+    let name = req.name.trim().to_string();
+    if name.is_empty() {
+        return Err(anyhow!("MCP server name is required"));
+    }
+    let endpoint = req.endpoint.trim().to_string();
+    let command = req.command.trim().to_string();
+    if endpoint.is_empty() && command.is_empty() {
+        return Err(anyhow!(
+            "MCP server requires either an HTTPS endpoint or a stdio command"
+        ));
+    }
+    if !endpoint.is_empty() && !command.is_empty() {
+        return Err(anyhow!(
+            "MCP server cannot have both an endpoint and a command — choose one transport"
+        ));
+    }
+    if !endpoint.is_empty() && !endpoint.starts_with("http://") && !endpoint.starts_with("https://")
+    {
+        return Err(anyhow!("MCP endpoint must start with http:// or https://"));
+    }
+
+    let mut persisted = config.clone();
+    if persisted
+        .mcp_client
+        .servers
+        .iter()
+        .any(|s| s.name.eq_ignore_ascii_case(&name))
+    {
+        return Err(anyhow!(
+            "an MCP server named `{name}` already exists — pick a different name or remove the existing one first"
+        ));
+    }
+
+    let auth = match req.auth {
+        McpAddAuth::None => McpAuthConfig::None,
+        McpAddAuth::BearerToken { token } => {
+            if token.trim().is_empty() {
+                return Err(anyhow!("bearer token cannot be empty"));
+            }
+            McpAuthConfig::BearerToken { token }
+        }
+        McpAddAuth::Basic { username, password } => McpAuthConfig::Basic { username, password },
+        McpAddAuth::Header { name: hname, value } => {
+            if hname.trim().is_empty() {
+                return Err(anyhow!("auth header name cannot be empty"));
+            }
+            McpAuthConfig::Header { name: hname, value }
+        }
+    };
+
+    let env: HashMap<String, String> = req
+        .env
+        .into_iter()
+        .map(|(k, v)| (k.trim().to_string(), v))
+        .filter(|(k, _)| !k.is_empty())
+        .collect();
+
+    let server = McpServerConfig {
+        name: name.clone(),
+        endpoint,
+        command,
+        args: req.args.into_iter().filter(|a| !a.is_empty()).collect(),
+        env,
+        cwd: req.cwd.filter(|c| !c.trim().is_empty()),
+        description: req.description.filter(|d| !d.trim().is_empty()),
+        enabled: true,
+        timeout_secs: 30,
+        auth,
+    };
+
+    persisted.mcp_client.servers.push(server.clone());
+    persisted
+        .save()
+        .await
+        .map_err(|e| anyhow!("failed to persist mcp_client.servers update: {e}"))?;
+
+    publish_global(DomainEvent::ConnectionAdded {
+        connection_ref_json: serde_json::to_value(ConnectionRef::Mcp {
+            server_id: name.clone(),
+            tool_name: None,
+        })
+        .unwrap_or(serde_json::Value::Null),
+    });
+
+    tracing::info!(
+        target: "connections",
+        "[connections] mcp server `{}` registered ({})",
+        name,
+        if server.endpoint.is_empty() { "stdio" } else { "http" },
+    );
+
+    Ok(server)
+}
+
+/// Remove an MCP server entry from `config.mcp_client.servers` by name.
+/// Returns `true` when a row was removed, `false` if no match was found
+/// (idempotent — same semantics as `delete_generic_http`).
+pub async fn remove_mcp_server(config: &Config, name: &str) -> Result<bool> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err(anyhow!("MCP server name is required"));
+    }
+    let mut persisted = config.clone();
+    let before = persisted.mcp_client.servers.len();
+    persisted
+        .mcp_client
+        .servers
+        .retain(|s| !s.name.eq_ignore_ascii_case(trimmed));
+    let removed = persisted.mcp_client.servers.len() != before;
+    if !removed {
+        return Ok(false);
+    }
+    persisted
+        .save()
+        .await
+        .map_err(|e| anyhow!("failed to persist mcp_client.servers update: {e}"))?;
+
+    publish_global(DomainEvent::ConnectionRemoved {
+        connection_ref_json: serde_json::to_value(ConnectionRef::Mcp {
+            server_id: trimmed.to_string(),
+            tool_name: None,
+        })
+        .unwrap_or(serde_json::Value::Null),
+    });
+
+    tracing::info!(target: "connections", "[connections] mcp server `{}` removed", trimmed);
+    Ok(true)
 }
 
 #[cfg(test)]

@@ -252,6 +252,70 @@ pub struct TestProbeResult {
     pub error: Option<String>,
 }
 
+// ── MCP add / remove (P0-6b) ─────────────────────────────────────────────
+
+/// Auth strategy for a user-added MCP server.
+///
+/// Mirrors `config::McpAuthConfig` but kept in this domain so the wire
+/// shape is stable across config refactors.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum McpAddAuth {
+    #[default]
+    None,
+    BearerToken {
+        token: String,
+    },
+    Basic {
+        username: String,
+        password: String,
+    },
+    Header {
+        name: String,
+        value: String,
+    },
+}
+
+/// Request payload for `openhuman.connections_mcp_add`.
+///
+/// Two transport variants:
+/// - **HTTP**: `endpoint` is set, `command` is empty. Optional `auth` for
+///   bearer/basic/header schemes.
+/// - **Stdio**: `command` is set, `endpoint` is empty. `args` and `env`
+///   populate the spawned subprocess. Auth is always `None` for stdio
+///   (credentials go in `env`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct McpAddRequest {
+    /// Stable server slug (e.g. `"linear"`, `"my-postgres"`). Required.
+    pub name: String,
+    /// HTTPS endpoint for streamable HTTP transport. Empty for stdio.
+    #[serde(default)]
+    pub endpoint: String,
+    /// Command line for stdio transport. Empty for HTTP.
+    #[serde(default)]
+    pub command: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+    /// Environment variables for stdio servers. MCP stdio auth is typically
+    /// passed this way (e.g. `GITHUB_PERSONAL_ACCESS_TOKEN=ghp_…`).
+    #[serde(default)]
+    pub env: Vec<(String, String)>,
+    /// Optional working directory for stdio servers.
+    #[serde(default)]
+    pub cwd: Option<String>,
+    /// Human-readable description shown alongside the server name in the
+    /// agent's bridge-tool output.
+    #[serde(default)]
+    pub description: Option<String>,
+    /// Auth strategy for HTTP servers. Ignored for stdio.
+    #[serde(default = "default_mcp_add_auth_none")]
+    pub auth: McpAddAuth,
+}
+
+fn default_mcp_add_auth_none() -> McpAddAuth {
+    McpAddAuth::None
+}
+
 #[cfg(test)]
 #[path = "types_tests.rs"]
 mod tests;

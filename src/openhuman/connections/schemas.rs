@@ -9,7 +9,7 @@ use crate::core::all::{ControllerFuture, RegisteredController};
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 use crate::openhuman::config::rpc as config_rpc;
 use crate::openhuman::connections::types::{
-    ConnectionsListRequest, CreateGenericHttpRequest, UpdateGenericHttpRequest,
+    ConnectionsListRequest, CreateGenericHttpRequest, McpAddRequest, UpdateGenericHttpRequest,
 };
 use crate::rpc::RpcOutcome;
 use serde::Serialize;
@@ -23,6 +23,8 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("generic_http_update"),
         schemas("generic_http_delete"),
         schemas("test"),
+        schemas("mcp_add"),
+        schemas("mcp_remove"),
     ]
 }
 
@@ -48,6 +50,14 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("test"),
             handler: handle_test,
+        },
+        RegisteredController {
+            schema: schemas("mcp_add"),
+            handler: handle_mcp_add,
+        },
+        RegisteredController {
+            schema: schemas("mcp_remove"),
+            handler: handle_mcp_remove,
         },
     ]
 }
@@ -170,6 +180,40 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 required: true,
             }],
         },
+        "mcp_add" => ControllerSchema {
+            namespace: "connections",
+            function: "mcp_add",
+            description: "Register a new MCP server in config.mcp_client.servers and persist the TOML. Aggregator picks up the new server on the next connections_list refresh.",
+            inputs: vec![FieldSchema {
+                name: "request",
+                ty: TypeSchema::Ref("McpAddRequest"),
+                comment: "Server metadata + transport (HTTP endpoint or stdio command) + optional auth.",
+                required: true,
+            }],
+            outputs: vec![FieldSchema {
+                name: "server",
+                ty: TypeSchema::Ref("McpServerConfig"),
+                comment: "Canonical persisted McpServerConfig.",
+                required: true,
+            }],
+        },
+        "mcp_remove" => ControllerSchema {
+            namespace: "connections",
+            function: "mcp_remove",
+            description: "Remove an MCP server by name from config.mcp_client.servers. Idempotent — returns removed=false when the name was unknown.",
+            inputs: vec![FieldSchema {
+                name: "name",
+                ty: TypeSchema::String,
+                comment: "Server name (case-insensitive match against config.mcp_client.servers[].name).",
+                required: true,
+            }],
+            outputs: vec![FieldSchema {
+                name: "removed",
+                ty: TypeSchema::Bool,
+                comment: "True when an entry was removed.",
+                required: true,
+            }],
+        },
         _other => ControllerSchema {
             namespace: "connections",
             function: "unknown",
@@ -264,6 +308,32 @@ fn handle_test(params: Map<String, Value>) -> ControllerFuture {
             .ok_or_else(|| "missing required param 'id'".to_string())?
             .to_string();
         to_json(crate::openhuman::connections::rpc::connections_test(&config, &id).await?)
+    })
+}
+
+fn handle_mcp_add(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let req: crate::openhuman::connections::types::McpAddRequest = params
+            .get("request")
+            .cloned()
+            .ok_or_else(|| "missing required param 'request'".to_string())
+            .and_then(|v| {
+                serde_json::from_value(v).map_err(|e| format!("invalid 'request': {e}"))
+            })?;
+        to_json(crate::openhuman::connections::rpc::connections_mcp_add(&config, req).await?)
+    })
+}
+
+fn handle_mcp_remove(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let name = params
+            .get("name")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "missing required param 'name'".to_string())?
+            .to_string();
+        to_json(crate::openhuman::connections::rpc::connections_mcp_remove(&config, &name).await?)
     })
 }
 

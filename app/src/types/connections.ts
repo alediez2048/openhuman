@@ -107,3 +107,35 @@ export const CONNECTION_KIND_ORDER: ConnectionKind[] = [
   'mcp',
   'generic_http',
 ];
+
+// ── MCP add / remove (P0-6b) ────────────────────────────────────────────
+
+export type McpAddAuth =
+  | { kind: 'none' }
+  | { kind: 'bearer_token'; token: string }
+  | { kind: 'basic'; username: string; password: string }
+  | { kind: 'header'; name: string; value: string };
+
+export interface McpAddRequest {
+  name: string;
+  endpoint?: string;
+  command?: string;
+  args?: string[];
+  env?: Array<[string, string]>;
+  cwd?: string | null;
+  description?: string | null;
+  auth?: McpAddAuth;
+}
+
+export interface McpServerConfig {
+  name: string;
+  endpoint: string;
+  command: string;
+  args: string[];
+  env: Record<string, string>;
+  cwd?: string | null;
+  description?: string | null;
+  enabled: boolean;
+  timeout_secs: number;
+  auth: McpAddAuth;
+}

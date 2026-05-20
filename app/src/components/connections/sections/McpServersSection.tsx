@@ -3,18 +3,16 @@
  *
  * Tile grid matching every other section. One tile per registered MCP
  * server (from `McpServerRegistry::from_config`) plus a `+ Add custom`
- * tile that opens the McpAddModal (lands in Pass D).
- *
- * Featured community-vetted servers (Linear / Notion / GitHub / Postgres /
- * Filesystem / Brave / Memory) will populate alongside connected servers
- * once the Featured catalog lands in Pass D.
+ * tile that opens the McpAddModal — no more redirect to /intelligence.
  */
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import type { ConnectionView } from '../../../types/connections';
 import { mcpIcon } from '../connectorIcons';
 import ConnectorTile, { AddCustomTile } from '../ConnectorTile';
 import SectionHeader from '../SectionHeader';
+import McpAddModal from './McpAddModal';
 
 interface Props {
   items: ConnectionView[];
@@ -26,6 +24,7 @@ function serverIdOf(item: ConnectionView, fallbackIndex: number): string {
 
 export default function McpServersSection({ items }: Props) {
   const navigate = useNavigate();
+  const [addOpen, setAddOpen] = useState(false);
   const connectedCount = items.filter(c => c.status.kind === 'connected').length;
 
   return (
@@ -50,13 +49,14 @@ export default function McpServersSection({ items }: Props) {
             />
           );
         })}
-        {/* Pass D will swap this navigate fallback for the actual McpAddModal. */}
         <AddCustomTile
           label="MCP server"
-          onClick={() => navigate('/intelligence')}
+          onClick={() => setAddOpen(true)}
           testId="connection-card-mcp-add"
         />
       </div>
+
+      {addOpen ? <McpAddModal onClose={() => setAddOpen(false)} /> : null}
     </section>
   );
 }

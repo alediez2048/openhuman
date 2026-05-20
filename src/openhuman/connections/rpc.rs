@@ -4,10 +4,10 @@
 //! + a connectivity-probe stub: `connections_generic_http_create/_update/
 //! _delete` and `connections_test`. Real HTTP probe is deferred to P0-3a.
 
-use crate::openhuman::config::Config;
+use crate::openhuman::config::{Config, McpServerConfig};
 use crate::openhuman::connections::types::{
     ConnectionKind, ConnectionsListRequest, ConnectionsListResponse, CreateGenericHttpRequest,
-    GenericHttpConnection, TestProbeResult, UpdateGenericHttpRequest,
+    GenericHttpConnection, McpAddRequest, TestProbeResult, UpdateGenericHttpRequest,
 };
 use crate::openhuman::connections::{aggregator, ops};
 use crate::rpc::RpcOutcome;
@@ -111,6 +111,38 @@ pub async fn connections_test(
     Ok(RpcOutcome::single_log(
         result.clone(),
         format!("connections_test id={id} ok={}", result.ok),
+    ))
+}
+
+/// `openhuman.connections_mcp_add` — register a new MCP server in
+/// `config.mcp_client.servers` and persist the TOML. The aggregator's
+/// `collect_mcp` builds a fresh registry on every call, so the new
+/// server surfaces on the next `connections_list` without a core restart.
+pub async fn connections_mcp_add(
+    config: &Config,
+    req: McpAddRequest,
+) -> Result<RpcOutcome<McpServerConfig>, String> {
+    let server = ops::add_mcp_server(config, req)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(RpcOutcome::single_log(
+        server.clone(),
+        format!("mcp server {} registered", server.name),
+    ))
+}
+
+/// `openhuman.connections_mcp_remove` — remove an MCP server by name.
+/// Idempotent: returns `removed=false` when the name was unknown.
+pub async fn connections_mcp_remove(
+    config: &Config,
+    name: &str,
+) -> Result<RpcOutcome<bool>, String> {
+    let removed = ops::remove_mcp_server(config, name)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(RpcOutcome::single_log(
+        removed,
+        format!("mcp server {name} remove: removed={removed}"),
     ))
 }
 
