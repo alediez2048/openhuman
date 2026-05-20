@@ -13,14 +13,16 @@ use serde::{Deserialize, Serialize};
 /// Stable id for a Generic HTTP connection row (UUIDv7 string).
 pub type GenericHttpConnectionId = String;
 
-/// Reference to a secret stored in `src/openhuman/security/secrets`.
+/// Reference to a secret encrypted via `src/openhuman/security/secrets`.
 ///
-/// Phase 0 stores the secret's stable name. The actual value is resolved at
-/// run time and never serialized into workflow definitions or run records.
+/// Carries the `enc2:<hex>` ChaCha20-Poly1305 ciphertext produced by
+/// `SecretStore::encrypt`. The cleartext credential is never persisted; it
+/// only exists in memory during `create_generic_http` / `update_generic_http`
+/// and is decrypted at run time when `resolve_auth_header` needs it.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SecretRef {
-    /// Logical name of the secret in the workspace secret store.
-    pub name: String,
+    /// `enc2:<hex>` blob produced by `SecretStore::encrypt`.
+    pub ciphertext: String,
 }
 
 /// Identifier for a connected service across all six mechanisms.
@@ -187,6 +189,67 @@ pub struct ConnectionsListResponse {
     pub connections: Vec<ConnectionView>,
     /// Wall-clock timestamp the aggregation completed at.
     pub generated_at: DateTime<Utc>,
+}
+
+// ── Generic HTTP CRUD payloads (P0-3) ────────────────────────────────────
+
+/// Cleartext credential about to be moved into `security/secrets`.
+///
+/// **In-memory only.** This type is the input to `create_generic_http` /
+/// `update_generic_http` and never reaches the database or any RPC response.
+/// After `SecretStore::encrypt` runs, the resulting `enc2:<hex>` blob is
+/// wrapped in a `SecretRef` and persisted; the original `NewCredential` is
+/// dropped.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct NewCredential {
+    /// Cleartext credential (bearer token, basic auth string, API key, etc.).
+    pub secret: String,
+}
+
+/// Request payload for `connections_generic_http_create`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CreateGenericHttpRequest {
+    pub name: String,
+    pub base_url: String,
+    pub auth_kind: AuthKind,
+    /// Cleartext credential. `None` when `auth_kind = None`.
+    #[serde(default)]
+    pub auth_credential: Option<NewCredential>,
+    #[serde(default)]
+    pub default_headers: Vec<(String, String)>,
+}
+
+/// Request payload for `connections_generic_http_update`. Every field is
+/// optional — `None` means "do not change".
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct UpdateGenericHttpRequest {
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub base_url: Option<String>,
+    #[serde(default)]
+    pub auth_kind: Option<AuthKind>,
+    /// New cleartext credential. `Some` rotates the secret; `None` leaves the
+    /// existing `secret_ref` untouched.
+    #[serde(default)]
+    pub auth_credential: Option<NewCredential>,
+    #[serde(default)]
+    pub default_headers: Option<Vec<(String, String)>>,
+}
+
+/// Result of a `connections_test` probe. Best-effort — failures return a
+/// structured payload rather than an `Err`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TestProbeResult {
+    /// `true` when the probe got a 2xx/3xx response.
+    pub ok: bool,
+    /// HTTP status code if a response was received.
+    #[serde(default)]
+    pub status: Option<u16>,
+    /// Error message if the probe failed before getting a response (timeout,
+    /// connect error, DNS failure, etc.).
+    #[serde(default)]
+    pub error: Option<String>,
 }
 
 #[cfg(test)]

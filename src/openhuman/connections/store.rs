@@ -83,6 +83,100 @@ fn record_applied(conn: &Connection, version: i64) -> Result<()> {
     Ok(())
 }
 
+/// Inserts a new `GenericHttpConnection` row.
+pub(crate) fn insert_generic_http(
+    config: &Config,
+    conn: &crate::openhuman::connections::types::GenericHttpConnection,
+) -> Result<()> {
+    with_connection(config, |db| {
+        let auth_kind_json =
+            serde_json::to_string(&conn.auth_kind).context("Failed to serialize auth_kind")?;
+        let secret_ref_json = match &conn.secret_ref {
+            Some(r) => Some(serde_json::to_string(r).context("Failed to serialize secret_ref")?),
+            None => None,
+        };
+        let default_headers_json = serde_json::to_string(&conn.default_headers)
+            .context("Failed to serialize default_headers")?;
+        db.execute(
+            "INSERT INTO generic_http_connections \
+             (id, name, base_url, auth_kind, secret_ref, default_headers, created_at, updated_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            rusqlite::params![
+                conn.id,
+                conn.name,
+                conn.base_url,
+                auth_kind_json,
+                secret_ref_json,
+                default_headers_json,
+                conn.created_at.to_rfc3339(),
+                conn.updated_at.to_rfc3339(),
+            ],
+        )
+        .context("Failed to insert generic_http_connections row")?;
+        Ok(())
+    })
+}
+
+/// Updates an existing `GenericHttpConnection` row in-place.
+pub(crate) fn update_generic_http(
+    config: &Config,
+    conn: &crate::openhuman::connections::types::GenericHttpConnection,
+) -> Result<()> {
+    with_connection(config, |db| {
+        let auth_kind_json =
+            serde_json::to_string(&conn.auth_kind).context("Failed to serialize auth_kind")?;
+        let secret_ref_json = match &conn.secret_ref {
+            Some(r) => Some(serde_json::to_string(r).context("Failed to serialize secret_ref")?),
+            None => None,
+        };
+        let default_headers_json = serde_json::to_string(&conn.default_headers)
+            .context("Failed to serialize default_headers")?;
+        let rows = db
+            .execute(
+                "UPDATE generic_http_connections \
+             SET name = ?2, base_url = ?3, auth_kind = ?4, secret_ref = ?5, \
+                 default_headers = ?6, updated_at = ?7 \
+             WHERE id = ?1",
+                rusqlite::params![
+                    conn.id,
+                    conn.name,
+                    conn.base_url,
+                    auth_kind_json,
+                    secret_ref_json,
+                    default_headers_json,
+                    conn.updated_at.to_rfc3339(),
+                ],
+            )
+            .context("Failed to update generic_http_connections row")?;
+        if rows == 0 {
+            anyhow::bail!("no generic_http_connections row with id {}", conn.id);
+        }
+        Ok(())
+    })
+}
+
+/// Deletes a `GenericHttpConnection` row. Returns `true` if a row was removed.
+pub(crate) fn delete_generic_http(config: &Config, id: &str) -> Result<bool> {
+    with_connection(config, |db| {
+        let rows = db
+            .execute(
+                "DELETE FROM generic_http_connections WHERE id = ?1",
+                rusqlite::params![id],
+            )
+            .context("Failed to delete generic_http_connections row")?;
+        Ok(rows > 0)
+    })
+}
+
+/// Fetches a single `GenericHttpConnection` row by id.
+pub(crate) fn get_generic_http(
+    config: &Config,
+    id: &str,
+) -> Result<Option<crate::openhuman::connections::types::GenericHttpConnection>> {
+    let rows = list_generic_http(config)?;
+    Ok(rows.into_iter().find(|r| r.id == id))
+}
+
 /// Lists every `GenericHttpConnection` row in `connections.db`, newest-first.
 ///
 /// Read-only path used by the aggregator (P0-2). CRUD lands in P0-3.

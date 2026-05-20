@@ -1,38 +1,61 @@
 //! Controller schemas + registry for the Connections domain.
 //!
-//! Phase 0 / P0-2 registers `connections_list` (read-only union across all
-//! six mechanisms). P0-3 will add `connections_generic_http_create/_update/
-//! _delete` and `connections_test`.
+//! Phase 0 controllers:
+//! - `connections_list` (P0-2) — unified read across all mechanisms.
+//! - `connections_generic_http_create/_update/_delete` (P0-3) — Generic HTTP CRUD.
+//! - `connections_test` (P0-3) — connectivity probe (stub in P0-3; real probe P0-3a).
 
 use crate::core::all::{ControllerFuture, RegisteredController};
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 use crate::openhuman::config::rpc as config_rpc;
-use crate::openhuman::connections::types::ConnectionsListRequest;
+use crate::openhuman::connections::types::{
+    ConnectionsListRequest, CreateGenericHttpRequest, UpdateGenericHttpRequest,
+};
 use crate::rpc::RpcOutcome;
 use serde::Serialize;
 use serde_json::{Map, Value};
 
 /// All controller schemas declared by the connections domain.
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
-    vec![schemas("list")]
+    vec![
+        schemas("list"),
+        schemas("generic_http_create"),
+        schemas("generic_http_update"),
+        schemas("generic_http_delete"),
+        schemas("test"),
+    ]
 }
 
 /// All controllers (schema + handler) registered by the connections domain.
 pub fn all_registered_controllers() -> Vec<RegisteredController> {
-    vec![RegisteredController {
-        schema: schemas("list"),
-        handler: handle_list,
-    }]
+    vec![
+        RegisteredController {
+            schema: schemas("list"),
+            handler: handle_list,
+        },
+        RegisteredController {
+            schema: schemas("generic_http_create"),
+            handler: handle_generic_http_create,
+        },
+        RegisteredController {
+            schema: schemas("generic_http_update"),
+            handler: handle_generic_http_update,
+        },
+        RegisteredController {
+            schema: schemas("generic_http_delete"),
+            handler: handle_generic_http_delete,
+        },
+        RegisteredController {
+            schema: schemas("test"),
+            handler: handle_test,
+        },
+    ]
 }
 
-/// Convenience: same as [`all_controller_schemas`] but uniquely named for
-/// the `src/core/all.rs` aggregation point.
 pub fn all_connections_controller_schemas() -> Vec<ControllerSchema> {
     all_controller_schemas()
 }
 
-/// Convenience: same as [`all_registered_controllers`] but uniquely named for
-/// the `src/core/all.rs` aggregation point.
 pub fn all_connections_registered_controllers() -> Vec<RegisteredController> {
     all_registered_controllers()
 }
@@ -43,29 +66,24 @@ pub fn schemas(function: &str) -> ControllerSchema {
         "list" => ControllerSchema {
             namespace: "connections",
             function: "list",
-            description: "List every connection across all 6 mechanisms (composio, channel, webview, builtin, mcp, generic_http). Supports optional kind_filter and case-insensitive substring search.",
+            description: "List every connection across all 6 mechanisms with optional kind_filter + case-insensitive search.",
             inputs: vec![
                 FieldSchema {
                     name: "kind_filter",
                     ty: TypeSchema::Option(Box::new(TypeSchema::Array(Box::new(
                         TypeSchema::Enum {
                             variants: vec![
-                                "composio",
-                                "channel",
-                                "webview",
-                                "builtin",
-                                "mcp",
-                                "generic_http",
+                                "composio", "channel", "webview", "builtin", "mcp", "generic_http",
                             ],
                         },
                     )))),
-                    comment: "Restrict the result to one or more connection kinds. Empty/missing means all kinds.",
+                    comment: "Restrict the result to one or more connection kinds.",
                     required: false,
                 },
                 FieldSchema {
                     name: "search",
                     ty: TypeSchema::Option(Box::new(TypeSchema::String)),
-                    comment: "Optional case-insensitive substring matched against display_name.",
+                    comment: "Case-insensitive substring matched against display_name.",
                     required: false,
                 },
             ],
@@ -73,6 +91,82 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 name: "response",
                 ty: TypeSchema::Ref("ConnectionsListResponse"),
                 comment: "Aggregated, filtered list of connections + the wall-clock timestamp.",
+                required: true,
+            }],
+        },
+        "generic_http_create" => ControllerSchema {
+            namespace: "connections",
+            function: "generic_http_create",
+            description: "Register a new Generic HTTP connection. Credential is encrypted via security/secrets before persistence.",
+            inputs: vec![FieldSchema {
+                name: "request",
+                ty: TypeSchema::Ref("CreateGenericHttpRequest"),
+                comment: "Cleartext credential is in-memory only and never persisted in this shape.",
+                required: true,
+            }],
+            outputs: vec![FieldSchema {
+                name: "connection",
+                ty: TypeSchema::Ref("GenericHttpConnection"),
+                comment: "Persisted connection. secret_ref carries the enc2:<hex> ciphertext; no cleartext.",
+                required: true,
+            }],
+        },
+        "generic_http_update" => ControllerSchema {
+            namespace: "connections",
+            function: "generic_http_update",
+            description: "Update a Generic HTTP connection. None-valued fields keep the existing value. auth_credential = Some rotates the secret.",
+            inputs: vec![
+                FieldSchema {
+                    name: "id",
+                    ty: TypeSchema::String,
+                    comment: "Identifier of the Generic HTTP connection to update.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "request",
+                    ty: TypeSchema::Ref("UpdateGenericHttpRequest"),
+                    comment: "Partial update payload.",
+                    required: true,
+                },
+            ],
+            outputs: vec![FieldSchema {
+                name: "connection",
+                ty: TypeSchema::Ref("GenericHttpConnection"),
+                comment: "Updated connection.",
+                required: true,
+            }],
+        },
+        "generic_http_delete" => ControllerSchema {
+            namespace: "connections",
+            function: "generic_http_delete",
+            description: "Delete a Generic HTTP connection. Idempotent — returns removed=false when the id was unknown.",
+            inputs: vec![FieldSchema {
+                name: "id",
+                ty: TypeSchema::String,
+                comment: "Identifier of the Generic HTTP connection to delete.",
+                required: true,
+            }],
+            outputs: vec![FieldSchema {
+                name: "removed",
+                ty: TypeSchema::Bool,
+                comment: "True when a row was removed; false when the id was unknown.",
+                required: true,
+            }],
+        },
+        "test" => ControllerSchema {
+            namespace: "connections",
+            function: "test",
+            description: "Best-effort connectivity probe. Phase 0 stub returns ok=true if the row exists; the real HEAD/OPTIONS/GET probe lands in P0-3a.",
+            inputs: vec![FieldSchema {
+                name: "id",
+                ty: TypeSchema::String,
+                comment: "Identifier of the Generic HTTP connection to probe.",
+                required: true,
+            }],
+            outputs: vec![FieldSchema {
+                name: "result",
+                ty: TypeSchema::Ref("TestProbeResult"),
+                comment: "Structured probe outcome — failures return ok=false rather than an error.",
                 required: true,
             }],
         },
@@ -96,12 +190,80 @@ pub fn schemas(function: &str) -> ControllerSchema {
     }
 }
 
+// ── Handlers ────────────────────────────────────────────────────────────
+
 fn handle_list(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let config = config_rpc::load_config_with_timeout().await?;
         let req: ConnectionsListRequest = serde_json::from_value(Value::Object(params))
             .map_err(|e| format!("invalid connections_list request: {e}"))?;
         to_json(crate::openhuman::connections::rpc::connections_list(&config, req).await?)
+    })
+}
+
+fn handle_generic_http_create(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let req: CreateGenericHttpRequest = params
+            .get("request")
+            .cloned()
+            .ok_or_else(|| "missing required param 'request'".to_string())
+            .and_then(|v| {
+                serde_json::from_value(v).map_err(|e| format!("invalid 'request': {e}"))
+            })?;
+        to_json(
+            crate::openhuman::connections::rpc::connections_generic_http_create(&config, req)
+                .await?,
+        )
+    })
+}
+
+fn handle_generic_http_update(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let id = params
+            .get("id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "missing required param 'id'".to_string())?
+            .to_string();
+        let req: UpdateGenericHttpRequest = params
+            .get("request")
+            .cloned()
+            .ok_or_else(|| "missing required param 'request'".to_string())
+            .and_then(|v| {
+                serde_json::from_value(v).map_err(|e| format!("invalid 'request': {e}"))
+            })?;
+        to_json(
+            crate::openhuman::connections::rpc::connections_generic_http_update(&config, &id, req)
+                .await?,
+        )
+    })
+}
+
+fn handle_generic_http_delete(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let id = params
+            .get("id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "missing required param 'id'".to_string())?
+            .to_string();
+        to_json(
+            crate::openhuman::connections::rpc::connections_generic_http_delete(&config, &id)
+                .await?,
+        )
+    })
+}
+
+fn handle_test(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let id = params
+            .get("id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "missing required param 'id'".to_string())?
+            .to_string();
+        to_json(crate::openhuman::connections::rpc::connections_test(&config, &id).await?)
     })
 }
 

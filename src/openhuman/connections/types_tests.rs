@@ -108,7 +108,7 @@ fn generic_http_connection_round_trip_empty_headers() {
         base_url: "https://hooks.zapier.com/v1".into(),
         auth_kind: AuthKind::Bearer,
         secret_ref: Some(SecretRef {
-            name: "zapier_token".into(),
+            ciphertext: "enc2:abc123".into(),
         }),
         default_headers: vec![],
         created_at: now,
@@ -130,7 +130,7 @@ fn generic_http_connection_round_trip_with_headers() {
             name: "X-N8N-API-Key".into(),
         },
         secret_ref: Some(SecretRef {
-            name: "n8n_api_key".into(),
+            ciphertext: "enc2:def456".into(),
         }),
         default_headers: vec![
             ("Content-Type".into(), "application/json".into()),
