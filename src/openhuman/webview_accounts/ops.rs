@@ -311,14 +311,19 @@ mod tests {
     }
 
     #[test]
-    fn detects_gmail_via_sid_cookie() {
+    fn detects_whatsapp_via_session_cookie() {
+        // After the Phase 0 roster curation, `gmail` is no longer a webview
+        // provider (Google's anti-automation blocks CEF reliably). WhatsApp
+        // is the canonical "high-value, no-API" provider, so this test
+        // exercises the same code path the old `detects_gmail_via_sid_cookie`
+        // covered — just keyed off `web.whatsapp.com` + `wa_ul` instead.
         let _lock = lock_env();
         let tmp = TempDir::new().unwrap();
         let db = tmp.path().join("Cookies");
-        make_cookies_db(&db, &[(".google.com", "SID")]);
+        make_cookies_db(&db, &[("web.whatsapp.com", "wa_ul")]);
         std::env::set_var(COOKIES_DB_ENV, &db);
         let v = detect_webview_logins();
-        assert_eq!(v["gmail"], Value::Bool(true));
+        assert_eq!(v["whatsapp"], Value::Bool(true));
         assert_eq!(v["slack"], Value::Bool(false));
         std::env::remove_var(COOKIES_DB_ENV);
     }
@@ -336,21 +341,29 @@ mod tests {
         let v = detect_webview_logins();
         assert_eq!(v["slack"], Value::Bool(true));
         assert_eq!(v["linkedin"], Value::Bool(true));
-        assert_eq!(v["gmail"], Value::Bool(false));
+        // Whatsapp should NOT light up from slack/linkedin cookies.
+        assert_eq!(v["whatsapp"], Value::Bool(false));
         std::env::remove_var(COOKIES_DB_ENV);
     }
 
-    /// Analytics cookies (NID) on google.com must not register as a
-    /// gmail login — only real session cookies count.
+    /// Analytics / non-session cookies on a supported provider host must
+    /// not register as a login — only the curated session-cookie names
+    /// count. Uses linkedin since the gmail equivalent (NID on google.com)
+    /// no longer maps to a tracked provider after the roster curation.
     #[test]
     fn ignores_non_session_cookies() {
         let _lock = lock_env();
         let tmp = TempDir::new().unwrap();
         let db = tmp.path().join("Cookies");
-        make_cookies_db(&db, &[(".google.com", "NID"), (".google.com", "CONSENT")]);
+        // `bcookie` and `lang` are LinkedIn marketing/analytics cookies —
+        // not in `PROVIDERS["linkedin"].session_cookie_names`.
+        make_cookies_db(
+            &db,
+            &[(".linkedin.com", "bcookie"), (".linkedin.com", "lang")],
+        );
         std::env::set_var(COOKIES_DB_ENV, &db);
         let v = detect_webview_logins();
-        assert_eq!(v["gmail"], Value::Bool(false));
+        assert_eq!(v["linkedin"], Value::Bool(false));
         std::env::remove_var(COOKIES_DB_ENV);
     }
 
@@ -359,7 +372,10 @@ mod tests {
         let _lock = lock_env();
         std::env::set_var(COOKIES_DB_ENV, "");
         let v = detect_webview_logins();
-        assert_eq!(v["gmail"], Value::Bool(false));
+        // Every provider should be present + false when the env var is empty.
+        for p in PROVIDERS {
+            assert_eq!(v[p.key], Value::Bool(false), "provider {}", p.key);
+        }
         std::env::remove_var(COOKIES_DB_ENV);
     }
 
@@ -368,7 +384,9 @@ mod tests {
         let _lock = lock_env();
         std::env::set_var(COOKIES_DB_ENV, "/tmp/does-not-exist/Cookies");
         let v = detect_webview_logins();
-        assert_eq!(v["gmail"], Value::Bool(false));
+        for p in PROVIDERS {
+            assert_eq!(v[p.key], Value::Bool(false), "provider {}", p.key);
+        }
         std::env::remove_var(COOKIES_DB_ENV);
     }
 
@@ -396,10 +414,12 @@ mod tests {
         let dir_with_space = tmp.path().join("dir with space");
         std::fs::create_dir_all(&dir_with_space).unwrap();
         let db = dir_with_space.join("Cookies");
-        make_cookies_db(&db, &[(".google.com", "SID")]);
+        // Use a still-tracked provider's session cookie; gmail was removed
+        // from PROVIDERS during the Phase 0 roster curation.
+        make_cookies_db(&db, &[("web.whatsapp.com", "wa_ul")]);
         std::env::set_var(COOKIES_DB_ENV, &db);
         let v = detect_webview_logins();
-        assert_eq!(v["gmail"], Value::Bool(true));
+        assert_eq!(v["whatsapp"], Value::Bool(true));
         std::env::remove_var(COOKIES_DB_ENV);
     }
 
