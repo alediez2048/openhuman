@@ -57,6 +57,10 @@ fn provider_url(provider: &str) -> Option<&'static str> {
         "google-meet" => Some("https://meet.google.com/"),
         "zoom" => Some("https://zoom.us/"),
         "browserscan" => Some("https://www.browserscan.net/bot-detection"),
+        // Connections Hub additions — sign-in-only (no scanner module yet).
+        "twitter" => Some("https://x.com/messages"),
+        "instagram" => Some("https://www.instagram.com/direct/inbox/"),
+        "messenger" => Some("https://www.messenger.com/"),
         _ => None,
     }
 }
@@ -144,6 +148,10 @@ fn provider_allowed_hosts(provider: &str) -> &'static [&'static str] {
             "www.googleapis.com",
         ],
         "browserscan" => &["browserscan.net"],
+        // Connections Hub sign-in surface — narrow allowlists (auth + CDN).
+        "twitter" => &["x.com", "twitter.com", "twimg.com"],
+        "instagram" => &["instagram.com", "cdninstagram.com", "fbcdn.net"],
+        "messenger" => &["messenger.com", "facebook.com", "fbcdn.net"],
         _ => &[],
     }
 }
@@ -664,6 +672,9 @@ pub fn provider_display_name(provider: &str) -> &'static str {
         "google-meet" => "Google Meet",
         "zoom" => "Zoom",
         "browserscan" => "BrowserScan",
+        "twitter" => "X (Twitter)",
+        "instagram" => "Instagram",
+        "messenger" => "Messenger",
         _ => "OpenHuman",
     }
 }

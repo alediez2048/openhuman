@@ -32,12 +32,13 @@ struct Provider {
 
 /// Providers the welcome agent cares about. Keep this list aligned
 /// with the webview accounts system in `app/src-tauri/src/webview_accounts/`.
+///
+/// Curated for the Connections Hub Browser Accounts surface: providers whose
+/// web client is usable inside an embedded Chromium *and* where the agent
+/// has unique value vs the official API. Gmail / Google Messages / Zoom
+/// were removed because they either fight CEF (Google's anti-automation
+/// stack) or force native-app redirects (Zoom).
 pub(crate) const PROVIDERS: &[Provider] = &[
-    Provider {
-        key: "gmail",
-        host_suffix: ".google.com",
-        session_cookie_names: &["SID", "HSID", "SSID", "APISID", "SAPISID"],
-    },
     Provider {
         key: "whatsapp",
         host_suffix: "web.whatsapp.com",
@@ -64,14 +65,19 @@ pub(crate) const PROVIDERS: &[Provider] = &[
         session_cookie_names: &["li_at"],
     },
     Provider {
-        key: "zoom",
-        host_suffix: ".zoom.us",
-        session_cookie_names: &["_zm_ssid", "zm_aid"],
+        key: "twitter",
+        host_suffix: ".x.com",
+        session_cookie_names: &["auth_token"],
     },
     Provider {
-        key: "google_messages",
-        host_suffix: "messages.google.com",
-        session_cookie_names: &["SID", "HSID"],
+        key: "instagram",
+        host_suffix: ".instagram.com",
+        session_cookie_names: &["sessionid"],
+    },
+    Provider {
+        key: "messenger",
+        host_suffix: ".messenger.com",
+        session_cookie_names: &["xs", "c_user"],
     },
 ];
 

@@ -30,22 +30,21 @@ interface Props {
 
 /** Per-provider description that tells the user what the browser account is for. */
 const WEBVIEW_DESCRIPTIONS: Record<string, string> = {
-  gmail: 'Read/triage your inbox via the Gmail web UI when an API call is too coarse.',
   whatsapp: 'Read and send messages through WhatsApp Web — no Business API required.',
   telegram: 'Reach Telegram chats via the web client (DMs, channels, supergroups).',
   slack: 'Browse Slack workspaces, threads, and DMs as your signed-in user.',
   discord: 'Operate inside Discord servers and DMs through the web client.',
   linkedin: 'Use LinkedIn DMs, search, and feed actions that have no public API.',
-  zoom: 'Join Zoom calls and read meeting context via the web app.',
-  google_messages: 'Send and receive SMS through Google Messages for Web.',
+  twitter: 'Send/receive DMs and post on X (Twitter) through the web client.',
+  instagram: 'Reach Instagram DMs and profile actions the official API doesn’t expose.',
+  messenger: 'Operate inside Facebook Messenger — DMs, group chats, reactions.',
 };
 
 /**
- * Cookie-probe slugs that map to a fully-supported `AccountProvider` (i.e.
- * the Tauri shell has a CEF webview account registration for them and can
- * open a session inline). The two probes without an entry (`gmail`,
- * `google_messages`) are surfaced read-only because the inline connect flow
- * has no provider contract for them yet.
+ * Cookie-probe slugs that map to a fully-supported `AccountProvider` (the
+ * Tauri shell has a CEF webview registration with provider_url + allowed
+ * hosts). Every probe slug should map to a provider — keep this aligned
+ * with `PROVIDERS` in `src/openhuman/webview_accounts/ops.rs`.
  */
 const PROBE_TO_PROVIDER: Record<string, AccountProvider | undefined> = {
   whatsapp: 'whatsapp',
@@ -53,10 +52,9 @@ const PROBE_TO_PROVIDER: Record<string, AccountProvider | undefined> = {
   slack: 'slack',
   discord: 'discord',
   linkedin: 'linkedin',
-  zoom: 'zoom',
-  // No inline-connect support yet:
-  gmail: undefined,
-  google_messages: undefined,
+  twitter: 'twitter',
+  instagram: 'instagram',
+  messenger: 'messenger',
 };
 
 function providerSlugOf(c: ConnectionView, fallbackIndex: number): string {

@@ -1,5 +1,15 @@
 import { FaLinkedin, FaWeixin } from 'react-icons/fa';
-import { SiDiscord, SiGooglemeet, SiSlack, SiTelegram, SiWhatsapp, SiZoom } from 'react-icons/si';
+import {
+  SiDiscord,
+  SiGooglemeet,
+  SiInstagram,
+  SiMessenger,
+  SiSlack,
+  SiTelegram,
+  SiWhatsapp,
+  SiX,
+  SiZoom,
+} from 'react-icons/si';
 import { TbRobot } from 'react-icons/tb';
 
 import type { AccountProvider } from '../../types/accounts';
@@ -19,6 +29,9 @@ const PROVIDER_COLOR: Record<AccountProvider, string> = {
   'google-meet': '#00897B',
   zoom: '#2D8CFF',
   browserscan: '#6B7280',
+  twitter: '#000000',
+  instagram: '#E4405F',
+  messenger: '#0084FF',
 };
 
 export const AgentIcon = ({ className }: { className?: string }) => (
@@ -53,6 +66,12 @@ export const ProviderIcon = ({
       return <SiZoom className={className} style={style} />;
     case 'browserscan':
       return <TbRobot className={className} style={style} />;
+    case 'twitter':
+      return <SiX className={className} style={style} />;
+    case 'instagram':
+      return <SiInstagram className={className} style={style} />;
+    case 'messenger':
+      return <SiMessenger className={className} style={style} />;
     default:
       return null;
   }

@@ -31,6 +31,9 @@ const PROVIDER_COPY: Record<AccountProvider, string> = {
   'google-meet': 'Google Meet',
   zoom: 'Zoom',
   browserscan: 'BrowserScan',
+  twitter: 'X (Twitter)',
+  instagram: 'Instagram',
+  messenger: 'Messenger',
 };
 
 // Phase-hint thresholds for slow loads. Most cold opens finish well under

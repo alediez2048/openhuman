@@ -9,7 +9,11 @@ export type AccountProvider =
   | 'discord'
   | 'google-meet'
   | 'zoom'
-  | 'browserscan';
+  | 'browserscan'
+  // Connections Hub additions (P0-5c) — sign-in-only; no scanner module yet.
+  | 'twitter'
+  | 'instagram'
+  | 'messenger';
 
 // Status lifecycle for an embedded webview account:
 //   'pending'  — openWebviewAccount invoked, Rust-side add_child not yet confirmed

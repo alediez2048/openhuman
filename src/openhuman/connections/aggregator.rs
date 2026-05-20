@@ -288,14 +288,14 @@ async fn collect_webview(_config: &Config) -> Result<Vec<ConnectionView>> {
 /// uppercased-first-letter slug when the provider isn't in the curated map.
 fn capitalize_webview_label(slug: &str) -> String {
     match slug {
-        "gmail" => "Gmail".to_string(),
         "whatsapp" => "WhatsApp".to_string(),
         "telegram" => "Telegram".to_string(),
         "slack" => "Slack".to_string(),
         "discord" => "Discord".to_string(),
         "linkedin" => "LinkedIn".to_string(),
-        "zoom" => "Zoom".to_string(),
-        "google_messages" => "Google Messages".to_string(),
+        "twitter" => "X (Twitter)".to_string(),
+        "instagram" => "Instagram".to_string(),
+        "messenger" => "Messenger".to_string(),
         _ => capitalize(slug),
     }
 }

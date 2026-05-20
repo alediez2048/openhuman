@@ -38,6 +38,9 @@ const PROVIDER_LABELS: Record<AccountProvider, string> = {
   'google-meet': 'Google Meet',
   zoom: 'Zoom',
   browserscan: 'BrowserScan',
+  twitter: 'X (Twitter)',
+  instagram: 'Instagram',
+  messenger: 'Messenger',
 };
 
 function makeAccountId(): string {
