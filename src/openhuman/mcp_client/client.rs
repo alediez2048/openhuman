@@ -3,7 +3,7 @@ use crate::openhuman::skills::types::ToolResult;
 use anyhow::Context;
 use base64::Engine;
 use parking_lot::Mutex;
-use reqwest::header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue, ACCEPT, AUTHORIZATION, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -194,7 +194,13 @@ impl McpHttpClient {
             .apply_auth(
                 self.http
                     .post(&self.endpoint)
-                    .header(CONTENT_TYPE, "application/json"),
+                    .header(CONTENT_TYPE, "application/json")
+                    // MCP Streamable HTTP spec requires clients to advertise
+                    // both response shapes — the server picks one per request.
+                    // Strict servers (Higgsfield, the official @modelcontextprotocol
+                    // SDK) return 406 Not Acceptable without this.
+                    // https://modelcontextprotocol.io/specification/2025-06-18/basic/transports#streamable-http
+                    .header(ACCEPT, "application/json, text/event-stream"),
                 true,
             )
             .body(serde_json::to_vec(&body)?);
@@ -286,6 +292,7 @@ impl McpHttpClient {
             .http
             .post(&self.endpoint)
             .header(CONTENT_TYPE, "application/json")
+            .header(ACCEPT, "application/json, text/event-stream")
             .body(serde_json::to_vec(&json!({
                 "jsonrpc": "2.0",
                 "id": self.next_id.fetch_add(1, Ordering::Relaxed),
@@ -381,7 +388,8 @@ impl McpHttpClient {
         let request = self
             .http
             .post(&self.endpoint)
-            .header(CONTENT_TYPE, "application/json");
+            .header(CONTENT_TYPE, "application/json")
+            .header(ACCEPT, "application/json, text/event-stream");
         let request = self.apply_standard_headers(request, false, method, None, &[]);
         let response = request.body(serde_json::to_vec(&body)?).send().await?;
         let status = response.status();
@@ -431,7 +439,8 @@ impl McpHttpClient {
         let request = self
             .http
             .post(&self.endpoint)
-            .header(CONTENT_TYPE, "application/json");
+            .header(CONTENT_TYPE, "application/json")
+            .header(ACCEPT, "application/json, text/event-stream");
         let request = if options.initialize {
             self.apply_auth(request, true)
         } else {
@@ -1143,6 +1152,68 @@ mod tests {
         assert!(tools.is_empty());
         assert_eq!(state.init_count.load(AtomicOrdering::SeqCst), 2);
         assert_eq!(state.call_count.load(AtomicOrdering::SeqCst), 2);
+    }
+
+    /// Regression test for the Higgsfield MCP HTTP 406 bug. The MCP
+    /// Streamable HTTP spec requires the client to advertise BOTH
+    /// `application/json` AND `text/event-stream` in the Accept header
+    /// on every POST. This test stands up a server that returns 406
+    /// unless the Accept header carries both values, then runs a real
+    /// initialize through the live client. The test fails (Initialize
+    /// errors with 406) if we ever regress on the Accept header.
+    #[tokio::test]
+    async fn initialize_sends_required_accept_header() {
+        use axum::body::Body;
+        use axum::response::Response as AxumResponse;
+
+        async fn strict_handler(headers: AxumHeaderMap, Json(body): Json<Value>) -> AxumResponse {
+            let accept = headers
+                .get(axum::http::header::ACCEPT)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("");
+            let has_json = accept.contains("application/json");
+            let has_sse = accept.contains("text/event-stream");
+            if !has_json || !has_sse {
+                return AxumResponse::builder()
+                    .status(StatusCode::NOT_ACCEPTABLE)
+                    .header(CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        r#"{"jsonrpc":"2.0","error":{"code":-32000,"message":"Not Acceptable: Client must accept both application/json and text/event-stream"},"id":null}"#,
+                    ))
+                    .unwrap();
+            }
+            AxumResponse::builder()
+                .status(StatusCode::OK)
+                .header(HEADER_SESSION_ID, "session-1")
+                .header(CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    serde_json::to_string(&json!({
+                        "jsonrpc": "2.0",
+                        "id": body["id"].clone(),
+                        "result": {
+                            "protocolVersion": LATEST_PROTOCOL_VERSION,
+                            "capabilities": {},
+                            "serverInfo": { "name": "strict", "version": "1.0.0" }
+                        }
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap()
+        }
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let app = Router::new().route("/", post(strict_handler));
+            axum::serve(listener, app).await.unwrap();
+        });
+        let client = McpHttpClient::new(format!("http://{addr}/"), 5);
+        let init = client.initialize().await.expect(
+            "initialize must succeed against a server that strictly enforces the MCP Accept header — the client is missing 'application/json, text/event-stream' if this fails",
+        );
+        assert_eq!(init.protocol_version, LATEST_PROTOCOL_VERSION);
     }
 
     #[tokio::test]
