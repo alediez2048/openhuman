@@ -15,6 +15,13 @@ interface ConnectionCardProps {
   status: ConnectionStatus;
   /** Right-aligned action slot (buttons, toggles, etc.). */
   actions?: ReactNode;
+  /**
+   * Left-aligned branded icon slot. Sections that have a per-row logo
+   * (Composio toolkits, channels, built-in integrations) pass a badge
+   * here so the card looks like the legacy Skills grid. Cards without
+   * a logo just omit it.
+   */
+  icon?: ReactNode;
   /** Stable identifier for analytics + tests. */
   testId?: string;
 }
@@ -65,12 +72,14 @@ export default function ConnectionCard({
   subtitle,
   status,
   actions,
+  icon,
   testId,
 }: ConnectionCardProps) {
   return (
     <div
       className="flex items-center justify-between gap-3 px-3.5 py-3 bg-white dark:bg-neutral-900 border border-stone-200 dark:border-neutral-700 rounded-xl shadow-subtle hover:shadow-soft transition-shadow"
       data-testid={testId}>
+      {icon ? <div className="flex-shrink-0">{icon}</div> : null}
       <div className="min-w-0 flex-1">
         <div className="text-sm font-medium text-stone-900 dark:text-neutral-100 truncate">
           {name}
