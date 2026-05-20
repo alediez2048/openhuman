@@ -134,16 +134,25 @@ async fn collect_composio(config: &Config) -> Result<Vec<ConnectionView>> {
         .connections
         .into_iter()
         .map(|c| {
-            let status_upper = c.status.to_uppercase();
-            let status = if status_upper == "ACTIVE" || status_upper == "CONNECTED" {
-                ConnectionStatus::Connected
-            } else {
-                ConnectionStatus::NotConnected
+            // Mirror the frontend's `deriveComposioState` mapping so the
+            // section can render "Connected" / "Error" / "Not connected"
+            // exactly like the legacy Skills grid did. Pending / initiated
+            // states fall under `NotConnected` here because the user has
+            // not yet completed OAuth.
+            let status = match c.status.to_uppercase().as_str() {
+                "ACTIVE" | "CONNECTED" => ConnectionStatus::Connected,
+                "FAILED" | "ERROR" => ConnectionStatus::Error {
+                    reason: format!("Composio status: {}", c.status),
+                },
+                "EXPIRED" => ConnectionStatus::Error {
+                    reason: "Composio credential expired — reconnect required".to_string(),
+                },
+                _ => ConnectionStatus::NotConnected,
             };
-            // Capitalize the toolkit slug for display ("gmail" → "Gmail").
-            // The Composio Rust type does not carry the account email today
-            // (it's TS-only on later backend versions), so the slug is the
-            // best we can do without another backend call.
+            // Capitalize the toolkit slug for the aggregator's fallback
+            // display name ("gmail" → "Gmail"). The Composio section in
+            // the UI overrides this with `composioToolkitMeta(slug).name`
+            // for a canonical "Google Calendar" label.
             let display_name = capitalize(&c.toolkit);
             ConnectionView {
                 r#ref: ConnectionRef::Composio {

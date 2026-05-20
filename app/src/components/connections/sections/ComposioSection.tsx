@@ -1,71 +1,118 @@
 /**
  * Composio section of the Connections Hub.
  *
- * Renders the **full Composio managed-auth catalog** (the ~118-entry
- * `KNOWN_COMPOSIO_TOOLKITS` list) so users can browse every toolkit
- * OpenHuman knows how to connect to — matching the legacy Skills grid.
- * Each row's status is derived from the unfiltered Composio connections
- * pulled from the connections slice; the catalog itself is static.
+ * Visual style matches the legacy Skills "Integrations" grid:
+ *   - Category filter chips (All / Chat / Productivity / Tools & Automation /
+ *     Social / Platform) above a tight square-tile grid.
+ *   - One tile per toolkit in the static `KNOWN_COMPOSIO_TOOLKITS` catalog
+ *     (~118 managed-auth services). Connection state comes from the
+ *     unfiltered Composio rows in the connections slice.
+ *   - Each tile: branded logo on top, toolkit name, status pill below
+ *     (Connected / Error / Not connected).
  *
- * Branded name + logo via `composioToolkitMeta(slug)`. Hub search
- * narrows visible cards by toolkit name (read directly from URL params
- * so the section can filter across the whole catalog, not just the
- * Hub-pre-filtered `items`).
- *
- * Full per-toolkit connect / disconnect / scope UI remains filed as
- * **P0-5a** — for now the catalog is read-only; users still authorize
- * from chat or the existing Composio settings panel.
+ * The full per-toolkit connect/disconnect/scope UI remains filed as
+ * **P0-5a** — tiles are read-only today; users authorize from chat or
+ * the existing Composio settings panel.
  */
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 
 import { useAppSelector } from '../../../store/hooks';
 import type { ConnectionStatus, ConnectionView } from '../../../types/connections';
 import { composioToolkitMeta, KNOWN_COMPOSIO_TOOLKITS } from '../../composio/toolkitMeta';
-import ConnectionCard from '../ConnectionCard';
+import type { SkillCategory } from '../../skills/skillCategories';
 import SectionHeader from '../SectionHeader';
 
 interface Props {
   /**
-   * Hub-filtered Composio rows. Kept for prop compatibility / test
-   * isolation, but the section computes its own catalog overlay from
-   * the full unfiltered Redux state below so unconnected toolkits also
-   * surface.
+   * Hub-filtered Composio rows. Retained for prop compatibility — the
+   * section computes its own catalog overlay from unfiltered Redux state
+   * below so unconnected toolkits also surface.
    */
   items: ConnectionView[];
 }
 
+/** Composio-relevant subset of the global SkillCategory enum. */
+const COMPOSIO_CATEGORY_CHIPS: readonly (SkillCategory | 'All')[] = [
+  'All',
+  'Chat',
+  'Productivity',
+  'Tools & Automation',
+  'Social',
+  'Platform',
+] as const;
+
 interface CatalogRow {
   slug: string;
   name: string;
+  category: SkillCategory;
   status: ConnectionStatus;
-  /** True when this slug has at least one ACTIVE/CONNECTED Composio account. */
   connected: boolean;
 }
 
-/** Build a lookup map: composio toolkit slug → first connected ConnectionView. */
 function connectionsBySlug(connections: ConnectionView[]): Map<string, ConnectionView> {
   const map = new Map<string, ConnectionView>();
   for (const c of connections) {
     if (c.ref.type !== 'composio') continue;
-    // First-wins: surfaces the first connected account for a toolkit. Multiple
-    // accounts under one toolkit collapse to one row in the catalog view;
-    // per-account fan-out is a P0-5a follow-up.
-    if (!map.has(c.ref.toolkit_id)) {
-      map.set(c.ref.toolkit_id, c);
-    }
+    if (!map.has(c.ref.toolkit_id)) map.set(c.ref.toolkit_id, c);
   }
   return map;
 }
 
+function StatusLabel({ status }: { status: ConnectionStatus }) {
+  switch (status.kind) {
+    case 'connected':
+      return (
+        <span className="inline-flex items-center gap-1 text-xs text-sage-700 dark:text-sage-400">
+          <span className="w-1.5 h-1.5 rounded-full bg-sage-500" />
+          Connected
+        </span>
+      );
+    case 'error':
+      return (
+        <span
+          className="inline-flex items-center gap-1 text-xs text-coral-600"
+          title={status.reason}>
+          <span className="w-1.5 h-1.5 rounded-full bg-coral-500" />
+          Error
+        </span>
+      );
+    case 'disabled':
+      return (
+        <span className="inline-flex items-center gap-1 text-xs text-stone-500 dark:text-neutral-400">
+          <span className="w-1.5 h-1.5 rounded-full bg-stone-300" />
+          Disabled
+        </span>
+      );
+    case 'not_connected':
+      return (
+        <span className="inline-flex items-center gap-1 text-xs text-stone-400 dark:text-neutral-500">
+          Connect
+        </span>
+      );
+  }
+}
+
+function ToolkitTile({ row }: { row: CatalogRow }) {
+  const meta = composioToolkitMeta(row.slug);
+  return (
+    <div
+      data-testid={`connection-card-composio-${row.slug}`}
+      className="flex flex-col items-center justify-center gap-1.5 px-2 py-3 bg-white dark:bg-neutral-900 border border-stone-200 dark:border-neutral-700 rounded-xl shadow-subtle hover:shadow-soft transition-shadow text-center">
+      <div className="mb-0.5">{meta.icon}</div>
+      <div className="text-xs font-medium text-stone-900 dark:text-neutral-100 truncate max-w-full">
+        {meta.name}
+      </div>
+      <StatusLabel status={row.status} />
+    </div>
+  );
+}
+
 export default function ComposioSection({ items: _items }: Props) {
-  // `items` is the Hub-filtered subset. For status lookup we want the
-  // *full* connections so an unconnected catalog row never gets mislabeled
-  // as connected just because the Hub's search hid an active row. Reading
-  // the slice directly keeps the section authoritative for Composio.
   const allConnections = useAppSelector(s => s.connections.connections);
   const [searchParams] = useSearchParams();
   const search = (searchParams.get('search') ?? '').trim().toLowerCase();
+  const [activeCategory, setActiveCategory] = useState<SkillCategory | 'All'>('All');
 
   const rows = useMemo<CatalogRow[]>(() => {
     const byToolkit = connectionsBySlug(allConnections);
@@ -75,49 +122,65 @@ export default function ComposioSection({ items: _items }: Props) {
       return {
         slug,
         name: meta.name,
+        category: meta.category,
         status: connection ? connection.status : { kind: 'not_connected' },
         connected: connection != null,
       };
     });
-    const filtered = search
-      ? built.filter(r => r.name.toLowerCase().includes(search) || r.slug.includes(search))
-      : built;
+
+    const afterCategory =
+      activeCategory === 'All' ? built : built.filter(r => r.category === activeCategory);
+    const afterSearch = search
+      ? afterCategory.filter(r => r.name.toLowerCase().includes(search) || r.slug.includes(search))
+      : afterCategory;
+
     // Connected toolkits float to the top; otherwise alphabetical.
-    filtered.sort((a, b) => {
+    afterSearch.sort((a, b) => {
       if (a.connected !== b.connected) return a.connected ? -1 : 1;
       return a.name.localeCompare(b.name);
     });
-    return filtered;
-  }, [allConnections, search]);
+    return afterSearch;
+  }, [allConnections, activeCategory, search]);
 
-  const connectedCount = rows.filter(r => r.connected).length;
+  const totalConnected = useMemo(() => connectionsBySlug(allConnections).size, [allConnections]);
 
   return (
     <section data-testid="connections-section-composio">
       <SectionHeader
         title="Composio Integrations"
-        count={connectedCount}
-        subtitle={`${rows.length} available · OAuth-brokered by Composio`}
+        count={totalConnected}
+        subtitle="Connected services give your agents access to the tools they need to perform tasks"
       />
+
+      <div className="mb-3 flex flex-wrap gap-2" data-testid="composio-category-chips">
+        {COMPOSIO_CATEGORY_CHIPS.map(chip => {
+          const active = chip === activeCategory;
+          return (
+            <button
+              key={chip}
+              type="button"
+              onClick={() => setActiveCategory(chip)}
+              className={`px-3 py-1 text-xs rounded-full transition-colors ${
+                active
+                  ? 'bg-stone-900 text-white dark:bg-neutral-100 dark:text-neutral-900'
+                  : 'bg-white dark:bg-neutral-900 text-stone-700 dark:text-neutral-300 border border-stone-300 dark:border-neutral-700 hover:bg-stone-50 dark:hover:bg-neutral-800'
+              }`}
+              data-testid={`composio-category-chip-${chip.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`}>
+              {chip}
+            </button>
+          );
+        })}
+      </div>
+
       {rows.length === 0 ? (
         <div className="text-sm text-stone-500 dark:text-neutral-400 px-3.5 py-4 bg-stone-50 dark:bg-neutral-800 rounded-xl">
-          No Composio toolkits match the current search.
+          No Composio toolkits match the current filter.
         </div>
       ) : (
-        <div className="space-y-2">
-          {rows.map(row => {
-            const meta = composioToolkitMeta(row.slug);
-            return (
-              <ConnectionCard
-                key={`composio-${row.slug}`}
-                name={meta.name}
-                subtitle={row.connected ? 'Composio' : 'Composio · not connected'}
-                status={row.status}
-                icon={meta.icon}
-                testId={`connection-card-composio-${row.slug}`}
-              />
-            );
-          })}
+        <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
+          {rows.map(row => (
+            <ToolkitTile key={`composio-tile-${row.slug}`} row={row} />
+          ))}
         </div>
       )}
     </section>
