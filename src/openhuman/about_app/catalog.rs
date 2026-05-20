@@ -423,9 +423,12 @@ const CAPABILITIES: &[Capability] = &[
         name: "Open Connections Hub",
         domain: "skills",
         category: CapabilityCategory::Skills,
-        description: "Browse the dedicated connections hub for external skill-backed integrations.",
-        how_to: "Settings > Connections",
-        status: CapabilityStatus::Beta,
+        description: "Open the unified Connections Hub at `/connections` — every connected \
+                      service (Composio integrations, chat channels, browser accounts, \
+                      built-in integrations, MCP servers, and Generic HTTP endpoints) \
+                      lives in one place with search + filters.",
+        how_to: "Bottom-tab > Connections (or visit /connections directly; legacy /skills redirects here).",
+        status: CapabilityStatus::Stable,
         privacy: None,
     },
     // ── Composio direct mode (BYO API key) ──────────────────────────
@@ -1051,6 +1054,46 @@ const CAPABILITIES: &[Capability] = &[
         category: CapabilityCategory::Automation,
         description: "Inspect past runs and results for scheduled jobs.",
         how_to: "Settings > Cron Jobs",
+        status: CapabilityStatus::Beta,
+        privacy: None,
+    },
+    // ── Connections Hub (Workflows & Automations Phase 0) ────────────────────
+    Capability {
+        id: "automation.view_connections_hub",
+        name: "View Connections Hub",
+        domain: "automation",
+        category: CapabilityCategory::Automation,
+        description: "View every connected service in one place — Composio integrations, \
+                      chat channels, browser accounts, built-in integrations, MCP servers, \
+                      and Generic HTTP endpoints. Filter by kind or search across all \
+                      mechanisms; legacy /skills and /channels routes redirect here.",
+        how_to: "Bottom-tab > Connections",
+        status: CapabilityStatus::Stable,
+        privacy: None,
+    },
+    Capability {
+        id: "automation.manage_generic_http_connection",
+        name: "Manage Generic HTTP Connections",
+        domain: "automation",
+        category: CapabilityCategory::Automation,
+        description: "Create, edit, and delete user-defined REST endpoints from the Connections \
+                      Hub. Each endpoint stores a base URL, an auth kind (None/Bearer/Basic/\
+                      ApiKeyHeader/QueryParam), default headers, and an encrypted credential \
+                      (ChaCha20-Poly1305 via the local secret store). These endpoints become \
+                      targets for the workflows engine in later phases.",
+        how_to: "Connections > Generic HTTP Endpoints > Add HTTP connection",
+        status: CapabilityStatus::Stable,
+        privacy: LOCAL_CREDENTIALS,
+    },
+    Capability {
+        id: "automation.test_connection",
+        name: "Test Connection",
+        domain: "automation",
+        category: CapabilityCategory::Automation,
+        description: "Run a live probe against a Generic HTTP connection to verify reachability \
+                      and auth before wiring it into a workflow. Surfaces a success or \
+                      error toast inline on the card.",
+        how_to: "Connections > Generic HTTP Endpoints > [card] > Test",
         status: CapabilityStatus::Beta,
         privacy: None,
     },

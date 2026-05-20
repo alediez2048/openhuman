@@ -84,6 +84,41 @@ fn unannotated_capability_serializes_without_privacy_field() {
 }
 
 #[test]
+fn connections_hub_phase_0_capabilities_are_registered() {
+    // P0-7: the Connections Hub is the Phase 0 deliverable for Workflows &
+    // Automations. Every consumer of about_app (intelligence panel, onboarding
+    // mascot, settings search, /about catalog dump) must see the umbrella
+    // entry + the Generic HTTP CRUD entry + the test-probe entry.
+
+    let hub = lookup("automation.view_connections_hub").expect("hub umbrella exists");
+    assert_eq!(hub.category, CapabilityCategory::Automation);
+    assert_eq!(hub.status, CapabilityStatus::Stable);
+    assert!(
+        hub.description.contains("Generic HTTP"),
+        "hub description must mention every mechanism: {:?}",
+        hub.description
+    );
+
+    let crud = lookup("automation.manage_generic_http_connection").expect("generic http crud");
+    assert_eq!(crud.category, CapabilityCategory::Automation);
+    let privacy = crud
+        .privacy
+        .expect("generic http crud must declare credential storage privacy");
+    assert!(!privacy.leaves_device, "credentials stay local-only");
+    assert_eq!(privacy.data_kind, PrivacyDataKind::Credentials);
+
+    let test_probe = lookup("automation.test_connection").expect("test connection");
+    assert_eq!(test_probe.category, CapabilityCategory::Automation);
+    assert_eq!(test_probe.status, CapabilityStatus::Beta);
+
+    // The pre-existing skills.open_connections_hub deep-link must stay
+    // findable and now describes the unified /connections destination.
+    let open = lookup("skills.open_connections_hub").expect("open hub deep-link");
+    assert_eq!(open.status, CapabilityStatus::Stable);
+    assert!(open.description.contains("/connections"));
+}
+
+#[test]
 fn catalog_includes_additional_user_facing_surfaces() {
     let ids: BTreeSet<&str> = all_capabilities()
         .iter()
