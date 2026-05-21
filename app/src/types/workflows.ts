@@ -173,3 +173,106 @@ export interface ListStarterTemplatesRequest {
   /** Optional Phase override; defaults to the current Phase server-side. */
   phase?: number | null;
 }
+
+// ── Runs (F-8) ──────────────────────────────────────────────────────────
+
+export type TriggerSource =
+  | { type: 'cron' }
+  | { type: 'manual'; initiator: string }
+  | { type: 'webhook' }
+  | { type: 'composio_event' }
+  | { type: 'channel_message' };
+
+export interface Run {
+  id: RunId;
+  workflow_id: WorkflowId;
+  trigger_source: TriggerSource;
+  status: RunStatus;
+  started_at: string;
+  completed_at?: string | null;
+  error?: string | null;
+  cancelled: boolean;
+}
+
+export interface RunStep {
+  id: RunStepId;
+  run_id: RunId;
+  node_id: NodeId;
+  status: RunStatus;
+  started_at: string;
+  completed_at?: string | null;
+  output_json?: string | null;
+  error?: string | null;
+}
+
+export interface RunWithSteps {
+  run: Run;
+  steps: RunStep[];
+}
+
+export type ManualInitiator = 'user' | 'agent' | { chat: { thread_id: string } };
+
+// ── Proposals (F-11 / F-12 / F-14) ──────────────────────────────────────
+
+export type Confidence = 'high' | 'medium' | 'low';
+
+/**
+ * Drafting-agent output for "build me a workflow that …". Renders via
+ * `<WorkflowProposalPreview>`. Server-emitted; the frontend never
+ * constructs these. Mirrors `WorkflowProposal` in
+ * `src/openhuman/workflows/types.rs`.
+ */
+export interface WorkflowProposal {
+  name: string;
+  description: string;
+  trigger: Trigger;
+  nodes: Node[];
+  edges: Edge[];
+  settings: WorkflowSettings;
+  required_connections: ConnectionRef[];
+  rationale: string[];
+  confidence: Confidence;
+}
+
+/**
+ * Edit preview surfaced by `workflow_propose_update`. Renders via
+ * `<WorkflowEditPreview>`. Carries the current + proposed workflow
+ * shapes and a pre-computed `diff_summary` bullet list so the UI
+ * doesn't have to diff client-side.
+ */
+export interface WorkflowEditProposal {
+  workflow_id: WorkflowId;
+  current: Workflow;
+  proposed: Workflow;
+  diff_summary: string[];
+  rationale: string[];
+}
+
+/**
+ * Delete preview surfaced by `workflow_propose_delete`. Renders via
+ * `<WorkflowDeletePreview>`. `retention_days` is currently hard-coded
+ * to 30 server-side (FR-1.3.4); declared here so the UI doesn't
+ * redefine the literal.
+ */
+export interface WorkflowDeletePreview {
+  workflow_id: WorkflowId;
+  name: string;
+  run_count: number;
+  retention_days: number;
+}
+
+/** Which state mutation a `WorkflowStateProposal` previews. */
+export type StateAction = 'enable' | 'disable' | 'run_now';
+
+/**
+ * Enable / Disable / RunNow preview surfaced by `workflow_propose_*`.
+ * Renders via `<WorkflowStatePreview>`. `enabled: false` means the
+ * action is gated (e.g. `run_now` on a `NeedsConnections` workflow);
+ * the UI renders the rationale but disables the Apply button.
+ */
+export interface WorkflowStateProposal {
+  workflow_id: WorkflowId;
+  action: StateAction;
+  rationale: string[];
+  enabled: boolean;
+}

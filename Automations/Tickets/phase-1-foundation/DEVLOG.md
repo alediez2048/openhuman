@@ -1441,3 +1441,151 @@ milestone** per the locked execution contract — it renders
 the F-12 propose-tool payloads, surfaces the run-history
 view, and adds the cancel-run button. F-15 then closes the
 loop with the hero E2E + the agent-invocation swap.
+
+---
+
+## 2026-05-21 — F-14 shipped: workflow preview rich-message components
+
+### What landed
+
+Four chat-rich-message preview components under
+`app/src/components/workflows/preview/`, each matching the locked
+design spec at
+`Automations/Artifacts/designs/workflow-proposal-preview.md`:
+
+- **`<WorkflowProposalPreview>`** — the hero. Minimalist base
+  (~140px), pending → saving → saved / error / discarded state
+  machine. Renders confidence dot, trigger line (humanized),
+  connection chips (with amber missing-connection variant),
+  optional missing-connections banner, "Show details"
+  disclosure with four collapsible sections (Rationale,
+  Agent prompt with copy button, Required connections table,
+  Settings). Action row: [Discard] · [Save (paused)] · [Save
+  & Enable]. Save success transitions to a sage left-bordered
+  saved stub with [Enable now] when paused.
+- **`<WorkflowEditPreview>`** — diff-card. Maps each
+  `diff_summary` bullet to a `+` / `-` / `±` gutter based on
+  the bullet's leading verb (Added/Removed/Changed). [Apply
+  changes] calls `workflows_update` with the proposed shape
+  projected to a `WorkflowPatch`.
+- **`<WorkflowDeletePreview>`** — coral confirmation. Pluralised
+  body ("X past runs" / "no past runs") + 30-day retention
+  copy from the F-12 `retention_days` field.
+- **`<WorkflowStatePreview>`** — compact (~80px) enable /
+  disable / run-now confirmation. Health-gated: when the
+  payload's `enabled: false`, the Apply button is disabled and
+  the rationale ("Cannot run: missing connections [gmail].")
+  is surfaced verbatim.
+
+All four use `ProposalHeader`, `DiscardedStub`, and (for the hero)
+`ActionRow` + `SavedStub` so the visual language is consistent
+across the propose / edit / delete / state surfaces (ADR-020's
+"one visual language").
+
+Per ADR-010 + ADR-012, every Apply / Save / Delete button calls
+the matching `workflows_*` mutating RPC directly through
+`workflowsApi`. The agent never sees the click — clicks are the
+single mutation boundary.
+
+### Supporting infrastructure
+
+- **TS types** (`app/src/types/workflows.ts`) — added
+  `WorkflowProposal`, `WorkflowEditProposal`,
+  `WorkflowDeletePreview`, `WorkflowStateProposal`,
+  `StateAction`, `Confidence`, `Run`, `RunStep`,
+  `RunWithSteps`, `TriggerSource`, `ManualInitiator`. Mirror
+  the Rust shapes in lock-step.
+- **`workflowsApi`** extended with `runNow`, `cancelRun`,
+  `listRuns`, `getRun` (already had `update`).
+- **`useCronHumanizer(trigger)`** — pure helper mapping cron
+  expressions to human strings via a small deterministic
+  table covering the starter-template patterns (`0 8 * * 1-5`
+  → "Every weekday at 8am"). Manual / Webhook / Composio /
+  Channel triggers get stable fallback labels. We
+  intentionally avoid `cronstrue` for Phase 1 — pluralization
+  drift across locale chunks is more trouble than a deterministic
+  table is worth at this scale.
+- **`useConnectionMeta(refs)`** — static-registry lookup
+  returning `{ label, mechanism, connectPath, refKey }` per
+  `ConnectionRef`. No network calls.
+- **`useWorkflowProposalActions(proposal, threadId)`** — wraps
+  `workflows_create` + `workflows_enable` for the hero
+  component's Save buttons. The `threadId` parameter is
+  reserved for the synthetic "Saved as 'X'." chat follow-up
+  (deferred — see below).
+- **`renderWorkflowPreview(payload)`** registry at
+  `app/src/components/workflows/preview/index.tsx`. Discriminated
+  union on `payload.kind` (`'proposal' | 'edit' | 'delete' |
+  'state'`); returns `null` for unknown kinds so a future
+  forward-compat payload doesn't crash the chat thread.
+- **44 new i18n keys** under `workflows.preview.*` added to
+  `en.ts` AND every `{xx}-5.ts` chunk (10 locales) via a
+  Python script. i18n coverage parity tests (42/42) pass.
+
+### Deferred to F-15 (chat-runtime wiring)
+
+The F-14 spec assumed `ChatRuntimeProvider` exposes a
+rich-message renderer type map. **It doesn't**: chat messages
+are markdown-only via `AgentMessageBubble.tsx`, and the agent
+message segment shape doesn't carry structured payloads. Wiring
+`renderWorkflowPreview` into the chat thread requires extending
+the agent → frontend message protocol — that's a parallel
+ticket inside F-15's hero E2E.
+
+**What F-14 ships**: the four components + hooks + registry.
+The components render correctly against fixture payloads
+(extensive vitest coverage). They are NOT yet visible in a
+running chat thread until F-15 lands the protocol extension.
+
+Similarly, the synthetic "Saved as 'X'." chat follow-up is
+deferred: `useWorkflowProposalActions` accepts a `threadId` but
+the chat-runtime layer doesn't expose an
+`append_user_message` RPC today. The hook logs to console.debug
+in lieu of posting; F-15 swaps the call site without changing
+the hook's external API.
+
+### Verified
+
+- `pnpm typecheck` ✓
+- `pnpm format` ✓
+- `pnpm lint` — 0 errors, 48 warnings (pre-existing baseline;
+  the one new warning is `react-hooks/set-state-in-effect` on
+  `DetailsPanel`'s auto-open-rationale-when-confidence-low
+  effect, which is a load-bearing prop-sync, not an
+  anti-pattern).
+- `pnpm test:unit -- preview` — **all 4 preview test files
+  pass** (~28 tests). Test suite totals: 2744 passed, 1
+  unrelated EADDRINUSE flake on the mock-API port-selection
+  test.
+- `pnpm test:unit -- i18n/__tests__/coverage` — **42/42** i18n
+  parity tests pass after the 44-key additions across en.ts +
+  11 chunks.
+
+### Files
+
+- New: `app/src/components/workflows/preview/WorkflowProposalPreview.tsx`
+  (hero).
+- New: `app/src/components/workflows/preview/WorkflowEditPreview.tsx`.
+- New: `app/src/components/workflows/preview/WorkflowDeletePreview.tsx`.
+- New: `app/src/components/workflows/preview/WorkflowStatePreview.tsx`.
+- New: `app/src/components/workflows/preview/index.tsx`
+  (`renderWorkflowPreview` registry + public re-exports).
+- New: `app/src/components/workflows/preview/internal/{ProposalHeader,TriggerLine,ConnectionChips,MissingConnectionsBanner,DetailsPanel,ActionRow,SavedStub,DiscardedStub}.tsx`.
+- New: `app/src/components/workflows/preview/hooks/{useCronHumanizer,useConnectionMeta,useWorkflowProposalActions}.ts`.
+- New: `app/src/components/workflows/preview/__tests__/{WorkflowProposalPreview,WorkflowEditPreview,WorkflowDeletePreview,WorkflowStatePreview}.test.tsx`.
+- Modified: `app/src/types/workflows.ts` (proposal / run / state
+  types).
+- Modified: `app/src/services/api/workflows.ts` (added
+  `runNow`, `cancelRun`, `listRuns`, `getRun`).
+- Modified: `app/src/lib/i18n/en.ts` + 11 `chunks/{loc}-5.ts`
+  files (44 new keys).
+
+### Next
+
+F-15 — hero flow E2E + catalog flow E2E + capability catalog
++ DEVLOG closure. Wires the chat-runtime protocol extension
+that makes these components visible inside agent message
+bubbles, swaps the `AgentDrafter` / `AgentUpdateDrafter`
+placeholders for the real `Agent::run_single()` invocation,
+and lands the manual end-to-end test the user has been
+waiting for since F-7.

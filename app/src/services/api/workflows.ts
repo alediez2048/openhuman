@@ -15,6 +15,10 @@ import type {
   CreateWorkflowRequest,
   ListFilter,
   ListStarterTemplatesRequest,
+  ManualInitiator,
+  Run,
+  RunId,
+  RunWithSteps,
   StarterTemplateView,
   UpdateWorkflowRequest,
   Workflow,
@@ -108,6 +112,48 @@ export const workflowsApi = {
     const raw = await callCoreRpc<
       StarterTemplateView[] | RpcOutcomeEnvelope<StarterTemplateView[]>
     >({ method: 'openhuman.workflows_list_starter_templates', params: { request: req } });
+    return unwrapRpcOutcome(raw);
+  },
+
+  /**
+   * Fire a manual dispatch (F-7). Returns the new `RunId`.
+   * `initiator` defaults to `User` server-side when omitted.
+   */
+  runNow: async (workflow_id: WorkflowId, initiator: ManualInitiator = 'user'): Promise<RunId> => {
+    const raw = await callCoreRpc<RunId | RpcOutcomeEnvelope<RunId>>({
+      method: 'openhuman.workflows_run_now',
+      params: { workflow_id, initiator },
+    });
+    return unwrapRpcOutcome(raw);
+  },
+
+  /**
+   * Request a soft cancel (F-9). Returns `true` when the
+   * `workflow_runs.cancelled` bit was flipped.
+   */
+  cancelRun: async (run_id: RunId): Promise<boolean> => {
+    const raw = await callCoreRpc<boolean | RpcOutcomeEnvelope<boolean>>({
+      method: 'openhuman.workflows_cancel_run',
+      params: { run_id },
+    });
+    return unwrapRpcOutcome(raw);
+  },
+
+  /** Paginated runs view, newest-first. `limit` clamped to [1, 100]. */
+  listRuns: async (workflow_id: WorkflowId, limit?: number, offset?: number): Promise<Run[]> => {
+    const raw = await callCoreRpc<Run[] | RpcOutcomeEnvelope<Run[]>>({
+      method: 'openhuman.workflows_list_runs',
+      params: { workflow_id, limit, offset },
+    });
+    return unwrapRpcOutcome(raw);
+  },
+
+  /** Fetch a single run + its persisted step rows. */
+  getRun: async (run_id: RunId): Promise<RunWithSteps | null> => {
+    const raw = await callCoreRpc<RunWithSteps | null | RpcOutcomeEnvelope<RunWithSteps | null>>({
+      method: 'openhuman.workflows_get_run',
+      params: { run_id },
+    });
     return unwrapRpcOutcome(raw);
   },
 };
