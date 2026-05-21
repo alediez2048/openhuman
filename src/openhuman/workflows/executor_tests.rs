@@ -1,22 +1,47 @@
-//! F-8 executor tests: dispatch validation, the full happy-path
-//! pipeline (run-row + step-row persistence + truncation), and the
+//! F-8 / F-9 / F-15 executor tests: dispatch validation, the full
+//! happy-path pipeline (run-row + step-row persistence +
+//! truncation), single-flight + cancel + orphan-recovery, and the
 //! `build_node_agent_definition` allowlist contract.
 //!
-//! These tests exercise the placeholder agent invocation in
-//! [`executor::run_agent_prompt`]; F-15's hero E2E will swap that body
-//! for `Agent::run_single()` without changing the surfaces asserted here.
+//! F-15 swapped the agent body for the live `Agent::run_single()`
+//! invocation. These tests inject a deterministic stub via
+//! [`executor::set_test_agent_prompt_override`] so the persistence
+//! pipeline assertions don't depend on a configured LLM provider in
+//! the test workspace.
 
 use super::executor::{
-    self, build_node_agent_definition, BASELINE_TOOL_NAMES, READ_ONLY_WORKFLOW_TOOL_NAMES,
+    self, build_node_agent_definition, set_test_agent_prompt_override, BASELINE_TOOL_NAMES,
+    READ_ONLY_WORKFLOW_TOOL_NAMES,
 };
 use super::ops;
 use super::store::{self, Pagination};
 use super::types::*;
 use crate::openhuman::config::Config;
 use crate::openhuman::connections::types::ConnectionRef;
+use std::sync::Once;
 use tempfile::TempDir;
 
+/// Install a deterministic agent stub the first time any executor
+/// test runs. The stub echoes the prompt + allowed-tool count back
+/// to the caller, which gives every assertion a stable shape to
+/// match against (length, substring, truncation) without needing
+/// the real LLM.
+fn install_test_agent_stub() {
+    static INIT: Once = Once::new();
+    INIT.call_once(|| {
+        set_test_agent_prompt_override(|prompt, def| {
+            Ok(format!(
+                "[test-stub] prompt={} ({} chars), allowed_tools={}",
+                prompt,
+                prompt.chars().count(),
+                def.allowed_tools.len()
+            ))
+        });
+    });
+}
+
 fn config_with_temp_workspace() -> (TempDir, Config) {
+    install_test_agent_stub();
     let dir = TempDir::new().unwrap();
     let mut config = Config::default();
     config.workspace_dir = dir.path().to_path_buf();
@@ -194,8 +219,8 @@ async fn dispatch_run_persists_run_and_step_rows() {
     assert!(matches!(step.status, RunStatus::Succeeded));
     let output = step.output_json.as_deref().unwrap_or("");
     assert!(
-        output.contains("F-8 placeholder"),
-        "step output must carry the placeholder marker, got {output:?}"
+        output.contains("[test-stub]"),
+        "step output must carry the test stub's marker, got {output:?}"
     );
 }
 

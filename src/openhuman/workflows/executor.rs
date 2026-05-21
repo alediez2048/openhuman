@@ -26,30 +26,20 @@
 //!     resolved tools + the four read-only workflow tools (F-10
 //!     registers those four; F-8 references them by stable name).
 //!
-//! ## Agent-invocation placeholder
+//! ## Agent invocation (F-15)
 //!
-//! Per the F-8 dependency survey, invoking the agent from a non-Turn
-//! context (cron-fired tokio task) requires constructing an
-//! `Agent` and calling `run_single()` — the `subagent_runner::run_subagent`
-//! entry the ticket assumed errors with `NoParentContext` outside a
-//! harness turn. That `Agent`-driven invocation is bigger than F-8's
-//! responsible budget; F-15's hero E2E will swap the placeholder for
-//! the real call when it walks the live cron → agent → memory path
-//! end-to-end.
+//! [`run_agent_prompt`] calls `Agent::from_config(config).run_single(prompt)`
+//! — the same pattern `cron::scheduler::handle_scheduled_job` uses for
+//! its session-target=Main/Isolated runs. The event channel is set to
+//! `"workflow"` and the session id is `"workflow:<run_id>"` so
+//! downstream subscribers (token-usage accounting, telemetry,
+//! Sentry) can filter workflow-driven turns from CLI / cron / chat.
 //!
-//! Until then, [`run_agent_prompt`] returns a deterministic stub
-//! `NodeOutput { text }` carrying a clearly-labelled placeholder body
-//! so:
-//!   - the run-row + step-row pipeline gets exercised end-to-end,
-//!   - F-9's single-flight + cancel paths have a working integration
-//!     surface to layer on top of,
-//!   - F-10 / F-12 land their agent-tool surfaces against the same
-//!     `build_node_agent_definition` allowlist that the live path
-//!     will use.
-//!
-//! Swap point at F-15: replace the placeholder body inside
-//! [`run_agent_prompt`] with the `Agent::from_config(...).run_single(prompt)`
-//! invocation. Signature is locked.
+//! Tests inject a deterministic stub via
+//! [`set_test_agent_prompt_override`] so the persistence pipeline
+//! assertions don't depend on a configured LLM provider in the test
+//! workspace. The override is `#[cfg(test)]`-gated; production code
+//! never sees it.
 //!
 //! ## F-9 additions
 //!
@@ -691,7 +681,7 @@ async fn execute_agent_prompt(config: &Config, run: &Run, node: &Node) -> Result
     );
 
     let (terminal_status, output_json, error) =
-        match run_agent_prompt(agent_prompt_config, &agent_def).await {
+        match run_agent_prompt(config, &run.id, agent_prompt_config, &agent_def).await {
             Ok(output) => {
                 let truncated = store::truncate_output_to_64kib(output.text);
                 let payload = serde_json::to_string(&serde_json::json!({ "text": truncated }))
@@ -734,36 +724,95 @@ async fn execute_agent_prompt(config: &Config, run: &Run, node: &Node) -> Result
     Ok(())
 }
 
-/// Node-execution output. Currently just a text body; F-15 will extend
-/// to carry the agent's tool-call history if the run-detail view
-/// needs it.
+/// Node-execution output. Currently just a text body; a future
+/// ticket will extend this to carry the agent's tool-call history
+/// if the run-detail view needs it.
 #[derive(Debug, Clone)]
 pub struct NodeOutput {
     pub text: String,
 }
 
-/// **F-8 placeholder.** Returns a deterministic stub output so the
-/// rest of the pipeline (step persistence, event publishing,
-/// truncation) can be exercised end-to-end. F-15 swaps this for the
-/// live `Agent::from_config(config).run_single(prompt)` invocation
-/// per the dependency survey in the F-8 DEVLOG.
+/// Test-only override for [`run_agent_prompt`]. Production code
+/// always takes the [`Agent::from_config`] path; tests inject a
+/// deterministic stub via [`set_test_agent_prompt_override`] so the
+/// persistence pipeline assertions don't depend on a live LLM
+/// provider being configured in the test workspace.
+///
+/// The signature mirrors the production body: takes the prompt +
+/// agent definition, returns the text the executor persists into
+/// `workflow_run_steps.output_json`.
+#[cfg(test)]
+type TestAgentOverride =
+    std::sync::Arc<dyn Fn(&str, &NodeAgentDefinition) -> Result<String> + Send + Sync>;
+
+#[cfg(test)]
+static TEST_AGENT_OVERRIDE: std::sync::OnceLock<std::sync::Mutex<Option<TestAgentOverride>>> =
+    std::sync::OnceLock::new();
+
+#[cfg(test)]
+pub fn set_test_agent_prompt_override(
+    f: impl Fn(&str, &NodeAgentDefinition) -> Result<String> + Send + Sync + 'static,
+) {
+    let slot = TEST_AGENT_OVERRIDE.get_or_init(|| std::sync::Mutex::new(None));
+    *slot.lock().expect("override slot poisoned") = Some(std::sync::Arc::new(f));
+}
+
+#[cfg(test)]
+pub fn clear_test_agent_prompt_override() {
+    if let Some(slot) = TEST_AGENT_OVERRIDE.get() {
+        *slot.lock().expect("override slot poisoned") = None;
+    }
+}
+
+#[cfg(test)]
+fn current_test_override() -> Option<TestAgentOverride> {
+    TEST_AGENT_OVERRIDE
+        .get()
+        .and_then(|m| m.lock().ok().and_then(|g| g.clone()))
+}
+
+/// Execute the `agent_prompt` node's body via the real agent
+/// harness. Mirrors the cron domain's pattern from
+/// `cron/scheduler.rs::handle_scheduled_job`:
+///
+///   1. `Agent::from_config(config)` builds the harness with the
+///      project's configured provider + tools + memory.
+///   2. `agent.set_event_context("workflow:<run_id>", "workflow")`
+///      tags downstream telemetry so subscribers can filter
+///      workflow-driven turns from CLI / cron / chat.
+///   3. `agent.run_single(prompt)` returns the agent's final text
+///      response, which becomes the persisted
+///      `workflow_run_steps.output_json.text` after truncation.
+///
+/// Tests inject a deterministic stub via
+/// [`set_test_agent_prompt_override`]; the override is only
+/// honoured under `#[cfg(test)]`. In production the override slot
+/// never exists.
 async fn run_agent_prompt(
-    config: &AgentPromptConfig,
+    config: &Config,
+    run_id: &RunId,
+    agent_prompt_config: &AgentPromptConfig,
     def: &NodeAgentDefinition,
 ) -> Result<NodeOutput> {
-    tracing::debug!(
+    #[cfg(test)]
+    if let Some(stub) = current_test_override() {
+        let text = stub(&agent_prompt_config.prompt, def)?;
+        tracing::debug!(
+            target: "workflows-run",
+            "[workflows-run] run_agent_prompt via test override (text_len={})",
+            text.len()
+        );
+        return Ok(NodeOutput { text });
+    }
+
+    tracing::info!(
         target: "workflows-run",
-        "[workflows-run] run_agent_prompt PLACEHOLDER iteration_cap={} allowed_tools={}",
+        "[workflows-run] run_agent_prompt invoking agent run={run_id} iteration_cap={} allowed_tools={}",
         def.iteration_cap,
         def.allowed_tools.len()
     );
-    let body = format!(
-        "[F-8 placeholder] Agent did not actually run. The real invocation \
-         lands at F-15 (hero E2E) via Agent::run_single().\n\n\
-         Prompt was ({} chars):\n{}\n\nAllowed tools: {}",
-        config.prompt.chars().count(),
-        config.prompt,
-        def.allowed_tools.join(", ")
-    );
-    Ok(NodeOutput { text: body })
+    let mut agent = crate::openhuman::agent::Agent::from_config(config)?;
+    agent.set_event_context(format!("workflow:{run_id}"), "workflow");
+    let text = agent.run_single(&agent_prompt_config.prompt).await?;
+    Ok(NodeOutput { text })
 }

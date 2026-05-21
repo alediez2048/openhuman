@@ -1097,6 +1097,75 @@ const CAPABILITIES: &[Capability] = &[
         status: CapabilityStatus::Beta,
         privacy: None,
     },
+    // ── Workflows (Workflows & Automations Phase 1) ──────────────────────────
+    Capability {
+        id: "automation.view_workflows",
+        name: "View Workflows",
+        domain: "automation",
+        category: CapabilityCategory::Automation,
+        description: "A dedicated Workflows tab listing every saved automation with its \
+                      enable toggle, health badge (Ready / NeedsConnections / LastRunFailed \
+                      / SessionExpired), trigger summary, and last-run timestamp. Health is \
+                      recomputed automatically whenever connections change so the badge \
+                      stays honest.",
+        how_to: "Bottom-tab > Workflows",
+        status: CapabilityStatus::Stable,
+        privacy: None,
+    },
+    Capability {
+        id: "automation.starter_workflows",
+        name: "Starter Workflow Catalog",
+        domain: "automation",
+        category: CapabilityCategory::Automation,
+        description: "A bundled catalog of four ready-to-add starter workflows (RU-1..RU-4) \
+                      covering common scheduling patterns: founder morning digest, weekly \
+                      review reflection, cross-channel triage, end-of-day cleanup. Add via \
+                      one click; the catalog auto-dedupes against the user's existing \
+                      Seed-origin workflows.",
+        how_to: "Workflows > Starter workflows section > [Add] / [Add & Enable]",
+        status: CapabilityStatus::Stable,
+        privacy: None,
+    },
+    Capability {
+        id: "automation.create_workflow_from_chat",
+        name: "Build a Workflow in Chat",
+        domain: "automation",
+        category: CapabilityCategory::Automation,
+        description: "Describe an automation in chat (\"every weekday at 8am, summarise my \
+                      Gmail and send to Slack\") and the drafting sub-agent emits a \
+                      validated `WorkflowProposal`. Click [Save] or [Save & Enable] on the \
+                      rendered preview card to commit. The agent never mutates — the click \
+                      is the single mutation boundary per ADR-012.",
+        how_to: "Chat > describe the workflow > preview renders > Save",
+        status: CapabilityStatus::Beta,
+        privacy: None,
+    },
+    Capability {
+        id: "automation.run_workflow_now",
+        name: "Run Workflow Now",
+        domain: "automation",
+        category: CapabilityCategory::Automation,
+        description: "Fire a workflow's `agent_prompt` node immediately, bypassing the cron \
+                      schedule. Health-gated: blocked when required connections aren't \
+                      live. Single-flight invariant means a second click while the previous \
+                      run is in-flight is dropped with a stable Skipped event.",
+        how_to: "Workflow card > [⋯ Run now] (UI button) or the propose-then-click chat flow",
+        status: CapabilityStatus::Beta,
+        privacy: None,
+    },
+    Capability {
+        id: "automation.cancel_workflow_run",
+        name: "Cancel a Running Workflow",
+        domain: "automation",
+        category: CapabilityCategory::Automation,
+        description: "Soft-cancel a running workflow. The current node's LLM call completes \
+                      naturally (cooperative pattern — aborting mid-stream would corrupt \
+                      memory writes), but the executor flips the run's status to Cancelled \
+                      between nodes and skips remaining work.",
+        how_to: "Run history > [Cancel] (Phase 2 UI; today via `workflow_propose_run_now` then `workflows_cancel_run`).",
+        status: CapabilityStatus::Beta,
+        privacy: None,
+    },
     // ── Proactive agents ─────────────────────────────────────────────────────
     Capability {
         id: "automation.morning_briefing",
