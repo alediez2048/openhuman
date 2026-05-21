@@ -929,3 +929,131 @@ tool names by constant; F-10 registers them in the agent tool
 registry, then adds the regression test asserting the allowlist
 matches `BASELINE_TOOL_NAMES + READ_ONLY_WORKFLOW_TOOL_NAMES`
 verbatim (ADR-016 / NFR-2.3.7).
+
+---
+
+## 2026-05-21 — F-10 shipped: read-only workflow agent tools + allowlist enforcement
+
+### What landed
+
+- **Four Tool impls** under `src/openhuman/tools/impl/workflows/`
+  (matching the existing `tools/impl/<domain>/` convention used by
+  cron / memory / network / etc., not a one-file outlier under
+  `workflows/`):
+  - `WorkflowListTool` (`workflow_list`) — paginated list of the
+    user's workflows. Filter is `{enabled?, health_state?, search?}`.
+  - `WorkflowGetTool` (`workflow_get`) — single workflow by id;
+    returns null on unknown id.
+  - `WorkflowsListRunsTool` (`workflows_list_runs`) — runs for a
+    workflow, `limit` clamped server-side to `[1, 100]` by
+    `ops::list_runs`.
+  - `WorkflowsGetRunTool` (`workflows_get_run`) — run + steps;
+    returns null on unknown id.
+- All four declare `PermissionLevel::ReadOnly`,
+  `ToolCategory::System`, and `is_concurrency_safe = true` (no
+  shared mutable state — the agent tool loop can fan them out).
+- **Stable name constants** in
+  `tools/impl/workflows/mod.rs`: `TOOL_WORKFLOW_LIST`,
+  `TOOL_WORKFLOW_GET`, `TOOL_WORKFLOWS_LIST_RUNS`,
+  `TOOL_WORKFLOWS_GET_RUN`, `READ_ONLY_TOOL_NAMES`.
+  Re-exported from `workflows::agent_tools` so callers depend on
+  the workflows domain's public surface.
+- **`FORBIDDEN_MUTATING_TOOL_NAMES`** in `workflows::agent_tools`
+  — eight names the agent must NEVER see
+  (`workflows_create/update/delete/enable/disable/run_now/cancel_run`
+  + `workflow_create_from_proposal`). Two test sites enforce it:
+  the allowlist test and the registered-tools test.
+- **Boot wiring** in `tools::ops::all_tools_with_runtime`: four
+  `Box::new(...)` entries after the cron block. Comment cites
+  ADR-012 + F-8 so a future reader knows why no mutating tools
+  appear here.
+- **`workflows::agent_tools` upgraded** from F-1 stub to the
+  re-export hub for the read-only constant + the forbidden list.
+- **Test suite** in
+  `src/openhuman/tools/impl/workflows/tests.rs` (11 tests):
+  - Each tool's `name()` matches the canonical constant.
+  - `READ_ONLY_TOOL_NAMES` matches
+    `executor::READ_ONLY_WORKFLOW_TOOL_NAMES` exactly (catches
+    F-8 ↔ F-10 drift).
+  - Round-trip against `ops::*` for each tool (workflow_list,
+    workflow_get, workflows_list_runs, workflows_get_run).
+  - `workflow_get` returns null for unknown id; same for
+    `workflows_get_run`.
+  - `workflows_list_runs` honours the server-side limit clamp
+    (limit = 99999 doesn't error).
+  - **Secret-leak regression** — a workflow whose node carries
+    a `ConnectionRef::GenericHttp { connection_id }` produces a
+    `workflow_get` payload that contains neither the literal
+    `"secret_ref"` nor any `Bearer ` / `Basic ` Authorization-
+    header substring.
+  - **`build_node_agent_definition` allowlist (NFR-2.3.7)** —
+    asserted in both the no-connections case and the
+    Composio-allowed-connections case: baseline names present,
+    read-only workflow names present, **zero** propose names,
+    **zero** forbidden mutation names.
+  - **Registered-tool surface check** — calls
+    `tools::all_tools(...)` end-to-end, walks every registered
+    name, asserts none match `FORBIDDEN_MUTATING_TOOL_NAMES`
+    and all four `READ_ONLY_TOOL_NAMES` ARE present. This is
+    the load-bearing ADR-012 security boundary — drift here
+    means an agent could mutate via the tool surface.
+
+### Deviations
+
+- **Location**: F-10's spec called for
+  `src/openhuman/workflows/agent_tools.rs` to hold the tool
+  impls. Reality: every other tool implementation lives under
+  `src/openhuman/tools/impl/<domain>/`. Staying consistent with
+  that convention is more important than literally matching the
+  spec's filesystem path. `workflows::agent_tools` keeps its
+  re-export role (constants + forbidden list).
+- **No `Registry::new()` API**: the spec assumed a `Registry`
+  type with `register_tool`. Reality: tools register by pushing
+  into a `Vec<Box<dyn Tool>>` inside
+  `tools::ops::all_tools_with_runtime`. The negative-allowlist
+  test exercises the real surface, not a synthetic registry.
+- **`Pagination::limit` typed as `i64` in JSON-schema**: the
+  schema declares `"type": "integer"` (which serde-json maps to
+  `u64`), and the tool parses with `Value::as_u64`. Schemas in
+  other tools follow the same pattern.
+
+### Verified
+
+- `cargo check` ✓
+- `cargo fmt` ✓
+- `cargo test --lib openhuman::tools::implementations::workflows`
+  — **11/11 passing**.
+- `cargo test --lib openhuman::tools` — **906/906 passing**
+  (F-10 added 11; no regressions).
+- `cargo test --lib openhuman::workflows` — **106/106 passing**
+  (unchanged).
+
+### Files
+
+- New: `src/openhuman/tools/impl/workflows/mod.rs` (module +
+  name constants + `READ_ONLY_TOOL_NAMES`).
+- New: `src/openhuman/tools/impl/workflows/list.rs`
+  (`WorkflowListTool`).
+- New: `src/openhuman/tools/impl/workflows/get.rs`
+  (`WorkflowGetTool`).
+- New: `src/openhuman/tools/impl/workflows/list_runs.rs`
+  (`WorkflowsListRunsTool`).
+- New: `src/openhuman/tools/impl/workflows/get_run.rs`
+  (`WorkflowsGetRunTool`).
+- New: `src/openhuman/tools/impl/workflows/tests.rs` (11 tests).
+- Modified: `src/openhuman/tools/impl/mod.rs` (declared
+  `workflows` submodule + re-export of the four tool types).
+- Modified: `src/openhuman/tools/ops.rs` (added four
+  `Box::new(...)` entries with F-10 comment).
+- Modified: `src/openhuman/workflows/agent_tools.rs` (filled
+  the F-1 stub with re-exports + `FORBIDDEN_MUTATING_TOOL_NAMES`
+  + module docs explaining the F-10/F-12 split).
+
+### Next
+
+F-11 — drafting sub-agent + deterministic validator +
+`draft_with_retries`. Lands `workflows::proposer` and
+`workflows::validator`. The drafting sub-agent gets its own
+allowlist (different from `agent_prompt`'s): `list_connections`
++ `workflow_list` + a synthetic `emit_proposal` tool. F-11
+mirrors F-10's negative allowlist test for that surface.

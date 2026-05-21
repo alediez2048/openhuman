@@ -132,6 +132,15 @@ pub fn all_tools_with_runtime(
         Box::new(CronUpdateTool::new(config.clone(), security.clone())),
         Box::new(CronRunTool::new(config.clone())),
         Box::new(CronRunsTool::new(config.clone())),
+        // F-10: read-only workflow agent tools. Names match
+        // `workflows::executor::READ_ONLY_WORKFLOW_TOOL_NAMES` (F-8) so
+        // an `agent_prompt` node's allowlist resolves them. ADR-012:
+        // NO mutating tools on the agent surface — mutations land
+        // exclusively through `workflows_*` RPCs the UI calls.
+        Box::new(WorkflowListTool::new(config.clone())),
+        Box::new(WorkflowGetTool::new(config.clone())),
+        Box::new(WorkflowsListRunsTool::new(config.clone())),
+        Box::new(WorkflowsGetRunTool::new(config.clone())),
         Box::new(MemoryStoreTool::new(memory.clone(), security.clone())),
         Box::new(MemoryRecallTool::new(memory.clone())),
         Box::new(MemoryForgetTool::new(memory.clone(), security.clone())),

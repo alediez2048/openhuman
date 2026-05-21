@@ -8,6 +8,7 @@ pub mod memory;
 pub mod network;
 pub mod system;
 pub mod whatsapp_data;
+pub mod workflows;
 
 pub use agent::*;
 pub use audio::*;
@@ -19,3 +20,6 @@ pub use memory::*;
 pub use network::*;
 pub use system::*;
 pub use whatsapp_data::*;
+pub use workflows::{
+    WorkflowGetTool, WorkflowListTool, WorkflowsGetRunTool, WorkflowsListRunsTool,
+};
