@@ -126,15 +126,23 @@ export default function WorkflowCard({ workflow }: Props) {
     }
   };
 
+  const isSeedOrigin = workflow.origin.type === 'seed';
+
   const handleDelete = async () => {
     setBusy(true);
     setActionMessage(null);
-    console.debug('[workflows-ui] delete_clicked id=%s', workflow.id);
+    console.debug(
+      '[workflows-ui] delete_clicked id=%s origin=%s',
+      workflow.id,
+      workflow.origin.type
+    );
     try {
       await dispatch(deleteWorkflow(workflow.id)).unwrap();
-      // Refresh the starter-catalog so the deleted Seed row's
-      // template reappears in the catalog (matches the F-15
-      // E2E flow).
+      // Refresh the starter-catalog so a Seed-origin row's
+      // template re-appears in the catalog automatically (the
+      // F-5 list_starter_templates server-side dedupes against
+      // existing Seed{template_id} workflows — drop the row +
+      // the template reappears).
       void dispatch(fetchStarterTemplates());
       void dispatch(fetchWorkflows(undefined));
     } catch (err) {
@@ -242,8 +250,15 @@ export default function WorkflowCard({ workflow }: Props) {
               role="menuitem"
               onClick={() => handleOverflow('delete')}
               disabled={busy}
-              className="w-full text-left px-3 py-1.5 text-xs text-coral-600 hover:bg-stone-100 dark:hover:bg-neutral-800 disabled:opacity-50">
-              {t('workflows.delete')}
+              title={
+                isSeedOrigin
+                  ? 'Removes the workflow and returns its template to the starter section.'
+                  : undefined
+              }
+              className={`w-full text-left px-3 py-1.5 text-xs hover:bg-stone-100 dark:hover:bg-neutral-800 disabled:opacity-50 ${
+                isSeedOrigin ? 'text-stone-700 dark:text-neutral-200' : 'text-coral-600'
+              }`}>
+              {isSeedOrigin ? t('workflows.move_to_starter') : t('workflows.delete')}
             </button>
           </div>
         )}

@@ -465,6 +465,9 @@ const zhCN5: TranslationMap = {
   'workflows.starter_card.missing_connections': 'Needs',
   'workflows.starter_load_error': 'Couldn’t load starter workflows.',
   'workflows.starter_adding': 'Adding…',
+  'workflows.move_to_starter': 'Move to starter workflows',
+  'workflows.moved_to_starter': 'Moved back to starter workflows.',
+  'workflows.deleted': 'Deleted.',
   // F-14: WorkflowProposalPreview + companion components.
   'workflows.preview.save_paused': 'Save (paused)',
   'workflows.preview.save_enable': 'Save & Enable',
