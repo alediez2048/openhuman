@@ -1336,3 +1336,108 @@ F-13 — finalize `workflow_builder.md` + bundle it in
 prompt alongside the existing `agent/prompts/*.md` files. The
 F-11 placeholder copy is already on disk; F-13 verifies the
 build-time + runtime resolution paths.
+
+---
+
+## 2026-05-21 — F-13 shipped: workflow_builder.md locked + bundled + smoke-tested
+
+### What landed
+
+- **`workflow_builder.md` promoted to production**: F-11 already
+  copied `Automations/Artifacts/prompts/workflow_builder.md` →
+  `src/openhuman/agent/prompts/workflow_builder.md`. F-13
+  re-verified byte-identical
+  (`diff` returns empty) and locked the production path as
+  canonical.
+- **Tauri bundling already in place**: `app/src-tauri/tauri.conf.json`
+  ships the whole `agent/prompts/` directory via the existing
+  `"../../src/openhuman/agent/prompts"` resource glob — `workflow_builder.md`
+  bundles automatically alongside `IDENTITY.md` / `SOUL.md` /
+  `USER.md`. No JSON change needed.
+- **Proposer module doc updated**: removed the F-11/F-13
+  "placeholder" framing and replaced with the canonical
+  rationale (compile-time `include_str!` + the parallel Tauri
+  resource glob + the dual-write expectation against the
+  design-time artifact).
+- **`WORKFLOW_BUILDER_PROMPT_SIGNATURE` constant** — a stable
+  substring drawn from the artifact's line 13 ("drafting
+  sub-agent for OpenHuman's Workflows feature"). The F-13 smoke
+  tests assert this is present so a build that picked up an
+  empty / wrong-path file fails fast at test time rather than
+  at the first chat-driven proposal.
+- **One-shot init log** (`log_prompt_load_once`) — info-level
+  `[workflows-proposer]` entry at first `build_system_prompt`
+  call: `loaded workflow_builder.md ({n} chars,
+  signature_present=true)`. Uses
+  `AtomicBool::swap(Relaxed)` so subsequent calls are silent.
+- **Three new smoke tests** in `proposer_tests.rs`:
+  - `bundled_workflow_builder_prompt_carries_canonical_signature` —
+    full `build_system_prompt` output contains the signature
+    substring (covers both the file presence AND the
+    composition pipeline that places it).
+  - `bundled_workflow_builder_prompt_matches_design_time_artifact`
+    — compares the production file against the
+    `Automations/Artifacts/prompts/workflow_builder.md`
+    artifact via parallel `include_str!`. Drift fails the
+    suite, enforcing the dual-write expectation.
+  - `bundled_workflow_builder_prompt_is_non_trivial_size` —
+    > 4 KiB sanity bound catches the "we shipped a one-line
+    file with the signature inside" failure mode the signature
+    check alone doesn't cover.
+
+### Bundle verification
+
+- `cargo build --manifest-path Cargo.toml --bin openhuman-core` ✓
+- `strings target/debug/openhuman-core | grep "drafting sub-agent" | wc -l` → **4**
+  hits (the prompt and its references are embedded in the binary's
+  text segment via `include_str!`).
+- Tauri resource path stays
+  `../../src/openhuman/agent/prompts` — the directory glob the
+  existing `IDENTITY.md` / `SOUL.md` / `USER.md` resources
+  already use. macOS resource lookup path:
+  `<App>.app/Contents/Resources/_up_/_up_/src/openhuman/agent/prompts/workflow_builder.md`
+  (unchanged convention).
+
+### Deviations
+
+- **No JSON edit to `tauri.conf.json`**. The existing directory
+  glob already captures `workflow_builder.md`; the F-13 ticket's
+  illustrative pattern (one file per line) would have meant
+  *adding redundancy* to the JSON. Documented in the module
+  doc + DEVLOG so future readers see why the resource list
+  isn't explicit.
+- **Dual-write expectation**: future edits to the system prompt
+  edit both
+  `Automations/Artifacts/prompts/workflow_builder.md` (design-time
+  SoT) and
+  `src/openhuman/agent/prompts/workflow_builder.md` (production).
+  The drift test in `proposer_tests.rs` catches one-side
+  edits. A follow-up "symlink production path → artifact"
+  ticket can collapse this once Tauri bundling has been
+  validated against symlinks on every target OS.
+
+### Verified
+
+- `cargo check` ✓
+- `cargo fmt` ✓
+- `cargo build --bin openhuman-core` ✓
+- `cargo test --lib openhuman::workflows` — **151/151 passing**
+  (3 new F-13 smoke tests).
+
+### Files
+
+- Modified: `src/openhuman/workflows/proposer.rs` (canonical
+  module doc + `WORKFLOW_BUILDER_PROMPT_SIGNATURE` constant +
+  `log_prompt_load_once` helper + call site in
+  `build_system_prompt`).
+- Modified: `src/openhuman/workflows/proposer_tests.rs` (3 new
+  F-13 smoke tests).
+
+### Next
+
+F-14 — `<WorkflowProposalPreview>` + companion components +
+chat-runtime integration. F-14 is the **next live-test
+milestone** per the locked execution contract — it renders
+the F-12 propose-tool payloads, surfaces the run-history
+view, and adds the cancel-run button. F-15 then closes the
+loop with the hero E2E + the agent-invocation swap.

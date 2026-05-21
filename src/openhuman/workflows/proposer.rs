@@ -42,10 +42,50 @@ use crate::openhuman::workflows::types::{
 use crate::openhuman::workflows::validator;
 use async_trait::async_trait;
 
-/// Bundled drafting prompt. F-13 owns the file content + the Tauri
-/// resource bundling that ships it alongside the binary; F-11 lands
-/// the placeholder so this `include_str!` resolves at build time.
+/// Bundled drafting prompt.
+///
+/// Compile-time `include_str!` embeds the canonical content from
+/// `src/openhuman/agent/prompts/workflow_builder.md` into the
+/// binary's text segment so the proposer has zero runtime
+/// dependency on the filesystem. The same directory is ALSO bundled
+/// as a Tauri resource via `app/src-tauri/tauri.conf.json`'s
+/// `resources` glob (`../../src/openhuman/agent/prompts`), which
+/// ships the file inside `<App>.app/Contents/Resources/...` for
+/// discoverability by QA + future dev-tools.
+///
+/// Design-time source of truth lives at
+/// `Automations/Artifacts/prompts/workflow_builder.md`; F-13
+/// promoted the artifact to this production path byte-for-byte.
+/// Future edits dual-write both files until a follow-up
+/// symlink ticket lands.
 const WORKFLOW_BUILDER_PROMPT: &str = include_str!("../agent/prompts/workflow_builder.md");
+
+/// Stable substring drawn from the bundled prompt's opening
+/// paragraph (`Automations/Artifacts/prompts/workflow_builder.md`
+/// line 13). The F-13 smoke test asserts this is present so a
+/// build that accidentally picked up an empty / wrong-path file
+/// fails fast at test time rather than at the first chat-driven
+/// proposal.
+#[doc(hidden)]
+pub const WORKFLOW_BUILDER_PROMPT_SIGNATURE: &str =
+    "drafting sub-agent** for OpenHuman's Workflows feature";
+
+/// Fire a single info-level log line the first time the proposer
+/// composes a system prompt. Subsequent calls are silent — the
+/// log answers "is the bundled prompt loaded and at what size?"
+/// once at startup-equivalent, then gets out of the way.
+fn log_prompt_load_once() {
+    static LOGGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if LOGGED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
+    tracing::info!(
+        target: "workflows-proposer",
+        "[workflows-proposer] loaded workflow_builder.md ({n} chars, signature_present={present})",
+        n = WORKFLOW_BUILDER_PROMPT.len(),
+        present = WORKFLOW_BUILDER_PROMPT.contains(WORKFLOW_BUILDER_PROMPT_SIGNATURE)
+    );
+}
 
 /// Default retry budget per ADR-015 / FR-1.13.4.
 pub const DEFAULT_MAX_ATTEMPTS: u32 = 3;
@@ -247,6 +287,7 @@ pub fn build_system_prompt(
     phase: u32,
     last_error: Option<&ProposalValidationError>,
 ) -> String {
+    log_prompt_load_once();
     let mut prompt = WORKFLOW_BUILDER_PROMPT.to_string();
     prompt.push_str("\n\n## Your connections\n\n");
     prompt.push_str(&summarize_connections(snapshot));

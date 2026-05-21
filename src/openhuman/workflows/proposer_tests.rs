@@ -279,3 +279,48 @@ async fn agent_drafter_returns_placeholder_run_failure() {
     assert!(err.reason.contains("F-11 placeholder"));
     assert!(err.reason.contains("F-15"));
 }
+
+// ── F-13 bundling smoke tests ──────────────────────────────────────────
+
+#[test]
+fn bundled_workflow_builder_prompt_carries_canonical_signature() {
+    // If the build picked up an empty / wrong file, the signature
+    // line from the artifact won't be present and the build is
+    // broken in a way the runtime would not catch until the first
+    // chat-driven proposal. Fail loud at test time instead.
+    let prompt = super::proposer::build_system_prompt(&ConnectionsSnapshot::empty(), 1, None);
+    assert!(
+        prompt.contains(super::proposer::WORKFLOW_BUILDER_PROMPT_SIGNATURE),
+        "bundled workflow_builder.md missing canonical signature line — \
+         is `include_str!` resolving to the right file?"
+    );
+}
+
+#[test]
+fn bundled_workflow_builder_prompt_matches_design_time_artifact() {
+    // Dual-write expectation: the production prompt at
+    // src/openhuman/agent/prompts/workflow_builder.md must stay
+    // byte-identical to the design-time artifact at
+    // Automations/Artifacts/prompts/workflow_builder.md. A drift
+    // here means a future edit hit one path but not both.
+    let artifact = include_str!("../../../Automations/Artifacts/prompts/workflow_builder.md");
+    let bundled = include_str!("../agent/prompts/workflow_builder.md");
+    assert_eq!(
+        artifact, bundled,
+        "design-time artifact and bundled prompt have drifted; dual-write expected"
+    );
+}
+
+#[test]
+fn bundled_workflow_builder_prompt_is_non_trivial_size() {
+    // Catches the "we shipped an empty file" failure mode the
+    // signature check doesn't cover (e.g. someone landed a one-line
+    // placeholder with the signature inside it).
+    let bundled = include_str!("../agent/prompts/workflow_builder.md");
+    assert!(
+        bundled.len() > 4_000,
+        "bundled workflow_builder.md is suspiciously small ({} bytes) — \
+         expected the full Phase 1 artifact (~270 lines)",
+        bundled.len()
+    );
+}
