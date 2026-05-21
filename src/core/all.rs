@@ -115,6 +115,8 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     // Scheduled job management
     controllers.extend(crate::openhuman::connections::all_connections_registered_controllers());
     controllers.extend(crate::openhuman::cron::all_cron_registered_controllers());
+    // Workflows & Automations Phase 1 — empty in F-1; populated by F-2 onwards.
+    controllers.extend(crate::openhuman::workflows::all_workflows_registered_controllers());
     // Webview APIs bridge — proxies connector calls (Gmail, …) through
     // a WebSocket to the Tauri shell so curl reaches the live webview.
     controllers.extend(crate::openhuman::webview_apis::all_webview_apis_registered_controllers());
@@ -268,6 +270,8 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::composio::all_composio_controller_schemas());
     schemas.extend(crate::openhuman::connections::all_connections_controller_schemas());
     schemas.extend(crate::openhuman::cron::all_cron_controller_schemas());
+    // Workflows & Automations Phase 1 — empty in F-1; populated by F-2 onwards.
+    schemas.extend(crate::openhuman::workflows::all_workflows_controller_schemas());
     schemas.extend(crate::openhuman::webview_apis::all_webview_apis_controller_schemas());
     schemas.extend(crate::openhuman::agent::all_agent_controller_schemas());
     schemas.extend(crate::openhuman::health::all_health_controller_schemas());

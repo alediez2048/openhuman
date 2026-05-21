@@ -462,6 +462,73 @@ pub enum DomainEvent {
         connection_ref_json: serde_json::Value,
     },
 
+    // ── Workflows (Phase 1 — Workflows & Automations) ───────────────────
+    //
+    // Payloads use opaque `serde_json::Value` for structured types
+    // (`WorkflowHealth`, `WorkflowOrigin`, `RunStatus`, `SkippedReason`,
+    // `TriggerSource`) — matching the `ConnectionAdded` pattern above —
+    // so the event bus does not need to import `workflows::types`.
+    // Subscribers parse via `serde_json::from_value` into the typed
+    // shape from `workflows::types`.
+    /// A new workflow definition was persisted. F-2 publishes this from
+    /// `workflows::ops::create`. `origin_json` carries the
+    /// `WorkflowOrigin` enum (e.g. `{"type": "user_chat"}` /
+    /// `{"type": "seed", "template_id": "ru-1-..."}`) so the F-5 catalog
+    /// dedup subscriber can react without an extra fetch.
+    WorkflowDefined {
+        workflow_id: String,
+        origin_json: serde_json::Value,
+    },
+    /// A workflow's mutable fields were updated. F-3's health-recompute
+    /// subscriber listens for downstream connection changes; this event
+    /// covers direct edits via `workflows_update`.
+    WorkflowUpdated { workflow_id: String },
+    /// A workflow row was removed. FK cascades drop the run history.
+    WorkflowDeleted { workflow_id: String },
+    /// The user toggled the `enabled` bit on. The scheduler subscriber
+    /// (F-7) registers the cron trigger on receipt.
+    WorkflowEnabled { workflow_id: String },
+    /// The user toggled the `enabled` bit off. The scheduler subscriber
+    /// (F-7) unregisters the cron trigger on receipt.
+    WorkflowDisabled { workflow_id: String },
+    /// F-3's recompute subscriber published a real transition — the
+    /// workflow's `health` column changed value. `health_json` carries
+    /// the new `WorkflowHealth` payload so UI consumers (F-4) can update
+    /// the badge without a fetch.
+    WorkflowHealthChanged {
+        workflow_id: String,
+        health_json: serde_json::Value,
+    },
+    /// A run row was inserted with `status = Running`. The executor (F-8)
+    /// publishes this from `dispatch_run` *before* spawning the inner
+    /// task so subscribers see the run row immediately.
+    WorkflowRunStarted { workflow_id: String, run_id: String },
+    /// The executor began processing a specific node within a run.
+    WorkflowRunStepStarted { run_id: String, node_id: String },
+    /// A node finished (success or failure). `status_json` is the
+    /// `RunStatus` enum as JSON (e.g. `"succeeded"` / `"failed"`).
+    WorkflowRunStepCompleted {
+        run_id: String,
+        node_id: String,
+        status_json: serde_json::Value,
+    },
+    /// The run reached a terminal status (`Succeeded` / `Failed` /
+    /// `Cancelled` / `TimedOut`). `status_json` is the `RunStatus`.
+    WorkflowRunCompleted {
+        workflow_id: String,
+        run_id: String,
+        status_json: serde_json::Value,
+    },
+    /// A trigger fired but the executor refused to dispatch the run.
+    /// `reason_json` carries the `SkippedReason` enum (e.g.
+    /// `{"kind": "already_running"}` / `{"kind": "health_blocked", ...}`).
+    /// `attempted_trigger_source_json` is the `TriggerSource` that fired.
+    WorkflowRunSkipped {
+        workflow_id: String,
+        reason_json: serde_json::Value,
+        attempted_trigger_source_json: serde_json::Value,
+    },
+
     // ── Auth ────────────────────────────────────────────────────────────
     /// The local app session is no longer valid — typically detected when
     /// the backend returns 401 to an LLM inference call or a JSON-RPC
@@ -548,6 +615,18 @@ impl DomainEvent {
             Self::ConnectionAdded { .. }
             | Self::ConnectionRemoved { .. }
             | Self::ConnectionUpdated { .. } => "connection",
+
+            Self::WorkflowDefined { .. }
+            | Self::WorkflowUpdated { .. }
+            | Self::WorkflowDeleted { .. }
+            | Self::WorkflowEnabled { .. }
+            | Self::WorkflowDisabled { .. }
+            | Self::WorkflowHealthChanged { .. }
+            | Self::WorkflowRunStarted { .. }
+            | Self::WorkflowRunStepStarted { .. }
+            | Self::WorkflowRunStepCompleted { .. }
+            | Self::WorkflowRunCompleted { .. }
+            | Self::WorkflowRunSkipped { .. } => "workflow",
 
             Self::SessionExpired { .. } => "auth",
         }
