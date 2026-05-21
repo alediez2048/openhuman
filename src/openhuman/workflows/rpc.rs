@@ -12,8 +12,8 @@
 use crate::openhuman::config::Config;
 use crate::openhuman::workflows::ops;
 use crate::openhuman::workflows::types::{
-    CreateWorkflowRequest, ListFilter, ListStarterTemplatesRequest, StarterTemplateView,
-    UpdateWorkflowRequest, Workflow, WorkflowId,
+    CreateWorkflowRequest, ListFilter, ListStarterTemplatesRequest, ManualInitiator, RunId,
+    StarterTemplateView, UpdateWorkflowRequest, Workflow, WorkflowId,
 };
 use crate::rpc::RpcOutcome;
 
@@ -89,4 +89,42 @@ pub async fn workflows_list_starter_templates(
     ops::list_starter_templates(config, req.phase)
         .await
         .map_err(|e| e.to_string())
+}
+
+/// `openhuman.workflows_run_now` — fire a manual dispatch (F-7).
+///
+/// Returns the new `RunId` on success. Maps every `RunNowError`
+/// variant to a structured string that includes the stable error
+/// code so the UI / CLI can branch:
+///   - `not_found` — workflow id is unknown.
+///   - `health_blocked` — `health != Ready`. UI surfaces the
+///     missing-connection list from the badge.
+///   - `dispatch_failed` — store / executor error. Treat as transient.
+pub async fn workflows_run_now(
+    config: &Config,
+    workflow_id: WorkflowId,
+    initiator: ManualInitiator,
+) -> Result<RpcOutcome<RunId>, String> {
+    ops::run_now(config, workflow_id, initiator)
+        .await
+        .map_err(|e| {
+            format!(
+                "{code}: {body}",
+                code = e.code(),
+                body = serde_json::to_string(&e).unwrap_or_default()
+            )
+        })
+}
+
+/// `openhuman.workflows_cancel_run` — soft-cancel a running workflow
+/// (F-9 fills the executor side; F-7 surfaces the RPC so F-14's UI
+/// can already wire to it). Returns `not_implemented` until F-9
+/// lands.
+pub async fn workflows_cancel_run(
+    config: &Config,
+    run_id: RunId,
+) -> Result<RpcOutcome<bool>, String> {
+    ops::cancel_run(config, run_id)
+        .await
+        .map_err(|e| format!("{code}: {e}", code = e.code()))
 }

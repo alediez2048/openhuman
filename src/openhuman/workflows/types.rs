@@ -222,6 +222,15 @@ pub enum Trigger {
     },
 }
 
+impl Trigger {
+    /// True iff this trigger is a Phase 1 `Cron` expression. The
+    /// scheduler hooks in `workflows::ops` short-circuit on this so
+    /// `Manual` workflows never touch the registry.
+    pub fn is_cron(&self) -> bool {
+        matches!(self, Trigger::Cron { .. })
+    }
+}
+
 /// Active-hours window for a `Trigger::Cron`. Optional; when unset, the
 /// trigger fires whenever its cron expression matches.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -345,6 +354,52 @@ pub enum TriggerSource {
     ComposioEvent,
     /// Phase 2 — channel message triggered the run.
     ChannelMessage,
+}
+
+/// Who/what fired `workflows_run_now`. Phase 1 only emits `User`; the
+/// other variants are declared from day one so F-14's chat-driven
+/// manual-run handler and F-6's catalog [Run now] entry-point can land
+/// without changing this surface.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ManualInitiator {
+    User,
+    Agent { session_id: String },
+    Catalog { template_id: String },
+}
+
+impl ManualInitiator {
+    /// Human-facing label embedded in `TriggerSource::Manual { initiator }`.
+    pub fn label(&self) -> String {
+        match self {
+            Self::User => "user".into(),
+            Self::Agent { session_id } => format!("agent:{session_id}"),
+            Self::Catalog { template_id } => format!("catalog:{template_id}"),
+        }
+    }
+}
+
+/// Failure modes for `workflows_run_now`. The RPC surfaces each as a
+/// structured `RpcOutcome::Err { code }` so the UI can branch (e.g.
+/// disable the [Run now] button when the badge says
+/// `NeedsConnections`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum RunNowError {
+    NotFound,
+    HealthBlocked { health: WorkflowHealth },
+    Dispatch { reason: String },
+}
+
+impl RunNowError {
+    /// Stable error-code string for the RPC layer + metrics.
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::NotFound => "not_found",
+            Self::HealthBlocked { .. } => "health_blocked",
+            Self::Dispatch { .. } => "dispatch_failed",
+        }
+    }
 }
 
 /// What the executor does when a node fails mid-run. Phase 1 hard-codes

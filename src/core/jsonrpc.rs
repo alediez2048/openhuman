@@ -1096,6 +1096,23 @@ fn register_domain_subscribers(
         crate::openhuman::workflows::bus::register_health_recompute_subscriber(Arc::new(
             config.clone(),
         ));
+        // F-7: rebuild the workflow scheduler registry from disk and
+        // spawn the polling loop. Done in this REGISTERED.call_once
+        // block so a sidecar restart resumes scheduling without
+        // dropping enabled cron workflows (FR-1.4.1.1).
+        {
+            let config = config.clone();
+            tokio::spawn(async move {
+                if let Err(err) =
+                    crate::openhuman::workflows::scheduler::reconcile_at_startup(&config).await
+                {
+                    log::warn!("[workflows-scheduler] reconcile_at_startup failed: {err:#}");
+                }
+                if let Err(err) = crate::openhuman::workflows::scheduler::run(config).await {
+                    log::error!("[workflows-scheduler] poll loop exited: {err:#}");
+                }
+            });
+        }
         crate::openhuman::notifications::register_notification_bridge_subscriber();
         crate::openhuman::memory::conversations::register_conversation_persistence_subscriber(
             workspace_dir.clone(),

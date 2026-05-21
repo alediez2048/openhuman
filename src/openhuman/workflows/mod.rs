@@ -55,6 +55,8 @@ mod health_tests;
 #[cfg(test)]
 mod ops_tests;
 #[cfg(test)]
+mod scheduler_tests;
+#[cfg(test)]
 mod store_tests;
 #[cfg(test)]
 mod templates_tests;
@@ -64,10 +66,10 @@ mod types_tests;
 pub use schemas::{all_workflows_controller_schemas, all_workflows_registered_controllers};
 pub use types::{
     ActiveHours, AgentPromptConfig, CanvasPosition, Confidence, CreateWorkflowRequest, Edge,
-    HealthFilter, ListFilter, ListStarterTemplatesRequest, MessageFilter, Node, NodeConfig,
-    NodeKind, OnErrorPolicy, ProposalValidationError, Run, RunId, RunStatus, RunStep, RunStepId,
-    SkippedReason, StarterTemplate, StarterTemplateView, StateAction, Trigger, TriggerSource,
-    UpdateWorkflowRequest, Workflow, WorkflowDeletePreview, WorkflowEditProposal, WorkflowHealth,
-    WorkflowId, WorkflowOrigin, WorkflowPatch, WorkflowProposal, WorkflowSettings,
-    WorkflowStateProposal,
+    HealthFilter, ListFilter, ListStarterTemplatesRequest, ManualInitiator, MessageFilter, Node,
+    NodeConfig, NodeKind, OnErrorPolicy, ProposalValidationError, Run, RunId, RunNowError,
+    RunStatus, RunStep, RunStepId, SkippedReason, StarterTemplate, StarterTemplateView,
+    StateAction, Trigger, TriggerSource, UpdateWorkflowRequest, Workflow, WorkflowDeletePreview,
+    WorkflowEditProposal, WorkflowHealth, WorkflowId, WorkflowOrigin, WorkflowPatch,
+    WorkflowProposal, WorkflowSettings, WorkflowStateProposal,
 };

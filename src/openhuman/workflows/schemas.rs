@@ -16,13 +16,15 @@ use crate::core::all::{ControllerFuture, RegisteredController};
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 use crate::openhuman::config::rpc as config_rpc;
 use crate::openhuman::workflows::types::{
-    CreateWorkflowRequest, ListFilter, ListStarterTemplatesRequest, UpdateWorkflowRequest,
+    CreateWorkflowRequest, ListFilter, ListStarterTemplatesRequest, ManualInitiator,
+    UpdateWorkflowRequest,
 };
 use crate::rpc::RpcOutcome;
 use serde::Serialize;
 use serde_json::{Map, Value};
 
-/// All controller schemas declared by the workflows domain (F-2 + F-5).
+/// All controller schemas declared by the workflows domain
+/// (F-2 + F-5 + F-7).
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
     vec![
         schemas("list"),
@@ -33,6 +35,8 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("enable"),
         schemas("disable"),
         schemas("list_starter_templates"),
+        schemas("run_now"),
+        schemas("cancel_run"),
     ]
 }
 
@@ -71,6 +75,14 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("list_starter_templates"),
             handler: handle_list_starter_templates,
+        },
+        RegisteredController {
+            schema: schemas("run_now"),
+            handler: handle_run_now,
+        },
+        RegisteredController {
+            schema: schemas("cancel_run"),
+            handler: handle_cancel_run,
         },
     ]
 }
@@ -207,6 +219,48 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 required: true,
             }],
         },
+        "run_now" => ControllerSchema {
+            namespace: "workflows",
+            function: "run_now",
+            description: "Fire a manual dispatch of a workflow. Gates on health == Ready (NOT on `enabled`, per FR-1.4.1.2 — manual runs can fire disabled workflows). Returns the new run_id or a structured error (not_found / health_blocked / dispatch_failed).",
+            inputs: vec![
+                FieldSchema {
+                    name: "workflow_id",
+                    ty: TypeSchema::String,
+                    comment: "Workflow id to dispatch.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "initiator",
+                    ty: TypeSchema::Ref("ManualInitiator"),
+                    comment: "Who fired the dispatch (User / Agent / Catalog). Defaults to User.",
+                    required: false,
+                },
+            ],
+            outputs: vec![FieldSchema {
+                name: "run_id",
+                ty: TypeSchema::String,
+                comment: "Newly-created run id (F-8 fills the persisted row).",
+                required: true,
+            }],
+        },
+        "cancel_run" => ControllerSchema {
+            namespace: "workflows",
+            function: "cancel_run",
+            description: "Request a soft-cancel of a running workflow. F-9 fills the executor side; F-7 ships the RPC so F-14's UI can already wire to it. Returns not_implemented until F-9.",
+            inputs: vec![FieldSchema {
+                name: "run_id",
+                ty: TypeSchema::String,
+                comment: "Run id to cancel.",
+                required: true,
+            }],
+            outputs: vec![FieldSchema {
+                name: "cancelled",
+                ty: TypeSchema::Bool,
+                comment: "True when the executor observed the cancel.",
+                required: true,
+            }],
+        },
         "list_starter_templates" => ControllerSchema {
             namespace: "workflows",
             function: "list_starter_templates",
@@ -306,6 +360,32 @@ fn handle_disable(params: Map<String, Value>) -> ControllerFuture {
         let config = config_rpc::load_config_with_timeout().await?;
         let id = required_string(&params, "id")?;
         to_json(crate::openhuman::workflows::rpc::workflows_disable(&config, id).await?)
+    })
+}
+
+fn handle_run_now(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let workflow_id = required_string(&params, "workflow_id")?;
+        // `initiator` is optional — default to User when omitted so
+        // the [Run now] overflow click path stays simple.
+        let initiator: ManualInitiator = match params.get("initiator") {
+            Some(v) if !v.is_null() => serde_json::from_value(v.clone())
+                .map_err(|e| format!("invalid `initiator`: {e}"))?,
+            _ => ManualInitiator::User,
+        };
+        to_json(
+            crate::openhuman::workflows::rpc::workflows_run_now(&config, workflow_id, initiator)
+                .await?,
+        )
+    })
+}
+
+fn handle_cancel_run(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let run_id = required_string(&params, "run_id")?;
+        to_json(crate::openhuman::workflows::rpc::workflows_cancel_run(&config, run_id).await?)
     })
 }
 

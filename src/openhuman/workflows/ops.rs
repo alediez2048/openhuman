@@ -14,11 +14,12 @@ use crate::core::event_bus::{publish_global, DomainEvent};
 use crate::openhuman::config::Config;
 use crate::openhuman::connections::aggregator;
 use crate::openhuman::workflows::health::{self, ConnectionsSnapshot};
+use crate::openhuman::workflows::scheduler;
 use crate::openhuman::workflows::store;
 use crate::openhuman::workflows::templates;
 use crate::openhuman::workflows::types::{
-    CreateWorkflowRequest, ListFilter, StarterTemplate, StarterTemplateView, Trigger,
-    UpdateWorkflowRequest, Workflow, WorkflowHealth, WorkflowId, WorkflowOrigin,
+    CreateWorkflowRequest, ListFilter, RunId, RunNowError, StarterTemplate, StarterTemplateView,
+    Trigger, UpdateWorkflowRequest, Workflow, WorkflowHealth, WorkflowId, WorkflowOrigin,
 };
 use crate::rpc::RpcOutcome;
 use anyhow::{anyhow, Result};
@@ -32,6 +33,22 @@ use uuid::Uuid;
 ///
 /// TODO(F-15): replace with `about_app::current_phase()`.
 const CURRENT_PHASE: u32 = 1;
+
+/// Wrap [`scheduler::register`] so a scheduler hiccup doesn't fail
+/// the surrounding RPC. The scheduler is a derived view of the
+/// workflows table — if registration fails (e.g. a corrupt cron
+/// expression that slipped past the validator), the persisted row is
+/// still correct and `reconcile_at_startup` will retry on the next
+/// core boot.
+fn scheduler_register_best_effort(workflow: &Workflow) {
+    if let Err(err) = scheduler::register(workflow) {
+        tracing::warn!(
+            target: "workflows-rpc",
+            "[workflows-rpc] scheduler::register failed for wf={}: {err:#}; persisted row is unchanged",
+            workflow.id
+        );
+    }
+}
 
 /// Build a `ConnectionsSnapshot` from the live aggregator output. On
 /// aggregator failure (network blip during a Composio fan-out, etc.)
@@ -131,6 +148,12 @@ pub async fn create(config: &Config, req: CreateWorkflowRequest) -> Result<RpcOu
 
     store::insert_workflow(config, &workflow)?;
 
+    // F-7: schedule the cron trigger if the workflow ships enabled.
+    // ops::create defaults `enabled = false`, so this is normally a
+    // no-op; the F-6 catalog's [Add & Enable] flow follows up with
+    // `workflows_enable` which calls register() then.
+    scheduler_register_best_effort(&workflow);
+
     publish_global(DomainEvent::WorkflowDefined {
         workflow_id: workflow.id.clone(),
         origin_json: serde_json::to_value(&workflow.origin).unwrap_or(serde_json::Value::Null),
@@ -190,6 +213,12 @@ pub async fn update(config: &Config, req: UpdateWorkflowRequest) -> Result<RpcOu
         return Err(anyhow!("workflows_update: id `{}` not found", req.id));
     }
 
+    // F-7: re-register the cron trigger. The deregister-then-register
+    // pair handles every shape change (cron expr edit, enabled bit
+    // flipped via a patch, trigger type changed Manual ↔ Cron).
+    scheduler::deregister(&workflow.id);
+    scheduler_register_best_effort(&workflow);
+
     publish_global(DomainEvent::WorkflowUpdated {
         workflow_id: workflow.id.clone(),
     });
@@ -207,6 +236,10 @@ pub async fn update(config: &Config, req: UpdateWorkflowRequest) -> Result<RpcOu
 /// this simple; the 30-day soft-delete retention sweep (FR-1.3.4) is
 /// deferred to F-15.
 pub async fn delete(config: &Config, id: WorkflowId) -> Result<RpcOutcome<bool>> {
+    // F-7: deregister BEFORE the cascade delete so a cron tick can't
+    // race the row removal and dispatch a run against a workflow_id
+    // the executor will then 404 on.
+    scheduler::deregister(&id);
     let removed = store::delete_workflow(config, &id)?;
     if removed {
         publish_global(DomainEvent::WorkflowDeleted {
@@ -259,6 +292,14 @@ async fn set_enabled_to(
     workflow.enabled = target;
     workflow.updated_at = now;
 
+    // F-7: keep the cron-trigger registration in sync with the
+    // `enabled` bit. enable → register; disable → deregister.
+    if target {
+        scheduler_register_best_effort(&workflow);
+    } else {
+        scheduler::deregister(&id);
+    }
+
     if target {
         publish_global(DomainEvent::WorkflowEnabled {
             workflow_id: id.clone(),
@@ -273,6 +314,32 @@ async fn set_enabled_to(
 
     let log = format!("workflows_{action} id={id}");
     Ok(RpcOutcome::single_log(workflow, log))
+}
+
+/// `workflows_run_now` — fire a manual dispatch. Returns the new
+/// run id on success; surfaces `RunNowError` (NotFound / HealthBlocked /
+/// Dispatch) verbatim so the RPC layer can map to the right
+/// `RpcOutcome::Err { code }`.
+pub async fn run_now(
+    config: &Config,
+    workflow_id: WorkflowId,
+    initiator: crate::openhuman::workflows::types::ManualInitiator,
+) -> Result<RpcOutcome<RunId>, RunNowError> {
+    let run_id = scheduler::handle_run_now(config, workflow_id.clone(), initiator).await?;
+    let log = format!("workflows_run_now wf={workflow_id} run={run_id}");
+    Ok(RpcOutcome::single_log(run_id, log))
+}
+
+/// `workflows_cancel_run` — request a soft cancel. F-9 wires the real
+/// executor side; F-7 surfaces the RPC so F-14's UI can already
+/// bind to it.
+pub async fn cancel_run(
+    config: &Config,
+    run_id: RunId,
+) -> Result<RpcOutcome<bool>, crate::openhuman::workflows::executor::CancelError> {
+    crate::openhuman::workflows::executor::cancel_run(config, run_id.clone()).await?;
+    let log = format!("workflows_cancel_run run={run_id} cancelled=true");
+    Ok(RpcOutcome::single_log(true, log))
 }
 
 /// `workflows_list_starter_templates` — read-only catalog query.

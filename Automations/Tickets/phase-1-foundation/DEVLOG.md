@@ -535,3 +535,103 @@ Before F-7 we pause for a checkpoint. The user should:
 F-7 — Cron + manual trigger dispatch. `workflows_run_now` RPC +
 scheduler integration so [Add & Enable]'d templates actually fire.
 The overflow-menu "Run now" handler from F-4 gets wired then.
+
+---
+
+## F-7 — Cron + manual trigger dispatch + `workflows_run_now` / `workflows_cancel_run`
+
+**Status:** Complete · **Date:** 2026-05-21 · **Branch/commit:** direct-to-main on `alediez2048/openhuman`.
+
+Filled `scheduler.rs` with the cron + manual dispatch surface. Enabled
+cron workflows now auto-fire (per-30s polling loop), `workflows_run_now`
+RPC dispatches a manual run with a `health == Ready` gate, every F-2
+CRUD op keeps the scheduler registry in sync, and a boot-time
+`reconcile_at_startup` rebuilds the registry from the DB so a sidecar
+restart resumes scheduling without dropping enabled jobs (FR-1.4.1.1).
+
+### Major tactical deviation from the F-7 primer
+
+**Sibling scheduler loop, NOT `cron::JobType::WorkflowTrigger`.** The
+ticket called for adding a new `WorkflowTrigger { workflow_id }` variant
+to `cron::types::JobType`, then routing dispatch through the existing
+cron domain. That reuse would have required:
+
+  1. Converting the unit-only `JobType` enum into a struct-variant
+     enum — breaking the lowercase-string storage in `cron.db`.
+  2. Adding a `workflow_id` column to `cron_jobs` via a SQL migration.
+  3. Updating every existing `JobType::as_str` / `JobType::parse` /
+     `process_due_jobs` site.
+
+F-7 instead ships a **sibling polling loop inside
+`workflows::scheduler`**:
+
+- Holds an in-memory registry
+  (`OnceLock<Mutex<HashMap<WorkflowId, Entry>>>`). Each entry carries
+  the cron expression + the precomputed next-run timestamp.
+- `register(&workflow)` / `deregister(&id)` mutate the registry
+  synchronously. F-2's `create` / `update` / `enable` / `disable` /
+  `delete` call them at the right moments.
+- `reconcile_at_startup(config)` scans the workflows table on boot
+  and rebuilds the registry — restart never drops jobs.
+- `run(config)` is a single tokio task that wakes every 30s, fires
+  any entries whose `next_run` ≤ now, and advances each fired entry
+  to its next cron occurrence (computed via the **same**
+  `cron::normalize_expression` + `cron::Schedule::from_str` parser
+  the cron domain uses, so behavior matches).
+
+If Phase 2 needs shared scheduling state across domains, revisit
+then; at Phase 1 scale (one user, O(10s) of workflows), the sibling
+loop is materially simpler.
+
+### Other deviations
+
+- **`workflows_cancel_run` RPC ships, executor side is a stub.**
+  Per the ticket, F-9 fills the cancel path. F-7's stub returns
+  `CancelError::NotImplemented`; the RPC layer surfaces a stable
+  `not_implemented` error code so F-14's UI can bind to the
+  surface today.
+- **F-7's `executor::dispatch_run` is also a stub.** Generates a
+  fresh `Uuid::new_v4().to_string()` run id and returns it without
+  persisting a `workflow_runs` row. F-8 fills the body — signature
+  is locked so F-8's wire-up is a body-only change.
+- **`scheduler::register` returns the next-run timestamp** on
+  success. Surfacing it makes the tests + a future UI "next fire"
+  affordance cheaper.
+
+### Verified
+
+- `cargo check` ✓ (both manifests)
+- `cargo fmt --check` ✓
+- `pnpm debug rust workflows` — **84/84 passing** (12 new
+  scheduler_tests + 72 prior).
+
+### Files
+
+- New: `src/openhuman/workflows/scheduler_tests.rs` (12 tests).
+- Modified: `src/openhuman/workflows/types.rs` (added
+  `Trigger::is_cron()`, `ManualInitiator`, `RunNowError`).
+- Modified: `src/openhuman/workflows/executor.rs` (`dispatch_run`
+  + `cancel_run` stubs).
+- Modified: `src/openhuman/workflows/scheduler.rs` (full
+  implementation: registry singleton, register / deregister /
+  reconcile_at_startup / run / handle_run_now; test-only
+  `reset_registry_for_test` + `registered_ids_for_test`).
+- Modified: `src/openhuman/workflows/ops.rs`
+  (`scheduler_register_best_effort` + hooks in create / update /
+  enable / disable / delete; new `run_now` + `cancel_run` ops).
+- Modified: `src/openhuman/workflows/rpc.rs` (handlers).
+- Modified: `src/openhuman/workflows/schemas.rs` (registered the
+  two new controllers).
+- Modified: `src/openhuman/workflows/mod.rs` (re-exports +
+  scheduler_tests module wiring).
+- Modified: `src/core/jsonrpc.rs` (spawned
+  `reconcile_at_startup` + `run` on a tokio task in the
+  `REGISTERED.call_once` block).
+
+### Next
+
+F-8 — `agent_prompt` executor + run history tables +
+`scheduler_gate` integration. F-7's `dispatch_run` stub becomes
+real: builds the agent definition, executes the node, persists
+`workflow_runs` + `workflow_run_steps`, marks the run terminal.
+**Third locked live-test milestone** per the execution contract.
