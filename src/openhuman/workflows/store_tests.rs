@@ -322,3 +322,140 @@ fn set_health_returns_false_when_id_unknown() {
     .unwrap();
     assert!(!updated);
 }
+
+// ── F-9: soft-cancel + orphan sweep ────────────────────────────────────
+
+/// Insert a minimal `workflows` parent row so `workflow_runs.workflow_id`
+/// FK constraints (cascade-delete enabled via migration 002) don't
+/// reject the test's run rows.
+fn seed_workflow_row(config: &Config, id: &str) {
+    with_connection(config, |conn| {
+        conn.execute(
+            "INSERT INTO workflows (id, schema_version, name, enabled, origin, health, \
+             trigger_json, nodes_json, edges_json, settings_json, created_at, updated_at) \
+             VALUES (?1, 1, 'wf', 0, '{\"type\":\"user_chat\"}', '{\"type\":\"ready\"}', \
+             '{\"type\":\"manual\"}', '[]', '[]', '{\"timeout_secs\":300,\"on_error\":\"halt\"}', \
+             ?2, ?3)",
+            params![id, "2026-05-20T00:00:00Z", "2026-05-20T00:00:00Z"],
+        )
+        .unwrap();
+        Ok(())
+    })
+    .unwrap();
+}
+
+#[test]
+fn set_and_read_cancelled_flag_round_trip() {
+    use super::store;
+    use super::types::*;
+
+    let (_dir, config) = config_with_temp_workspace();
+    seed_workflow_row(&config, "wf-x");
+    let run = Run {
+        id: "r1".into(),
+        workflow_id: "wf-x".into(),
+        trigger_source: TriggerSource::Cron,
+        status: RunStatus::Running,
+        started_at: Utc::now(),
+        completed_at: None,
+        error: None,
+        cancelled: false,
+    };
+    store::insert_run(&config, &run).unwrap();
+
+    assert!(
+        !store::is_cancelled(&config, &run.id).unwrap(),
+        "fresh row must read cancelled=false"
+    );
+    let touched = store::set_cancelled_flag(&config, &run.id).unwrap();
+    assert!(touched, "set_cancelled_flag must touch one row");
+    assert!(store::is_cancelled(&config, &run.id).unwrap());
+}
+
+#[test]
+fn is_cancelled_returns_false_for_unknown_run_id() {
+    use super::store;
+    let (_dir, config) = config_with_temp_workspace();
+    let flag = store::is_cancelled(&config, &"ghost".into()).unwrap();
+    assert!(
+        !flag,
+        "unknown id reads as not-cancelled (graceful fallback)"
+    );
+}
+
+#[test]
+fn orphan_running_runs_marks_running_rows_failed_with_core_crashed() {
+    use super::store;
+    use super::types::*;
+
+    let (_dir, config) = config_with_temp_workspace();
+    seed_workflow_row(&config, "wf-a");
+    seed_workflow_row(&config, "wf-b");
+    // Two stale Running rows + one Succeeded row that must NOT be
+    // touched.
+    let r_run1 = Run {
+        id: "r-run1".into(),
+        workflow_id: "wf-a".into(),
+        trigger_source: TriggerSource::Cron,
+        status: RunStatus::Running,
+        started_at: Utc::now(),
+        completed_at: None,
+        error: None,
+        cancelled: false,
+    };
+    let r_run2 = Run {
+        id: "r-run2".into(),
+        workflow_id: "wf-b".into(),
+        trigger_source: TriggerSource::Manual {
+            initiator: "user".into(),
+        },
+        status: RunStatus::Running,
+        started_at: Utc::now(),
+        completed_at: None,
+        error: None,
+        cancelled: false,
+    };
+    let r_succ = Run {
+        id: "r-succ".into(),
+        workflow_id: "wf-a".into(),
+        trigger_source: TriggerSource::Cron,
+        status: RunStatus::Succeeded,
+        started_at: Utc::now(),
+        completed_at: Some(Utc::now()),
+        error: None,
+        cancelled: false,
+    };
+    store::insert_run(&config, &r_run1).unwrap();
+    store::insert_run(&config, &r_run2).unwrap();
+    store::insert_run(&config, &r_succ).unwrap();
+
+    let pairs = store::orphan_running_runs(&config, Utc::now()).unwrap();
+    assert_eq!(pairs.len(), 2, "exactly the two Running rows should sweep");
+    let ids: std::collections::HashSet<_> = pairs.iter().map(|(_, r)| r.clone()).collect();
+    assert!(ids.contains("r-run1"));
+    assert!(ids.contains("r-run2"));
+    assert!(!ids.contains("r-succ"), "Succeeded row must not be swept");
+
+    // Idempotent: a second sweep on the same DB returns zero pairs.
+    let pairs_2 = store::orphan_running_runs(&config, Utc::now()).unwrap();
+    assert!(pairs_2.is_empty());
+
+    // Touched rows now read as Failed with error = CoreCrashed.
+    let (run1, _) = store::get_run(&config, &"r-run1".into()).unwrap().unwrap();
+    assert!(matches!(run1.status, RunStatus::Failed));
+    assert_eq!(run1.error.as_deref(), Some("CoreCrashed"));
+    assert!(run1.completed_at.is_some());
+
+    // Succeeded row untouched.
+    let (succ, _) = store::get_run(&config, &"r-succ".into()).unwrap().unwrap();
+    assert!(matches!(succ.status, RunStatus::Succeeded));
+    assert_ne!(succ.error.as_deref(), Some("CoreCrashed"));
+}
+
+#[test]
+fn orphan_running_runs_on_clean_db_returns_empty_vec() {
+    use super::store;
+    let (_dir, config) = config_with_temp_workspace();
+    let pairs = store::orphan_running_runs(&config, Utc::now()).unwrap();
+    assert!(pairs.is_empty());
+}

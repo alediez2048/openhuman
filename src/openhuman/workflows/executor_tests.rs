@@ -338,13 +338,248 @@ async fn get_run_returns_run_and_step_rows() {
     assert!(matches!(payload.steps[0].status, RunStatus::Succeeded));
 }
 
-// ── cancel_run F-8 stub ────────────────────────────────────────────────
+// ── cancel_run (F-9) ───────────────────────────────────────────────────
 
 #[tokio::test]
-async fn cancel_run_returns_not_implemented_stub_in_f8() {
+async fn cancel_run_returns_not_found_for_unknown_id() {
     let (_dir, config) = config_with_temp_workspace();
-    let err = executor::cancel_run(&config, "anything".into())
+    let err = executor::cancel_run(&config, "nope".into())
         .await
         .unwrap_err();
-    assert_eq!(err.code(), "not_implemented");
+    assert_eq!(err.code(), "not_found");
+}
+
+#[tokio::test]
+async fn cancel_run_returns_not_running_when_terminal() {
+    let (_dir, config) = config_with_temp_workspace();
+    let created = ops::create(&config, create_request("hi"))
+        .await
+        .unwrap()
+        .value;
+    let run_id = executor::dispatch_run(
+        &config,
+        created.id.clone(),
+        TriggerSource::Manual {
+            initiator: "user".into(),
+        },
+    )
+    .await
+    .unwrap();
+    // Drain to Succeeded.
+    let _terminal = wait_for_terminal_run(&config, &created.id).await;
+
+    let err = executor::cancel_run(&config, run_id.clone())
+        .await
+        .unwrap_err();
+    assert_eq!(err.code(), "not_running");
+    match err {
+        executor::CancelError::NotRunning { current_status, .. } => {
+            assert!(matches!(current_status, RunStatus::Succeeded));
+        }
+        other => panic!("expected NotRunning, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn cancel_run_flips_flag_and_executor_observes_cancelled_terminal() {
+    let (_dir, config) = config_with_temp_workspace();
+    let created = ops::create(&config, create_request("body"))
+        .await
+        .unwrap()
+        .value;
+    let run_id = executor::dispatch_run(
+        &config,
+        created.id.clone(),
+        TriggerSource::Manual {
+            initiator: "user".into(),
+        },
+    )
+    .await
+    .unwrap();
+    // The placeholder body is synchronous; race the cancel against
+    // it by setting the bit directly on the underlying row. The
+    // executor's post-node `cancellation_observed` check upgrades
+    // any successful return into a Cancelled terminal status.
+    store::set_cancelled_flag(&config, &run_id).expect("set_cancelled_flag");
+    let _terminal = wait_for_terminal_run(&config, &created.id).await;
+
+    let row = store::get_run(&config, &run_id).unwrap().expect("run row");
+    let (run, _steps) = row;
+    assert!(
+        matches!(run.status, RunStatus::Cancelled),
+        "post-node cancel-observed upgrades terminal status to Cancelled, got {:?}",
+        run.status
+    );
+    assert!(run.cancelled);
+}
+
+// ── single-flight (F-9) ────────────────────────────────────────────────
+
+#[tokio::test]
+async fn dispatch_run_rejects_second_overlapping_dispatch_with_already_running() {
+    let (_dir, config) = config_with_temp_workspace();
+    let created = ops::create(&config, create_request("p"))
+        .await
+        .unwrap()
+        .value;
+    // Manually claim the in-flight slot by inserting a Running run
+    // row without spawning the executor task — this is the
+    // deterministic equivalent of "the previous run hasn't
+    // completed yet".
+    let prior_run = Run {
+        id: "prior-run".into(),
+        workflow_id: created.id.clone(),
+        trigger_source: TriggerSource::Manual {
+            initiator: "user".into(),
+        },
+        status: RunStatus::Running,
+        started_at: chrono::Utc::now(),
+        completed_at: None,
+        error: None,
+        cancelled: false,
+    };
+    store::insert_run(&config, &prior_run).unwrap();
+    executor::state_in_flight_insert_for_test(created.id.clone(), prior_run.id.clone());
+
+    let err = executor::dispatch_run(
+        &config,
+        created.id.clone(),
+        TriggerSource::Manual {
+            initiator: "user".into(),
+        },
+    )
+    .await
+    .unwrap_err();
+    let dispatch_err = err
+        .downcast::<executor::DispatchError>()
+        .expect("DispatchError");
+    assert_eq!(dispatch_err.code(), "already_running");
+    match dispatch_err {
+        executor::DispatchError::AlreadyRunning {
+            workflow_id,
+            run_id,
+        } => {
+            assert_eq!(workflow_id, created.id);
+            assert_eq!(run_id, prior_run.id);
+        }
+        other => panic!("expected AlreadyRunning, got {other:?}"),
+    }
+
+    // Cleanup so test ordering doesn't bleed into siblings: free
+    // the slot we manually claimed.
+    executor::state_in_flight_remove_for_test(&created.id);
+}
+
+#[tokio::test]
+async fn dispatch_run_releases_slot_on_success_and_can_redispatch() {
+    let (_dir, config) = config_with_temp_workspace();
+    let created = ops::create(&config, create_request("redispatch"))
+        .await
+        .unwrap()
+        .value;
+    executor::dispatch_run(
+        &config,
+        created.id.clone(),
+        TriggerSource::Manual {
+            initiator: "user".into(),
+        },
+    )
+    .await
+    .unwrap();
+    let _terminal = wait_for_terminal_run(&config, &created.id).await;
+    // Yield so the spawned task's InFlightSlot Drop runs after
+    // execute_inner's last await point.
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    // Slot must be free — second dispatch returns Ok.
+    let second = executor::dispatch_run(
+        &config,
+        created.id.clone(),
+        TriggerSource::Manual {
+            initiator: "user".into(),
+        },
+    )
+    .await
+    .expect("slot released → second dispatch succeeds");
+    assert!(!second.is_empty());
+    let _terminal_2 = wait_for_terminal_run(&config, &created.id).await;
+}
+
+#[tokio::test]
+async fn dispatch_run_independent_workflows_run_concurrently() {
+    let (_dir, config) = config_with_temp_workspace();
+    let a = ops::create(&config, create_request("a"))
+        .await
+        .unwrap()
+        .value;
+    let b = ops::create(&config, create_request("b"))
+        .await
+        .unwrap()
+        .value;
+    let r_a = executor::dispatch_run(
+        &config,
+        a.id.clone(),
+        TriggerSource::Manual {
+            initiator: "user".into(),
+        },
+    )
+    .await
+    .expect("a dispatch");
+    let r_b = executor::dispatch_run(
+        &config,
+        b.id.clone(),
+        TriggerSource::Manual {
+            initiator: "user".into(),
+        },
+    )
+    .await
+    .expect("b dispatch");
+    assert_ne!(r_a, r_b);
+    let _ta = wait_for_terminal_run(&config, &a.id).await;
+    let _tb = wait_for_terminal_run(&config, &b.id).await;
+}
+
+// ── orphan_recovery_sweep (F-9) ────────────────────────────────────────
+
+#[tokio::test]
+async fn orphan_recovery_sweep_marks_stale_running_runs_failed_core_crashed() {
+    let (_dir, config) = config_with_temp_workspace();
+    let created = ops::create(&config, create_request("p"))
+        .await
+        .unwrap()
+        .value;
+    // Simulate a crash: persist a Running run row without spawning
+    // the executor. orphan_recovery_sweep on the next "boot" must
+    // mark it Failed{CoreCrashed}.
+    let stale = Run {
+        id: "stale-run-1".into(),
+        workflow_id: created.id.clone(),
+        trigger_source: TriggerSource::Cron,
+        status: RunStatus::Running,
+        started_at: chrono::Utc::now(),
+        completed_at: None,
+        error: None,
+        cancelled: false,
+    };
+    store::insert_run(&config, &stale).unwrap();
+
+    let n = executor::orphan_recovery_sweep(&config).await.unwrap();
+    assert_eq!(n, 1);
+
+    let (run, _steps) = store::get_run(&config, &stale.id)
+        .unwrap()
+        .expect("row still present");
+    assert!(matches!(run.status, RunStatus::Failed));
+    assert_eq!(run.error.as_deref(), Some("CoreCrashed"));
+    assert!(run.completed_at.is_some());
+
+    // Idempotent: a second sweep is a no-op.
+    let n2 = executor::orphan_recovery_sweep(&config).await.unwrap();
+    assert_eq!(n2, 0);
+}
+
+#[tokio::test]
+async fn orphan_recovery_sweep_on_clean_db_returns_zero() {
+    let (_dir, config) = config_with_temp_workspace();
+    let n = executor::orphan_recovery_sweep(&config).await.unwrap();
+    assert_eq!(n, 0);
 }

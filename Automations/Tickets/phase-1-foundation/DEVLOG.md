@@ -802,3 +802,130 @@ mechanism slots into `execute_inner` + `cancel_run`; the
 orphan-recovery sweep runs once at boot and marks any
 non-terminal `workflow_runs` rows whose run wasn't restored by
 the in-process executor as `Failed { reason: "core restart" }`.
+
+---
+
+## 2026-05-21 — F-9 shipped: single-flight + soft-cancel + orphan-recovery
+
+### What landed
+
+- **`InFlightSlot` RAII guard** owns the workflow's `in_flight`
+  entry. `dispatch_run` constructs the guard, moves it into the
+  spawned tokio task, and `Drop` removes the entry on **every**
+  exit path: success, error, timeout, panic. Stale-guard check
+  (`in_flight.get(&workflow_id) == Some(&self.run_id)`) so a
+  guard from a previous run doesn't free a successor's slot.
+- **Single-flight enforcement in `dispatch_run`**: acquire the
+  `in_flight` mutex, on conflict publish
+  `DomainEvent::WorkflowRunSkipped { reason_json:
+  {"kind":"already_running"}, attempted_trigger_source_json }`
+  and return `DispatchError::AlreadyRunning { workflow_id, run_id }`
+  carrying the existing run id. Lock held only long enough to
+  claim the slot; the run-row insert + start event publish run
+  outside the critical section. If `insert_run` fails the slot
+  is released so a transient SQLite hiccup doesn't permanently
+  brick the workflow.
+- **Real `cancel_run`**: queries `store::get_run`; returns
+  `CancelError::NotFound(run_id)` when missing,
+  `CancelError::NotRunning { run_id, current_status }` when the
+  run is already terminal, otherwise calls
+  `store::set_cancelled_flag` and returns `Ok(())`. F-8's
+  `NotImplemented` placeholder is gone. The current node's LLM
+  call is **not** aborted (FR-1.6.9 cooperative cancel).
+- **Between-node cancellation observer**: `execute_inner` calls
+  `cancellation_observed(config, wf_id, run_id)` pre-node and
+  post-node. The post-node check upgrades a successful return to
+  `RunStatus::Cancelled` if the bit was flipped during the
+  agent's body. `cancellation_observed` swallows DB errors as
+  "not cancelled" with a warn log — a transient SQLite hiccup
+  must not spuriously cancel a real run.
+- **`orphan_recovery_sweep`**: calls `store::orphan_running_runs`
+  (single SQL UPDATE: `status = 'failed', error = 'CoreCrashed',
+  completed_at = ?` WHERE `status = 'running'`), publishes
+  `WorkflowRunCompleted { status: Failed }` for each touched row,
+  returns the count. Idempotent — a clean DB returns `Ok(0)`.
+- **Boot wiring** in `src/core/jsonrpc.rs`: the sweep runs
+  **before** `scheduler::reconcile_at_startup` so a re-registered
+  cron tick can't bounce off a stale single-flight slot. Comment
+  added to lock the ordering in place.
+- **Store helpers**: `set_cancelled_flag`, `is_cancelled`
+  (returns `Ok(false)` for unknown ids — graceful fallback for
+  the cascade-deleted case), `orphan_running_runs(completed_at)`
+  returning `Vec<(WorkflowId, RunId)>` for ergonomic match
+  against `WorkflowRunCompleted` event fields.
+- **Type variants**:
+  - `DispatchError::AlreadyRunning { workflow_id, run_id }` —
+    error code `already_running`.
+  - `CancelError::NotRunning { run_id, current_status }` — error
+    code `not_running`.
+  - `CancelError::Store(String)` — error code `store_error`.
+  - Dropped `CancelError::NotImplemented`.
+
+### Deviations
+
+- **Soft-cancel observer is `workflow_runs.cancelled`, not
+  `ExecutorState.cancel_requested`.** The persisted-flag pattern
+  is robust to a core crash (a flagged-but-uncancelled run gets
+  observed correctly on the next tick) and to multiple cancel
+  attempts (idempotent). The in-memory map was dropped — the
+  struct now holds only `in_flight`.
+- **Phase 1 effectively single-node, but the loop is in place.**
+  `execute_inner`'s post-node check fires once today; the same
+  code structure supports Phase 2's multi-node graphs without
+  changes. The pre-node check handles the edge case where
+  cancel_run fires between dispatch and the task's first poll.
+- **No `state_in_flight_*_for_test` exposure in production.**
+  Two `#[cfg(test)]` helpers — `state_in_flight_insert_for_test`
+  + `state_in_flight_remove_for_test` — let the single-flight
+  test set up the "previous run already in-flight" precondition
+  deterministically without racing against a real tokio task.
+
+### Verified
+
+- `cargo check` ✓
+- `cargo fmt` ✓
+- `cargo test --lib openhuman::workflows` — **106/106 passing**
+  (11 new tests over F-8's 95). Includes:
+  - `dispatch_run_rejects_second_overlapping_dispatch_with_already_running`
+  - `dispatch_run_releases_slot_on_success_and_can_redispatch`
+  - `dispatch_run_independent_workflows_run_concurrently`
+  - `cancel_run_returns_not_found_for_unknown_id`
+  - `cancel_run_returns_not_running_when_terminal`
+  - `cancel_run_flips_flag_and_executor_observes_cancelled_terminal`
+  - `orphan_recovery_sweep_marks_stale_running_runs_failed_core_crashed`
+  - `orphan_recovery_sweep_on_clean_db_returns_zero`
+  - `set_and_read_cancelled_flag_round_trip`
+  - `is_cancelled_returns_false_for_unknown_run_id`
+  - `orphan_running_runs_marks_running_rows_failed_with_core_crashed`
+
+### Files
+
+- Modified: `src/openhuman/workflows/executor.rs`
+  (`InFlightSlot` RAII guard, single-flight check, real
+  `cancel_run`, `cancellation_observed`, `finalize_run`,
+  `orphan_recovery_sweep`, F-9 `DispatchError::AlreadyRunning`
+  + `CancelError::NotRunning`/`Store`; dropped
+  `CancelError::NotImplemented` + the unused
+  `cancel_requested` field).
+- Modified: `src/openhuman/workflows/store.rs`
+  (`set_cancelled_flag` renamed from `mark_run_cancelled_flag`,
+  `is_cancelled`, `orphan_running_runs`; added
+  `OptionalExtension` import).
+- Modified: `src/core/jsonrpc.rs` (orphan_recovery_sweep boot
+  call before `reconcile_at_startup`).
+- Modified: `src/openhuman/workflows/executor_tests.rs`
+  (replaced F-8 NotImplemented stub test with the three real
+  cancel paths; added single-flight + slot-release + sibling-
+  independence + orphan-sweep tests).
+- Modified: `src/openhuman/workflows/store_tests.rs` (F-9 store
+  tests: cancelled-flag round-trip, is_cancelled-on-unknown,
+  orphan_running_runs SQL + idempotency).
+
+### Next
+
+F-10 — agent read tools + `build_node_agent_definition`
+allowlist enforcement test. F-8 referenced the four read-only
+tool names by constant; F-10 registers them in the agent tool
+registry, then adds the regression test asserting the allowlist
+matches `BASELINE_TOOL_NAMES + READ_ONLY_WORKFLOW_TOOL_NAMES`
+verbatim (ADR-016 / NFR-2.3.7).

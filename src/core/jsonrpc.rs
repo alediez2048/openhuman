@@ -1100,9 +1100,29 @@ fn register_domain_subscribers(
         // spawn the polling loop. Done in this REGISTERED.call_once
         // block so a sidecar restart resumes scheduling without
         // dropping enabled cron workflows (FR-1.4.1.1).
+        //
+        // F-9: orphan_recovery_sweep runs FIRST, before
+        // `reconcile_at_startup`. If a cron tick races the sweep, it
+        // could find a stale `status = 'running'` row and bounce off
+        // the single-flight gate forever; ordering here guarantees
+        // every Running row left over from a prior crash is marked
+        // Failed{CoreCrashed} before any new dispatch attempts.
         {
             let config = config.clone();
             tokio::spawn(async move {
+                match crate::openhuman::workflows::executor::orphan_recovery_sweep(&config).await {
+                    Ok(n) if n > 0 => {
+                        log::info!(
+                            "[workflows-run] orphan_recovery_sweep marked {n} runs as Failed{{CoreCrashed}}"
+                        );
+                    }
+                    Ok(_) => {}
+                    Err(err) => {
+                        log::warn!(
+                            "[workflows-run] orphan_recovery_sweep failed: {err:#}; proceeding with scheduler reconcile"
+                        );
+                    }
+                }
                 if let Err(err) =
                     crate::openhuman::workflows::scheduler::reconcile_at_startup(&config).await
                 {

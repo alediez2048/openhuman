@@ -16,6 +16,7 @@ use crate::openhuman::config::Config;
 use anyhow::{Context, Result};
 use chrono::Utc;
 use rusqlite::Connection;
+use rusqlite::OptionalExtension;
 use std::path::PathBuf;
 
 const MIGRATION_001: &str = include_str!("migrations/001_init_workflows.sql");
@@ -490,9 +491,10 @@ pub fn mark_run_terminal(
     })
 }
 
-/// Mark a run as cancelled (the soft-cancel flag from ADR-014). F-9
-/// drives this from `executor::cancel_run`; F-8 leaves it unused.
-pub fn mark_run_cancelled_flag(config: &Config, run_id: &RunId) -> Result<bool> {
+/// Mark a run as cancelled (the soft-cancel flag from ADR-014). F-9's
+/// `executor::cancel_run` calls this and then leaves the executor's
+/// node loop to observe the bit via [`is_cancelled`] between nodes.
+pub fn set_cancelled_flag(config: &Config, run_id: &RunId) -> Result<bool> {
     with_connection(config, |db| {
         let rows = db
             .execute(
@@ -501,6 +503,66 @@ pub fn mark_run_cancelled_flag(config: &Config, run_id: &RunId) -> Result<bool> 
             )
             .context("Failed to set workflow_runs.cancelled")?;
         Ok(rows > 0)
+    })
+}
+
+/// Read the soft-cancel bit. Returns `Ok(false)` for unknown ids — the
+/// executor calls this between nodes and a missing row means the
+/// cascade-delete already removed the workflow, so "not cancelled"
+/// matches "abort gracefully on the next node" semantics.
+pub fn is_cancelled(config: &Config, run_id: &RunId) -> Result<bool> {
+    with_connection(config, |db| {
+        let value: Option<i64> = db
+            .query_row(
+                "SELECT cancelled FROM workflow_runs WHERE id = ?1",
+                rusqlite::params![run_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .context("Failed to read workflow_runs.cancelled")?;
+        Ok(value.unwrap_or(0) != 0)
+    })
+}
+
+/// Mark every `status = 'running'` row as `Failed { error = "CoreCrashed" }`
+/// in a single SQL UPDATE, returning the (workflow_id, run_id) pairs of
+/// the touched rows so the caller can publish
+/// `WorkflowRunCompleted { status: Failed }` events. Used by the F-9
+/// boot-time orphan-recovery sweep — see [`executor::orphan_recovery_sweep`].
+///
+/// Idempotent: a second call against a sweep-cleaned DB returns
+/// `Ok(vec![])` because every previously-Running row is now Failed.
+pub fn orphan_running_runs(
+    config: &Config,
+    completed_at: DateTime<Utc>,
+) -> Result<Vec<(WorkflowId, RunId)>> {
+    with_connection(config, |db| {
+        let mut stmt = db
+            .prepare("SELECT id, workflow_id FROM workflow_runs WHERE status = 'running'")
+            .context("Failed to prepare orphan_running_runs select")?;
+        let pairs: Vec<(RunId, WorkflowId)> = stmt
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        if pairs.is_empty() {
+            return Ok(Vec::new());
+        }
+        db.execute(
+            "UPDATE workflow_runs \
+             SET status = 'failed', \
+                 error = 'CoreCrashed', \
+                 completed_at = ?1 \
+             WHERE status = 'running'",
+            rusqlite::params![completed_at.to_rfc3339()],
+        )
+        .context("Failed to orphan-sweep workflow_runs")?;
+        // Return in (workflow_id, run_id) order for the caller's
+        // ergonomic match against `WorkflowRunCompleted` event fields.
+        Ok(pairs
+            .into_iter()
+            .map(|(run_id, workflow_id)| (workflow_id, run_id))
+            .collect())
     })
 }
 
