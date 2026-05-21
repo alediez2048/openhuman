@@ -1093,6 +1093,9 @@ fn register_domain_subscribers(
         }
 
         crate::openhuman::health::bus::register_health_subscriber();
+        crate::openhuman::workflows::bus::register_health_recompute_subscriber(Arc::new(
+            config.clone(),
+        ));
         crate::openhuman::notifications::register_notification_bridge_subscriber();
         crate::openhuman::memory::conversations::register_conversation_persistence_subscriber(
             workspace_dir.clone(),

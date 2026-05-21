@@ -135,3 +135,96 @@ UserForm / Seed{template_id} / Imported) round-trips end-to-end, with
 F-3 — `WorkflowHealth` recomputation subscriber on `ConnectionAdded` /
 `ConnectionRemoved` / `ConnectionUpdated`. Per the locked execution
 contract, F-3 is on the TDD-first side.
+
+---
+
+## F-3 — `WorkflowHealth` recomputation subscriber
+
+**Status:** Complete · **Date:** 2026-05-21 · **Branch/commit:** direct-to-main on `alediez2048/openhuman`.
+
+Replaced the F-2 health stub with a real walker that honours the
+Phase 0 honest-connection truth table. Workflows now flip
+`Ready ↔ NeedsConnections` automatically when any connection mechanism
+fires a `ConnectionAdded` / `ConnectionRemoved` / `ConnectionUpdated`
+event. Bounded UPDATE per affected workflow per event (one LIKE pre-
+filter on `nodes_json`, then a second-pass filter through
+`referenced_connections` to drop false positives). Idempotent — same
+value reads skip the UPDATE and the bus publish.
+
+Per the locked contract, F-3 is TDD-first. **24 new tests** landed
+before the implementation passed: 12 in `health_tests.rs` (every
+truth-table branch + the < 50 ms NFR-2.1.5 budget) and 8 in
+`bus_tests.rs` (no-op / transition / bounded / false-positive /
+unparseable-payload / unknown-event paths). Plus 4 new
+`store_tests.rs` cases for `list_workflows_referencing` +
+`set_health`. Total workflows suite: **60/60 passing** (21 F-1 +
+15 F-2 + 24 F-3).
+
+### Tactical deviations from the F-3 primer
+
+- **`ConnectionsSnapshot` newtype** instead of a bare
+  `Vec<ConnectionView>`. Centralises the Phase 0 honest-connection
+  truth table in one method (`is_connected`) so the workflows domain
+  doesn't reimplement the `requireVerification` rules everywhere they
+  matter. The newtype also lets the snapshot ship `empty()` cleanly
+  for the aggregator-failed fallback in `ops::create` / `ops::update`
+  and `bus::recompute_for_ref`.
+- **Aggregator-failure fallback.** Every recompute call has to deal
+  with `aggregator::list_all` possibly erroring (network blip during
+  Composio fan-out, etc.). Falling back to `ConnectionsSnapshot::empty`
+  means the workflow gets marked `NeedsConnections { missing: refs }`
+  rather than crashing or holding stale state — and F-3's own
+  subscriber will fix it on the next event, so the false-negative
+  window is bounded. Logged at warn level for ops visibility.
+- **`set_health` updates only `health` + `updated_at`.** The bus
+  subscriber must not churn unrelated fields; a dedicated targeted
+  UPDATE keeps the bounded-work contract tight.
+- **Forward transition (NeedsConnections → Ready) not unit-tested.**
+  The production `recompute_for_ref` calls `aggregator::list_all`,
+  which runs through real per-mechanism collectors. Mocking it is
+  out of scope for F-3; F-15's hero E2E walks the full forward path
+  against a real connection in a live build. The reverse transition
+  (Ready → NeedsConnections against an empty aggregator) IS unit-
+  tested, plus we drive the subscriber's `handle()` directly with
+  synthetic events.
+
+### Verified
+
+- `cargo check` ✓ (both manifests)
+- `cargo fmt --check` ✓
+- `pnpm test:rust workflows` — 60 passed, 0 failed.
+- `recompute_is_fast_enough_for_phase_one_workflows` test asserts
+  recompute runs in < 50 ms (NFR-2.1.5).
+
+### Files
+
+- New: `src/openhuman/workflows/health_tests.rs` (12 tests)
+- New: `src/openhuman/workflows/bus_tests.rs` (8 tests)
+- Modified: `src/openhuman/workflows/health.rs` — replaced the
+  F-2 stub with the real walker + `ConnectionsSnapshot` newtype +
+  helpers (`referenced_connections`, `missing_against`,
+  `requires_verification`).
+- Modified: `src/openhuman/workflows/bus.rs` — filled with
+  `WorkflowHealthRecomputeSubscriber` + `recompute_for_ref` +
+  `register_health_recompute_subscriber` boot helper.
+- Modified: `src/openhuman/workflows/store.rs` — added
+  `list_workflows_referencing` (LIKE pre-filter keyed on JSON
+  fragments per `ConnectionRef` variant) + `set_health` +
+  `escape_like` + `json_fragment_for` helpers. 4 new
+  `store_tests.rs` cases.
+- Modified: `src/openhuman/workflows/ops.rs` — `create` / `update`
+  now build a real `ConnectionsSnapshot` from `aggregator::list_all`
+  before calling `health::recompute`.
+- Modified: `src/openhuman/workflows/mod.rs` — wired `bus_tests` +
+  `health_tests`.
+- Modified: `src/core/jsonrpc.rs` — registered
+  `WorkflowHealthRecomputeSubscriber` alongside the other domain
+  subscribers in the boot path.
+
+### Next
+
+F-4 — `/workflows` route + bottom-tab nav + `WorkflowsList` +
+`WorkflowCard`. **First milestone live-test checkpoint** per the
+locked execution contract: after F-4 we pause, run the app, and
+verify the route renders + the empty-state CTA is wired before
+moving on to F-5.

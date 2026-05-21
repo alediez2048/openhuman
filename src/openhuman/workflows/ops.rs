@@ -12,7 +12,8 @@
 
 use crate::core::event_bus::{publish_global, DomainEvent};
 use crate::openhuman::config::Config;
-use crate::openhuman::workflows::health;
+use crate::openhuman::connections::aggregator;
+use crate::openhuman::workflows::health::{self, ConnectionsSnapshot};
 use crate::openhuman::workflows::store;
 use crate::openhuman::workflows::types::{
     CreateWorkflowRequest, ListFilter, UpdateWorkflowRequest, Workflow, WorkflowHealth, WorkflowId,
@@ -22,6 +23,24 @@ use crate::rpc::RpcOutcome;
 use anyhow::{anyhow, Result};
 use chrono::Utc;
 use uuid::Uuid;
+
+/// Build a `ConnectionsSnapshot` from the live aggregator output. On
+/// aggregator failure (network blip during a Composio fan-out, etc.)
+/// we fall back to an empty snapshot — the workflow is then marked
+/// `NeedsConnections { missing: refs }`. F-3's subscriber will fix it
+/// up on the next `ConnectionAdded` event.
+async fn current_snapshot(config: &Config) -> ConnectionsSnapshot {
+    match aggregator::list_all(config).await {
+        Ok(views) => ConnectionsSnapshot::new(views),
+        Err(err) => {
+            tracing::warn!(
+                target: "workflows",
+                "[workflows-rpc] aggregator::list_all failed during health recompute: {err:#}; falling back to empty snapshot"
+            );
+            ConnectionsSnapshot::empty()
+        }
+    }
+}
 
 /// `workflows_list` — paginated/filtered list view.
 pub async fn list(config: &Config, filter: ListFilter) -> Result<RpcOutcome<Vec<Workflow>>> {
@@ -98,9 +117,8 @@ pub async fn create(config: &Config, req: CreateWorkflowRequest) -> Result<RpcOu
     };
 
     let mut workflow = workflow_seed;
-    // F-3 replaces the stub with a real walk against the connections
-    // snapshot — until then the value is unconditionally Ready.
-    workflow.health = health::recompute(&workflow, &());
+    let snapshot = current_snapshot(config).await;
+    workflow.health = health::recompute(&workflow, &snapshot);
 
     store::insert_workflow(config, &workflow)?;
 
@@ -153,7 +171,8 @@ pub async fn update(config: &Config, req: UpdateWorkflowRequest) -> Result<RpcOu
     }
 
     workflow.updated_at = Utc::now();
-    workflow.health = health::recompute(&workflow, &());
+    let snapshot = current_snapshot(config).await;
+    workflow.health = health::recompute(&workflow, &snapshot);
 
     let updated = store::update_workflow(config, &workflow)?;
     if !updated {

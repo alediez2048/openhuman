@@ -48,6 +48,10 @@ pub mod types;
 pub mod validator;
 
 #[cfg(test)]
+mod bus_tests;
+#[cfg(test)]
+mod health_tests;
+#[cfg(test)]
 mod ops_tests;
 #[cfg(test)]
 mod store_tests;

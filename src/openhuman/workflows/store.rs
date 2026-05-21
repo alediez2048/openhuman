@@ -379,3 +379,110 @@ fn matches_health_filter(
             | (H::SessionExpired { .. }, HealthFilter::SessionExpired)
     )
 }
+
+// ── F-3 health-recompute helpers ────────────────────────────────────────
+
+use crate::openhuman::connections::types::ConnectionRef;
+use crate::openhuman::workflows::types::WorkflowHealth;
+
+/// Returns every workflow whose `nodes_json` column mentions a JSON
+/// fragment derived from `r#ref`. Pre-filter only — the recompute pass
+/// in `bus.rs` filters again through `health::referenced_connections`
+/// (so the LIKE may legally over-select). The SQL fragment is escaped
+/// to keep `_` / `%` / `\` literal.
+///
+/// The fragment shape is deliberately variant-specific (`toolkit_id`
+/// for Composio, `connection_id` for GenericHttp, etc.) so the LIKE
+/// pre-filter matches only ConnectionRef serializations — not any
+/// other JSON value that happens to share the variant's primary id.
+pub fn list_workflows_referencing(config: &Config, r#ref: &ConnectionRef) -> Result<Vec<Workflow>> {
+    let Some(fragment) = json_fragment_for(r#ref) else {
+        return Ok(Vec::new());
+    };
+    let escaped = escape_like(&fragment);
+    let pattern = format!("%{escaped}%");
+
+    with_connection(config, |db| {
+        let mut stmt = db
+            .prepare(
+                "SELECT id, schema_version, name, description, enabled, origin, health, \
+                 trigger_json, nodes_json, edges_json, settings_json, \
+                 created_at, updated_at, last_run_at \
+                 FROM workflows \
+                 WHERE nodes_json LIKE ?1 ESCAPE '\\' \
+                 ORDER BY updated_at DESC",
+            )
+            .context("Failed to prepare list_workflows_referencing")?;
+        let rows = stmt
+            .query_map(rusqlite::params![pattern], |row| Ok(row_to_workflow(row)))
+            .context("Failed to query list_workflows_referencing")?
+            .collect::<Result<Vec<_>, _>>()
+            .context("Failed to materialise list_workflows_referencing row")?
+            .into_iter()
+            .collect::<Result<Vec<Workflow>>>()?;
+        Ok(rows)
+    })
+}
+
+/// Replace ONLY the `health` column (plus bump `updated_at`). Used by
+/// F-3's bus subscriber so the bounded UPDATE doesn't churn unrelated
+/// fields. Returns `false` when no row matched.
+pub fn set_health(
+    config: &Config,
+    id: &WorkflowId,
+    health: &WorkflowHealth,
+    updated_at: chrono::DateTime<Utc>,
+) -> Result<bool> {
+    let encoded = serde_json::to_string(health).context("encode health")?;
+    with_connection(config, |db| {
+        let rows = db
+            .execute(
+                "UPDATE workflows SET health = ?2, updated_at = ?3 WHERE id = ?1",
+                rusqlite::params![id, encoded, updated_at.to_rfc3339()],
+            )
+            .context("Failed to set_health on workflows row")?;
+        Ok(rows > 0)
+    })
+}
+
+/// JSON fragment unique to a `ConnectionRef` serialization. The fragment
+/// is exactly the `"key":"value"` substring the variant produces in its
+/// canonical JSON form — see `connections/types.rs` for the wire shape.
+/// Returns `None` when no stable fragment can be derived (e.g. variants
+/// whose primary id is empty); callers treat `None` as "no workflows
+/// could possibly reference this".
+fn json_fragment_for(r#ref: &ConnectionRef) -> Option<String> {
+    match r#ref {
+        ConnectionRef::Composio { toolkit_id, .. } if !toolkit_id.is_empty() => {
+            Some(format!(r#""toolkit_id":"{toolkit_id}""#))
+        }
+        ConnectionRef::Channel { channel_id, .. } if !channel_id.is_empty() => {
+            Some(format!(r#""channel_id":"{channel_id}""#))
+        }
+        ConnectionRef::Webview { account_id, .. } if !account_id.is_empty() => {
+            Some(format!(r#""account_id":"{account_id}""#))
+        }
+        ConnectionRef::Builtin { integration } if !integration.is_empty() => {
+            Some(format!(r#""integration":"{integration}""#))
+        }
+        ConnectionRef::Mcp { server_id, .. } if !server_id.is_empty() => {
+            Some(format!(r#""server_id":"{server_id}""#))
+        }
+        ConnectionRef::GenericHttp { connection_id } if !connection_id.is_empty() => {
+            Some(format!(r#""connection_id":"{connection_id}""#))
+        }
+        _ => None,
+    }
+}
+
+/// Escape SQL LIKE metacharacters so the fragment matches literally.
+fn escape_like(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        if matches!(ch, '%' | '_' | '\\') {
+            out.push('\\');
+        }
+        out.push(ch);
+    }
+    out
+}

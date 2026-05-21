@@ -161,3 +161,164 @@ fn migrations_run_inside_nested_workspace_dir() {
     assert!(config.workspace_dir.exists());
     assert!(config.workspace_dir.join("workflows.db").exists());
 }
+
+// ── F-3 helpers: list_workflows_referencing + set_health ────────────────
+
+use super::store::{list_workflows_referencing, set_health};
+use crate::openhuman::connections::types::ConnectionRef;
+use crate::openhuman::workflows::types::*;
+use chrono::Utc;
+
+fn insert_minimal_workflow_with_ref(config: &Config, id: &str, r#ref: ConnectionRef) {
+    let wf = Workflow {
+        id: id.into(),
+        schema_version: 1,
+        name: format!("wf-{id}"),
+        description: None,
+        enabled: false,
+        origin: WorkflowOrigin::UserChat,
+        health: WorkflowHealth::Ready,
+        trigger: Trigger::Manual,
+        nodes: vec![Node {
+            id: "n1".into(),
+            kind: NodeKind::AgentPrompt,
+            config: NodeConfig::AgentPrompt(AgentPromptConfig {
+                prompt: "x".into(),
+                allowed_connections: vec![r#ref],
+                iteration_cap: 12,
+                model_tier: None,
+            }),
+            position: None,
+        }],
+        edges: vec![],
+        settings: WorkflowSettings::default(),
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+        last_run_at: None,
+    };
+    super::store::insert_workflow(config, &wf).unwrap();
+}
+
+#[test]
+fn list_workflows_referencing_returns_only_matching_rows() {
+    let (_dir, config) = config_with_temp_workspace();
+    insert_minimal_workflow_with_ref(
+        &config,
+        "wf-a",
+        ConnectionRef::Composio {
+            toolkit_id: "gmail".into(),
+            account_id: None,
+        },
+    );
+    insert_minimal_workflow_with_ref(
+        &config,
+        "wf-b",
+        ConnectionRef::Composio {
+            toolkit_id: "slack".into(),
+            account_id: None,
+        },
+    );
+    insert_minimal_workflow_with_ref(
+        &config,
+        "wf-c",
+        ConnectionRef::GenericHttp {
+            connection_id: "ghc-1".into(),
+        },
+    );
+
+    let gmail_hits = list_workflows_referencing(
+        &config,
+        &ConnectionRef::Composio {
+            toolkit_id: "gmail".into(),
+            account_id: None,
+        },
+    )
+    .unwrap();
+    assert_eq!(gmail_hits.len(), 1);
+    assert_eq!(gmail_hits[0].id, "wf-a");
+
+    let http_hits = list_workflows_referencing(
+        &config,
+        &ConnectionRef::GenericHttp {
+            connection_id: "ghc-1".into(),
+        },
+    )
+    .unwrap();
+    assert_eq!(http_hits.len(), 1);
+    assert_eq!(http_hits[0].id, "wf-c");
+}
+
+#[test]
+fn list_workflows_referencing_returns_empty_when_no_matches() {
+    let (_dir, config) = config_with_temp_workspace();
+    insert_minimal_workflow_with_ref(
+        &config,
+        "wf-a",
+        ConnectionRef::Composio {
+            toolkit_id: "gmail".into(),
+            account_id: None,
+        },
+    );
+
+    let hits = list_workflows_referencing(
+        &config,
+        &ConnectionRef::Composio {
+            toolkit_id: "linear".into(),
+            account_id: None,
+        },
+    )
+    .unwrap();
+    assert!(hits.is_empty());
+}
+
+#[test]
+fn set_health_updates_only_health_column_and_bumps_updated_at() {
+    let (_dir, config) = config_with_temp_workspace();
+    insert_minimal_workflow_with_ref(
+        &config,
+        "wf-a",
+        ConnectionRef::Composio {
+            toolkit_id: "gmail".into(),
+            account_id: None,
+        },
+    );
+    let before = super::store::get_workflow(&config, &"wf-a".to_string())
+        .unwrap()
+        .unwrap();
+    assert_eq!(before.health, WorkflowHealth::Ready);
+
+    let later = Utc::now() + chrono::Duration::seconds(1);
+    let new_health = WorkflowHealth::NeedsConnections {
+        missing: vec![ConnectionRef::Composio {
+            toolkit_id: "gmail".into(),
+            account_id: None,
+        }],
+    };
+    let updated = set_health(&config, &"wf-a".to_string(), &new_health, later).unwrap();
+    assert!(updated);
+
+    let after = super::store::get_workflow(&config, &"wf-a".to_string())
+        .unwrap()
+        .unwrap();
+    assert!(matches!(
+        after.health,
+        WorkflowHealth::NeedsConnections { .. }
+    ));
+    assert!(after.updated_at >= later);
+    // Other fields untouched.
+    assert_eq!(after.name, before.name);
+    assert_eq!(after.enabled, before.enabled);
+}
+
+#[test]
+fn set_health_returns_false_when_id_unknown() {
+    let (_dir, config) = config_with_temp_workspace();
+    let updated = set_health(
+        &config,
+        &"no-such-id".into(),
+        &WorkflowHealth::Ready,
+        Utc::now(),
+    )
+    .unwrap();
+    assert!(!updated);
+}
