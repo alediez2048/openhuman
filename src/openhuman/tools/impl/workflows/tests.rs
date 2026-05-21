@@ -537,10 +537,13 @@ async fn workflow_propose_run_now_returns_disabled_when_health_blocks() {
 }
 
 #[tokio::test]
-async fn workflow_propose_create_returns_drafting_failed_with_f11_placeholder() {
-    // The AgentDrafter is the F-11 placeholder. Calling
-    // workflow_propose_create surfaces its RunFailure as a
-    // structured `{ error: "drafting_failed", ... }` payload.
+async fn workflow_propose_create_surfaces_agent_failure_as_structured_payload() {
+    // The F-15 swap means AgentDrafter now talks to the live LLM.
+    // In a test workspace without a configured AI provider,
+    // Agent::from_config / run_single will error — and the tool
+    // surfaces that as the `drafting_failed` payload (NOT as a
+    // raw error). This locks the error-shape contract: the chat
+    // agent sees a parseable payload, never a thrown exception.
     let (_d, config) = config_with_temp_workspace();
     let tool = WorkflowProposeCreateTool::new(config.clone());
     let result = tool
@@ -549,12 +552,14 @@ async fn workflow_propose_create_returns_drafting_failed_with_f11_placeholder() 
         .unwrap();
     assert!(!result.is_error);
     let payload = parse_output(&result.output());
-    assert_eq!(payload["error"].as_str(), Some("drafting_failed"));
-    assert_eq!(payload["kind_label"].as_str(), Some("run_failure"));
-    assert!(payload["reason"]
-        .as_str()
-        .unwrap()
-        .contains("F-11 placeholder"));
+    // Either the agent itself failed (run_failure) or the LLM
+    // produced something that didn't validate (validation_failed_after_retries).
+    // Both surface as a top-level `error` key.
+    let error = payload["error"].as_str().expect("error key present");
+    assert!(
+        error == "drafting_failed" || error == "validation_failed_after_retries",
+        "unexpected error variant: {error}"
+    );
 }
 
 #[tokio::test]

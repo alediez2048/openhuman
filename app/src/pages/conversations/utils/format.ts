@@ -89,35 +89,112 @@ export interface OpenhumanLinkSegment {
   label: string;
 }
 
+/**
+ * Inline tag the workflow drafting sub-agent (F-11/F-12 propose
+ * tools) embeds in its response to render a `<WorkflowProposalPreview>`
+ * (or `<WorkflowEditPreview>` / `<WorkflowDeletePreview>` /
+ * `<WorkflowStatePreview>`) inside the chat bubble:
+ *
+ *     <workflow-preview kind="proposal" data='{...json...}'></workflow-preview>
+ *
+ * `kind` discriminates the renderer ('proposal' | 'edit' | 'delete'
+ * | 'state'); `data` is the JSON-serialised payload the
+ * matching component expects. Single quotes around `data` keep the
+ * inner JSON's double quotes from clashing with the attribute.
+ */
+export interface WorkflowPreviewSegment {
+  kind: 'workflow_preview';
+  previewKind: 'proposal' | 'edit' | 'delete' | 'state';
+  data: string;
+}
+
 export interface TextSegment {
   kind: 'text';
   text: string;
 }
 
-export type BubbleSegment = TextSegment | OpenhumanLinkSegment;
+export type BubbleSegment = TextSegment | OpenhumanLinkSegment | WorkflowPreviewSegment;
 
 const OPENHUMAN_LINK_RE =
   /<openhuman-link\s+path=(?:"([^"]+)"|'([^']+)')\s*>([\s\S]*?)<\/openhuman-link>/gi;
 
+// Match `<workflow-preview kind="proposal" data='{...}'></workflow-preview>`.
+// `data` accepts either single or double quotes for the outer wrapper;
+// the agent prompt instructs the LLM to use single quotes so the JSON's
+// double quotes nest cleanly.
+const WORKFLOW_PREVIEW_RE =
+  /<workflow-preview\s+kind=(?:"([^"]+)"|'([^']+)')\s+data=(?:"([\s\S]*?)"|'([\s\S]*?)')\s*>\s*<\/workflow-preview>/gi;
+
+/**
+ * Combined tag-extraction pass: walks the content and splits it
+ * into text + tagged segments preserving order.
+ *
+ * Both the `<openhuman-link>` and `<workflow-preview>` tags are
+ * handled in a single sweep so a message that mixes them (rare
+ * but possible — e.g. a workflow preview plus a "Configure
+ * notifications" link) renders both segments in their original
+ * positions.
+ */
 export function parseBubbleSegments(content: string): BubbleSegment[] {
-  if (!content || !content.includes('<openhuman-link')) {
+  if (
+    !content ||
+    (!content.includes('<openhuman-link') && !content.includes('<workflow-preview'))
+  ) {
     return [{ kind: 'text', text: content }];
   }
+  // Collect every match from both regexes with its index range, then
+  // emit segments in order.
+  type Hit = { start: number; end: number; segment: BubbleSegment };
+  const hits: Hit[] = [];
+
+  OPENHUMAN_LINK_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = OPENHUMAN_LINK_RE.exec(content)) !== null) {
+    const path = (m[1] ?? m[2] ?? '').trim().replace(/^\/+/, '').replace(/\/+$/, '');
+    const label = (m[3] ?? '').trim();
+    if (path && label) {
+      hits.push({
+        start: m.index,
+        end: m.index + m[0].length,
+        segment: { kind: 'link', path, label },
+      });
+    }
+  }
+
+  WORKFLOW_PREVIEW_RE.lastIndex = 0;
+  while ((m = WORKFLOW_PREVIEW_RE.exec(content)) !== null) {
+    const kindStr = (m[1] ?? m[2] ?? '').trim();
+    const dataStr = (m[3] ?? m[4] ?? '').trim();
+    if (
+      (kindStr === 'proposal' ||
+        kindStr === 'edit' ||
+        kindStr === 'delete' ||
+        kindStr === 'state') &&
+      dataStr
+    ) {
+      hits.push({
+        start: m.index,
+        end: m.index + m[0].length,
+        segment: {
+          kind: 'workflow_preview',
+          previewKind: kindStr,
+          data: dataStr,
+        },
+      });
+    }
+  }
+
+  hits.sort((a, b) => a.start - b.start);
+
   const segments: BubbleSegment[] = [];
   let cursor = 0;
-  // Reset regex state between calls (the global flag preserves lastIndex).
-  OPENHUMAN_LINK_RE.lastIndex = 0;
-  let match: RegExpExecArray | null;
-  while ((match = OPENHUMAN_LINK_RE.exec(content)) !== null) {
-    if (match.index > cursor) {
-      segments.push({ kind: 'text', text: content.slice(cursor, match.index) });
+  for (const hit of hits) {
+    if (hit.start < cursor) continue; // overlap — drop the later
+    if (hit.start > cursor) {
+      segments.push({ kind: 'text', text: content.slice(cursor, hit.start) });
     }
-    const path = (match[1] ?? match[2] ?? '').trim().replace(/^\/+/, '').replace(/\/+$/, '');
-    const label = (match[3] ?? '').trim();
-    if (path && label) {
-      segments.push({ kind: 'link', path, label });
-    }
-    cursor = match.index + match[0].length;
+    segments.push(hit.segment);
+    cursor = hit.end;
   }
   if (cursor < content.length) {
     segments.push({ kind: 'text', text: content.slice(cursor) });

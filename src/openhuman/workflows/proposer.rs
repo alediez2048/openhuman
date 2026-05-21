@@ -156,22 +156,32 @@ impl std::fmt::Display for RunFailure {
 
 impl std::error::Error for RunFailure {}
 
-/// Production-side [`Drafter`]. F-15's hero E2E swaps the body for
-/// `Agent::from_config(...).run_single(prompt)` per the dependency
-/// survey in the F-8 DEVLOG. Until then this returns a labelled
-/// failure so any callers exercising the live path get a stable
-/// error code instead of silently looping.
-pub struct AgentDrafter;
-
-impl AgentDrafter {
-    pub fn new() -> Self {
-        Self
-    }
+/// Production-side [`Drafter`]. Builds an [`Agent`] from the project
+/// config and calls `run_single(system_prompt + description)` — the
+/// same pattern `cron::scheduler::handle_scheduled_job` uses. Parses
+/// the agent's text response for a fenced ```json``` block carrying
+/// a [`WorkflowProposal`].
+///
+/// The prompt's "Output format" instruction (appended by
+/// [`build_system_prompt`]) tells the LLM to emit:
+///
+/// ````
+/// ```json
+/// { ...WorkflowProposal... }
+/// ```
+/// ````
+///
+/// — and nothing else. Multiple/missing blocks surface as
+/// [`RunFailure`]; the retry loop in [`draft_with_retries`] handles
+/// that as a transient error (vs. a validator-level
+/// [`ProposalValidationError`]).
+pub struct AgentDrafter {
+    config: std::sync::Arc<crate::openhuman::config::Config>,
 }
 
-impl Default for AgentDrafter {
-    fn default() -> Self {
-        Self::new()
+impl AgentDrafter {
+    pub fn new(config: std::sync::Arc<crate::openhuman::config::Config>) -> Self {
+        Self { config }
     }
 }
 
@@ -179,15 +189,70 @@ impl Default for AgentDrafter {
 impl Drafter for AgentDrafter {
     async fn draft(
         &self,
-        _system_prompt: &str,
-        _description: &str,
+        system_prompt: &str,
+        description: &str,
     ) -> Result<WorkflowProposal, RunFailure> {
-        // F-15 SWAP POINT — replace this body with the agent
-        // invocation. Signature is locked.
-        Err(RunFailure::new(
-            "AgentDrafter is the F-11 placeholder; live agent invocation lands at F-15.",
-        ))
+        let response =
+            run_agent_for_text(&self.config, system_prompt, description, "proposal").await?;
+        parse_proposal_from_response(&response)
     }
+}
+
+/// Shared agent invocation used by both [`AgentDrafter`] and
+/// [`AgentUpdateDrafter`]. Builds an [`Agent`] from the project
+/// config, tags events with `"workflows-proposer:<kind>"`, and
+/// streams a single turn against the composed prompt + the user's
+/// description as the message.
+///
+/// The harness's [`Agent::run_single`] returns the assistant's final
+/// text response, which both drafters then JSON-extract.
+async fn run_agent_for_text(
+    config: &crate::openhuman::config::Config,
+    system_prompt: &str,
+    description: &str,
+    kind: &str,
+) -> Result<String, RunFailure> {
+    let mut agent = crate::openhuman::agent::Agent::from_config(config)
+        .map_err(|e| RunFailure::new(format!("Agent::from_config failed: {e:#}")))?;
+    agent.set_event_context(format!("workflows-proposer:{kind}"), "workflows-proposer");
+    // Pack the drafter-specific instructions + the user's description
+    // into one `run_single` message — same pattern the cron domain
+    // uses (`prefixed_prompt = "[cron:<id> <name>] <prompt>"`). The
+    // agent harness's prefix-cache picks up the prelude on retries.
+    let composed = format!(
+        "# Drafting sub-agent instructions\n\n{system_prompt}\n\n# User request\n\n{description}\n"
+    );
+    agent
+        .run_single(&composed)
+        .await
+        .map_err(|e| RunFailure::new(format!("agent.run_single failed: {e:#}")))
+}
+
+/// Extract a [`WorkflowProposal`] from the LLM's text response.
+/// Looks for a fenced ```json ...``` block (the standard agent
+/// output format per the appended "Output format" instruction).
+/// Falls back to parsing the whole response as raw JSON when no
+/// fence is found — the LLM occasionally returns the JSON inline.
+fn parse_proposal_from_response(text: &str) -> Result<WorkflowProposal, RunFailure> {
+    let body = extract_fenced_json(text).unwrap_or(text.trim());
+    serde_json::from_str::<WorkflowProposal>(body).map_err(|err| {
+        RunFailure::new(format!(
+            "proposal payload not parseable as WorkflowProposal: {err}"
+        ))
+    })
+}
+
+/// Pull the body of the first ```json (or bare ```) fenced block
+/// out of `text`. Returns `None` when no fence is present so the
+/// caller can fall back to raw-JSON parsing.
+fn extract_fenced_json(text: &str) -> Option<&str> {
+    let start = text.find("```json").or_else(|| text.find("```"))?;
+    // Skip past the opening fence + optional `json` language hint +
+    // the newline that follows.
+    let after_open = &text[start..];
+    let body_start = after_open.find('\n')? + start + 1;
+    let end_rel = text[body_start..].find("```")?;
+    Some(text[body_start..body_start + end_rel].trim())
 }
 
 /// Run the drafting sub-agent against `description` and the live
@@ -295,12 +360,41 @@ pub fn build_system_prompt(
     prompt.push_str(&phase.to_string());
     prompt.push_str(" constraints\n\n");
     prompt.push_str(&phase_constraints_block(phase));
+    prompt.push_str(OUTPUT_FORMAT_INSTRUCTION);
     if let Some(err) = last_error {
         prompt.push_str("\n\n## PREVIOUS ATTEMPT FAILED\n\n");
         prompt.push_str(&format_validation_error(err));
     }
     prompt
 }
+
+/// Critical-override section appended to the system prompt for both
+/// the create + update drafters. The locked
+/// `Automations/Artifacts/prompts/workflow_builder.md` artifact
+/// instructs the LLM to "emit via `emit_proposal`", but that
+/// synthetic tool isn't registered in the agent harness — the F-11
+/// integration plan called for it but landing the registration is
+/// bigger than the F-15 scope. Instead we ask the LLM to emit the
+/// proposal as a fenced ```json``` code block; the drafter's
+/// [`parse_proposal_from_response`] / `extract_fenced_json` pulls
+/// the body out and validates it.
+///
+/// The instruction is appended LAST (after the connections summary
+/// + phase constraints + previous-attempt block) so it's the most
+/// recent context the LLM sees — that's the highest-recency win
+/// against the artifact's earlier `emit_proposal` references.
+const OUTPUT_FORMAT_INSTRUCTION: &str = "\n\n## Output format (CRITICAL OVERRIDE)\n\n\
+The `emit_proposal` tool is NOT available in this session. Override the artifact's \
+`emit_proposal` instructions with the following rule:\n\n\
+- Your ENTIRE response must be a single fenced JSON code block containing the \
+  `WorkflowProposal` payload. No prose before or after the block.\n\
+- The fence opens with three backticks then `json`, and closes with three backticks.\n\
+- Fields required: `name`, `description`, `trigger`, `nodes`, `edges`, `settings`, \
+  `required_connections`, `rationale`, `confidence`.\n\
+- For update flows the same rule applies but the payload is a full `Workflow` shape \
+  (with `id`, `schema_version`, `enabled`, `origin`, `health`, `created_at`, \
+  `updated_at` preserved from the current workflow).\n\
+- Stay strictly under ~2 KiB of JSON. Don't summarise the prompt; emit the workflow.\n";
 
 /// One-line-per-mechanism human-readable connection summary. Used
 /// inside the drafting prompt; the agent uses `list_connections`
@@ -408,19 +502,18 @@ pub trait UpdateDrafter: Send + Sync {
     ) -> Result<Workflow, RunFailure>;
 }
 
-/// Production-side [`UpdateDrafter`]. Same F-15 placeholder pattern
-/// as [`AgentDrafter`].
-pub struct AgentUpdateDrafter;
-
-impl AgentUpdateDrafter {
-    pub fn new() -> Self {
-        Self
-    }
+/// Production-side [`UpdateDrafter`]. Same swap pattern as
+/// [`AgentDrafter`]: calls `Agent::from_config(config).run_single(...)`
+/// with the update-flavoured system prompt (current workflow JSON
+/// inlined) + the user's edit instructions; parses a fenced ```json
+/// block out of the response as the proposed [`Workflow`] shape.
+pub struct AgentUpdateDrafter {
+    config: std::sync::Arc<crate::openhuman::config::Config>,
 }
 
-impl Default for AgentUpdateDrafter {
-    fn default() -> Self {
-        Self::new()
+impl AgentUpdateDrafter {
+    pub fn new(config: std::sync::Arc<crate::openhuman::config::Config>) -> Self {
+        Self { config }
     }
 }
 
@@ -428,15 +521,16 @@ impl Default for AgentUpdateDrafter {
 impl UpdateDrafter for AgentUpdateDrafter {
     async fn draft_update(
         &self,
-        _system_prompt: &str,
-        _instructions: &str,
+        system_prompt: &str,
+        instructions: &str,
         _current: &Workflow,
     ) -> Result<Workflow, RunFailure> {
-        // F-15 SWAP POINT — replace this body with the agent
-        // invocation. Signature is locked.
-        Err(RunFailure::new(
-            "AgentUpdateDrafter is the F-12 placeholder; live agent invocation lands at F-15.",
-        ))
+        let response =
+            run_agent_for_text(&self.config, system_prompt, instructions, "edit").await?;
+        let body = extract_fenced_json(&response).unwrap_or(response.trim());
+        serde_json::from_str::<Workflow>(body).map_err(|err| {
+            RunFailure::new(format!("edit payload not parseable as Workflow: {err}"))
+        })
     }
 }
 

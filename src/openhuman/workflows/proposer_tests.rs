@@ -264,20 +264,18 @@ fn default_iteration_cap_matches_fr_1_13_2() {
     assert_eq!(DEFAULT_ITERATION_CAP, 6);
 }
 
-// ── AgentDrafter F-11 placeholder ──────────────────────────────────────
+// ── Output-format instruction (F-15 drafter swap) ──────────────────────
 
-#[tokio::test]
-async fn agent_drafter_returns_placeholder_run_failure() {
-    // F-15 swap point — until then the production drafter is a
-    // labelled placeholder so the surface is callable and the
-    // failure is observable.
-    let drafter = AgentDrafter::new();
-    let err = drafter
-        .draft("sys", "build me a workflow")
-        .await
-        .unwrap_err();
-    assert!(err.reason.contains("F-11 placeholder"));
-    assert!(err.reason.contains("F-15"));
+#[test]
+fn build_system_prompt_includes_output_format_override_instruction() {
+    // The swap from `emit_proposal` (synthetic tool) to fenced ```json
+    // depends on the OUTPUT FORMAT override being present in every
+    // composed prompt. A test guards the contract.
+    let snapshot = ConnectionsSnapshot::empty();
+    let prompt = super::proposer::build_system_prompt(&snapshot, 1, None);
+    assert!(prompt.contains("CRITICAL OVERRIDE"));
+    assert!(prompt.contains("fenced JSON code block"));
+    assert!(prompt.contains("`WorkflowProposal`"));
 }
 
 // ── F-13 bundling smoke tests ──────────────────────────────────────────

@@ -38,8 +38,8 @@ pub struct WorkflowProposeCreateTool {
 impl WorkflowProposeCreateTool {
     pub fn new(config: Arc<Config>) -> Self {
         Self {
-            config,
-            drafter: Arc::new(AgentDrafter::new()),
+            config: config.clone(),
+            drafter: Arc::new(AgentDrafter::new(config)),
         }
     }
 
@@ -85,6 +85,15 @@ impl Tool for WorkflowProposeCreateTool {
         ToolCategory::System
     }
 
+    fn supports_markdown(&self) -> bool {
+        // Markdown-capable so the agent harness picks up the
+        // `markdown_formatted` field carrying the
+        // `<workflow-preview>` tag the chat-runtime extension
+        // (`AgentMessageBubble`) parses + dispatches to
+        // `<WorkflowProposalPreview>`.
+        true
+    }
+
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
         let description = args
             .get("description")
@@ -124,7 +133,20 @@ impl Tool for WorkflowProposeCreateTool {
         {
             Ok(proposal) => {
                 let payload = json!({ "proposal": proposal });
-                Ok(ToolResult::success(serde_json::to_string(&payload)?))
+                let json_str = serde_json::to_string(&proposal)?;
+                // Wrap the payload in the `<workflow-preview>` tag the
+                // chat-runtime extension (AgentMessageBubble) parses
+                // out and dispatches to `<WorkflowProposalPreview>`.
+                // Single-quoted attribute so the JSON's double quotes
+                // nest cleanly. The instruction at the top tells the
+                // LLM to echo this verbatim into its user-facing
+                // response so the preview actually renders.
+                let markdown = format!(
+                    "I drafted this workflow. To show the preview card to the user, \
+                     include this tag verbatim in your response:\n\n\
+                     <workflow-preview kind=\"proposal\" data='{json_str}'></workflow-preview>"
+                );
+                Ok(ToolResult::success_with_markdown(payload, markdown))
             }
             Err(DraftFailure::ValidationFailedAfterRetries {
                 attempts,

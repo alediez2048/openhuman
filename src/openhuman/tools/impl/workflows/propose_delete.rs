@@ -66,6 +66,10 @@ impl Tool for WorkflowProposeDeleteTool {
         ToolCategory::System
     }
 
+    fn supports_markdown(&self) -> bool {
+        true
+    }
+
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
         let workflow_id = args
             .get("workflow_id")
@@ -100,6 +104,11 @@ impl Tool for WorkflowProposeDeleteTool {
             retention_days: RETENTION_DAYS,
         };
         let payload = json!({ "delete_preview": preview });
-        Ok(ToolResult::success(serde_json::to_string(&payload)?))
+        let json_str = serde_json::to_string(&preview)?;
+        let markdown = format!(
+            "I queued this delete for the user to confirm. Include this tag verbatim:\n\n\
+             <workflow-preview kind=\"delete\" data='{json_str}'></workflow-preview>"
+        );
+        Ok(ToolResult::success_with_markdown(payload, markdown))
     }
 }

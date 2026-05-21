@@ -35,8 +35,8 @@ pub struct WorkflowProposeUpdateTool {
 impl WorkflowProposeUpdateTool {
     pub fn new(config: Arc<Config>) -> Self {
         Self {
-            config,
-            drafter: Arc::new(AgentUpdateDrafter::new()),
+            config: config.clone(),
+            drafter: Arc::new(AgentUpdateDrafter::new(config)),
         }
     }
 
@@ -81,6 +81,10 @@ impl Tool for WorkflowProposeUpdateTool {
 
     fn category(&self) -> ToolCategory {
         ToolCategory::System
+    }
+
+    fn supports_markdown(&self) -> bool {
+        true
     }
 
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
@@ -150,7 +154,13 @@ impl Tool for WorkflowProposeUpdateTool {
                     rationale,
                 };
                 let payload = json!({ "edit_proposal": preview });
-                Ok(ToolResult::success(serde_json::to_string(&payload)?))
+                let json_str = serde_json::to_string(&preview)?;
+                let markdown = format!(
+                    "I drafted these changes. To show the diff preview to the user, \
+                     include this tag verbatim in your response:\n\n\
+                     <workflow-preview kind=\"edit\" data='{json_str}'></workflow-preview>"
+                );
+                Ok(ToolResult::success_with_markdown(payload, markdown))
             }
             Err(DraftFailure::ValidationFailedAfterRetries {
                 attempts,

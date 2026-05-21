@@ -71,6 +71,10 @@ impl Tool for WorkflowProposeRunNowTool {
         ToolCategory::System
     }
 
+    fn supports_markdown(&self) -> bool {
+        true
+    }
+
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
         let workflow_id = args
             .get("workflow_id")
@@ -104,9 +108,13 @@ impl Tool for WorkflowProposeRunNowTool {
                 rationale: health_blocked_rationale(&workflow.health),
                 enabled: false,
             };
-            return Ok(ToolResult::success(serde_json::to_string(&json!({
-                "state_proposal": preview,
-            }))?));
+            let payload = json!({ "state_proposal": preview });
+            let json_str = serde_json::to_string(&preview)?;
+            let markdown = format!(
+                "Run is blocked by missing connections. Include this tag verbatim:\n\n\
+                 <workflow-preview kind=\"state\" data='{json_str}'></workflow-preview>"
+            );
+            return Ok(ToolResult::success_with_markdown(payload, markdown));
         }
 
         let estimate = estimate_duration(&self.config, &workflow).await;
@@ -116,9 +124,13 @@ impl Tool for WorkflowProposeRunNowTool {
             rationale: vec![format!("Estimated time: {estimate}.")],
             enabled: true,
         };
-        Ok(ToolResult::success(serde_json::to_string(&json!({
-            "state_proposal": preview,
-        }))?))
+        let payload = json!({ "state_proposal": preview });
+        let json_str = serde_json::to_string(&preview)?;
+        let markdown = format!(
+            "I prepared a run-now preview. Include this tag verbatim:\n\n\
+             <workflow-preview kind=\"state\" data='{json_str}'></workflow-preview>"
+        );
+        Ok(ToolResult::success_with_markdown(payload, markdown))
     }
 }
 

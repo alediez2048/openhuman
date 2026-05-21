@@ -1,6 +1,10 @@
 import Markdown from 'react-markdown';
 
 import { OPENHUMAN_LINK_EVENT } from '../../../components/OpenhumanLinkModal';
+import {
+  renderWorkflowPreview,
+  type WorkflowPreviewPayload,
+} from '../../../components/workflows/preview';
 import { parseMarkdownTable } from '../../../utils/agentMessageBubbles';
 import { openUrl } from '../../../utils/openUrl';
 import {
@@ -9,6 +13,55 @@ import {
   isAllowedExternalHref,
   parseBubbleSegments,
 } from '../utils/format';
+
+/**
+ * Renders the matching F-14 workflow-preview component for an
+ * inline `<workflow-preview kind="..." data='{...}'>` tag emitted
+ * by the F-12 propose-tool surface. Parse failures show a small
+ * fallback so the chat thread doesn't crash on a malformed
+ * payload (which can happen during early LLM drafts).
+ */
+function WorkflowPreviewSlot({
+  previewKind,
+  data,
+}: {
+  previewKind: 'proposal' | 'edit' | 'delete' | 'state';
+  data: string;
+}) {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(data);
+  } catch (err) {
+    console.error('[chat-runtime] workflow-preview data parse failed', err, data);
+    return (
+      <div className="rounded-xl border border-coral-200 bg-coral-50 px-3 py-2 text-xs text-coral-700">
+        Couldn’t render the workflow preview (invalid payload).
+      </div>
+    );
+  }
+  let payload: WorkflowPreviewPayload | null = null;
+  try {
+    if (previewKind === 'proposal') {
+      payload = { kind: 'proposal', proposal: parsed as never };
+    } else if (previewKind === 'edit') {
+      payload = { kind: 'edit', proposal: parsed as never };
+    } else if (previewKind === 'delete') {
+      payload = { kind: 'delete', preview: parsed as never };
+    } else if (previewKind === 'state') {
+      payload = { kind: 'state', proposal: parsed as never };
+    }
+  } catch (err) {
+    console.error('[chat-runtime] workflow-preview shape mismatch', err);
+  }
+  const node = payload ? renderWorkflowPreview(payload) : null;
+  return (
+    node ?? (
+      <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+        Workflow preview type “{previewKind}” isn’t supported yet.
+      </div>
+    )
+  );
+}
 
 /**
  * Pill rendered below an agent bubble for each
@@ -119,6 +172,9 @@ export function AgentMessageBubble({
   const linkSegments = segments.filter(
     (s): s is Extract<typeof s, { kind: 'link' }> => s.kind === 'link'
   );
+  const workflowPreviews = segments.filter(
+    (s): s is Extract<typeof s, { kind: 'workflow_preview' }> => s.kind === 'workflow_preview'
+  );
 
   const table = parseMarkdownTable(textContent);
   const bubbleChrome = getAgentBubbleChrome(position);
@@ -176,6 +232,17 @@ export function AgentMessageBubble({
               key={`pill-${idx}-${segment.path}`}
               path={segment.path}
               label={segment.label}
+            />
+          ))}
+        </div>
+      )}
+      {workflowPreviews.length > 0 && (
+        <div className="mt-2 flex flex-col gap-2">
+          {workflowPreviews.map((segment, idx) => (
+            <WorkflowPreviewSlot
+              key={`wf-preview-${idx}-${segment.previewKind}`}
+              previewKind={segment.previewKind}
+              data={segment.data}
             />
           ))}
         </div>

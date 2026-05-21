@@ -61,6 +61,10 @@ impl Tool for WorkflowProposeEnableTool {
         ToolCategory::System
     }
 
+    fn supports_markdown(&self) -> bool {
+        true
+    }
+
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
         let workflow_id = args
             .get("workflow_id")
@@ -93,7 +97,12 @@ impl Tool for WorkflowProposeEnableTool {
             enabled: !workflow.enabled,
         };
         let payload = json!({ "state_proposal": preview });
-        Ok(ToolResult::success(serde_json::to_string(&payload)?))
+        let json_str = serde_json::to_string(&preview)?;
+        let markdown = format!(
+            "I prepared the enable preview. Include this tag verbatim:\n\n\
+             <workflow-preview kind=\"state\" data='{json_str}'></workflow-preview>"
+        );
+        Ok(ToolResult::success_with_markdown(payload, markdown))
     }
 }
 

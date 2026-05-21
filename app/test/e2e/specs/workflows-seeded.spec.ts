@@ -126,7 +126,11 @@ describe('Workflows — starter catalog flow (NFR-2.6.4)', () => {
     // Oracle: workflows_list RPC must reflect the new row tagged with
     // the matching Seed{template_id} origin.
     const deadline = Date.now() + 15_000;
-    let workflows: Array<{ id: string; name: string; origin: { type: string; template_id?: string } }> = [];
+    let workflows: Array<{
+      id: string;
+      name: string;
+      origin: { type: string; template_id?: string };
+    }> = [];
     while (Date.now() < deadline) {
       const out = await callOpenhumanRpc('workflows_list', {});
       workflows = (out?.workflows ?? out) as typeof workflows;
@@ -139,7 +143,9 @@ describe('Workflows — starter catalog flow (NFR-2.6.4)', () => {
     expect(seeded.origin.template_id).toBe(RU_1_TEMPLATE_ID);
 
     // Catalog must re-render without RU-1.
-    expect(await waitForTestIdMissing(`starter-workflow-card-${RU_1_TEMPLATE_ID}`, 10_000)).toBe(true);
+    expect(await waitForTestIdMissing(`starter-workflow-card-${RU_1_TEMPLATE_ID}`, 10_000)).toBe(
+      true
+    );
     expect(await countStarterCards()).toBe(3);
 
     // Your-workflows section now shows the seeded row.
