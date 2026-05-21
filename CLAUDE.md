@@ -4,6 +4,8 @@
 
 Narrative architecture: [`gitbooks/developing/architecture.md`](gitbooks/developing/architecture.md). Frontend: [`gitbooks/developing/architecture/frontend.md`](gitbooks/developing/architecture/frontend.md). Tauri shell: [`gitbooks/developing/architecture/tauri-shell.md`](gitbooks/developing/architecture/tauri-shell.md). Agent-harness tool surface: [`gitbooks/developing/architecture/agent-harness.md`](gitbooks/developing/architecture/agent-harness.md).
 
+> **Active initiative — Workflows & Automations.** Read [`Automations/STATE.md`](Automations/STATE.md) first. Phase 0 (Connections Hub at `/connections` — unified view across Composio, Channels, Browser, Built-in, MCP, Generic HTTP, with a real verification model) is shipped to `main`. Phase 1 (Workflows Foundation) is `Automations/Tickets/phase-1-foundation/F-1.md`; required ADRs and the proposal-preview design live under `Automations/ADRs/` and `Automations/Artifacts/designs/`.
+
 ---
 
 ## Repository layout
