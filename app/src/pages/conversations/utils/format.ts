@@ -175,11 +175,7 @@ export function parseBubbleSegments(content: string): BubbleSegment[] {
       hits.push({
         start: m.index,
         end: m.index + m[0].length,
-        segment: {
-          kind: 'workflow_preview',
-          previewKind: kindStr,
-          data: dataStr,
-        },
+        segment: { kind: 'workflow_preview', previewKind: kindStr, data: dataStr },
       });
     }
   }
