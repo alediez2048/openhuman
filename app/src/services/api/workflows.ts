@@ -14,6 +14,8 @@
 import type {
   CreateWorkflowRequest,
   ListFilter,
+  ListStarterTemplatesRequest,
+  StarterTemplateView,
   UpdateWorkflowRequest,
   Workflow,
   WorkflowId,
@@ -92,6 +94,20 @@ export const workflowsApi = {
       method: 'openhuman.workflows_disable',
       params: { id },
     });
+    return unwrapRpcOutcome(raw);
+  },
+
+  /**
+   * Read-only catalog query (F-5). Server filters by `min_phase`,
+   * dedupes against the user's existing Seed{template_id} workflows,
+   * and computes `missing_connections` for each surviving template.
+   */
+  listStarterTemplates: async (
+    req: ListStarterTemplatesRequest = {}
+  ): Promise<StarterTemplateView[]> => {
+    const raw = await callCoreRpc<
+      StarterTemplateView[] | RpcOutcomeEnvelope<StarterTemplateView[]>
+    >({ method: 'openhuman.workflows_list_starter_templates', params: { request: req } });
     return unwrapRpcOutcome(raw);
   },
 };

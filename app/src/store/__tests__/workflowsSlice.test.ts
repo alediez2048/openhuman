@@ -7,11 +7,13 @@ import { configureStore } from '@reduxjs/toolkit';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { workflowsApi } from '../../services/api/workflows';
-import type { Workflow } from '../../types/workflows';
+import type { StarterTemplateView, Workflow } from '../../types/workflows';
 import workflowsReducer, {
+  addStarterTemplate,
   deleteWorkflow,
   disableWorkflow,
   enableWorkflow,
+  fetchStarterTemplates,
   fetchWorkflows,
   setHideStarterSection,
 } from '../workflowsSlice';
@@ -25,6 +27,7 @@ vi.mock('../../services/api/workflows', () => ({
     delete: vi.fn(),
     enable: vi.fn(),
     disable: vi.fn(),
+    listStarterTemplates: vi.fn(),
   },
 }));
 
@@ -114,5 +117,79 @@ describe('workflowsSlice', () => {
     expect(store.getState().workflows.hideStarterSection).toBe(false);
     store.dispatch(setHideStarterSection(true));
     expect(store.getState().workflows.hideStarterSection).toBe(true);
+  });
+
+  // ── F-6 starter-template thunks ────────────────────────────────────
+
+  function sampleTemplate(id: string): StarterTemplateView {
+    return {
+      template_id: id,
+      name: id,
+      description: '',
+      tags: [],
+      trigger_summary: '',
+      required_connections: [],
+      missing_connections: [],
+      rationale_at_seed: [],
+      raw_payload: {
+        name: id,
+        trigger: { type: 'manual' },
+        nodes: [],
+        edges: [],
+        settings: { timeout_secs: 300, on_error: 'halt' },
+      },
+    };
+  }
+
+  it('fetchStarterTemplates.fulfilled stores the catalog rows', async () => {
+    const rows = [sampleTemplate('ru-1'), sampleTemplate('ru-2')];
+    (workflowsApi.listStarterTemplates as ReturnType<typeof vi.fn>).mockResolvedValueOnce(rows);
+    const store = makeStore();
+    await store.dispatch(fetchStarterTemplates());
+    const state = store.getState().workflows;
+    expect(state.starterLoadStatus).toBe('success');
+    expect(state.starterTemplates).toEqual(rows);
+  });
+
+  it('addStarterTemplate(enableImmediately=true) dispatches create then enable then re-fetches both lists', async () => {
+    const tpl = sampleTemplate('ru-1');
+    const created = sampleWorkflow({ id: 'wf-new' });
+    (workflowsApi.create as ReturnType<typeof vi.fn>).mockResolvedValueOnce(created);
+    (workflowsApi.enable as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ...created,
+      enabled: true,
+    });
+    (workflowsApi.list as ReturnType<typeof vi.fn>).mockResolvedValueOnce([created]);
+    (workflowsApi.listStarterTemplates as ReturnType<typeof vi.fn>).mockResolvedValueOnce([]);
+
+    const store = makeStore();
+    await store.dispatch(addStarterTemplate({ template: tpl, enableImmediately: true }));
+
+    expect(workflowsApi.create).toHaveBeenCalledTimes(1);
+    expect(workflowsApi.enable).toHaveBeenCalledWith('wf-new');
+    expect(workflowsApi.list).toHaveBeenCalledTimes(1);
+    expect(workflowsApi.listStarterTemplates).toHaveBeenCalledTimes(1);
+
+    const createOrder = (workflowsApi.create as ReturnType<typeof vi.fn>).mock
+      .invocationCallOrder[0];
+    const enableOrder = (workflowsApi.enable as ReturnType<typeof vi.fn>).mock
+      .invocationCallOrder[0];
+    expect(createOrder).toBeLessThan(enableOrder);
+  });
+
+  it('addStarterTemplate(enableImmediately=false) skips enable but still refetches', async () => {
+    const tpl = sampleTemplate('ru-1');
+    const created = sampleWorkflow({ id: 'wf-new' });
+    (workflowsApi.create as ReturnType<typeof vi.fn>).mockResolvedValueOnce(created);
+    (workflowsApi.list as ReturnType<typeof vi.fn>).mockResolvedValueOnce([created]);
+    (workflowsApi.listStarterTemplates as ReturnType<typeof vi.fn>).mockResolvedValueOnce([]);
+
+    const store = makeStore();
+    await store.dispatch(addStarterTemplate({ template: tpl, enableImmediately: false }));
+
+    expect(workflowsApi.create).toHaveBeenCalledTimes(1);
+    expect(workflowsApi.enable).not.toHaveBeenCalled();
+    expect(workflowsApi.list).toHaveBeenCalledTimes(1);
+    expect(workflowsApi.listStarterTemplates).toHaveBeenCalledTimes(1);
   });
 });

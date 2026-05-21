@@ -146,3 +146,30 @@ export interface UpdateWorkflowRequest {
   id: WorkflowId;
   patches: WorkflowPatch;
 }
+
+// ── Starter templates (F-5 backend, F-6 UI) ─────────────────────────────
+
+/** Catalog response row returned by `workflows_list_starter_templates`. */
+export interface StarterTemplateView {
+  template_id: string;
+  name: string;
+  description: string;
+  tags: string[];
+  trigger_summary: string;
+  required_connections: ConnectionRef[];
+  missing_connections: ConnectionRef[];
+  rationale_at_seed: string[];
+  /**
+   * Full template body as JSON. F-6's [Add] flow passes this back to
+   * `workflows_create` unmodified — the server preserves every
+   * forward-compat field the template carries (per-node `name`,
+   * `on_error`, etc.) that Phase 1's typed `Workflow` shape doesn't
+   * yet model.
+   */
+  raw_payload: Record<string, unknown>;
+}
+
+export interface ListStarterTemplatesRequest {
+  /** Optional Phase override; defaults to the current Phase server-side. */
+  phase?: number | null;
+}

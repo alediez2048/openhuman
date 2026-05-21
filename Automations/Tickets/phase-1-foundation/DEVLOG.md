@@ -441,3 +441,97 @@ F-6 — `<StarterWorkflowsSection>` UI renders this catalog into F-4's
 `[Add & Enable]` buttons that call `workflows_create` with
 `origin = Seed{template_id}` + the `raw_payload`. **Second locked
 live-test milestone**.
+
+---
+
+## F-6 — `<StarterWorkflowsSection>` + `[Add]` / `[Add & Enable]` catalog UI
+
+**Status:** Complete · **Date:** 2026-05-21 · **Branch/commit:** direct-to-main on `alediez2048/openhuman`.
+
+UI side of the F-5 catalog. Renders RU-1..RU-4 into F-4's
+`starter-section-placeholder` slot with two CTAs driving the new
+`addStarterTemplate` thunk: `[Add]` (workflows_create with
+`origin = Seed{template_id}`) and `[Add & Enable]` (above + immediate
+workflows_enable). After [Add] resolves, the thunk refetches BOTH
+the workflow list and the catalog in parallel — server-side dedup
+drops the just-added template, the new workflow appears in "Your
+workflows."
+
+### Tactical deviations from the F-6 primer
+
+- **`raw_payload` extras stripped before `workflows_create`.** F-5's
+  bundled templates carry forward-compat fields (`template_id`,
+  `min_phase`, `tags`, `rationale_at_seed`) that the strict
+  `CreateWorkflowRequest` rejects via `#[serde(deny_unknown_fields)]`.
+  The `addStarterTemplate` thunk destructures those four extras out
+  of `raw_payload` before passing the rest to `workflowsApi.create`.
+  Documented inline.
+- **Hide-link in section header, no Settings toggle yet.** The
+  primer called for a Settings panel toggle to re-show a hidden
+  catalog. The hide link in the section header writes the flag, but
+  the Settings UI to flip it back is deferred — the
+  `setHideStarterSection` reducer + the
+  `settings.workflows.show_starter_label` i18n key both ship so a
+  follow-up settings-panel PR is a small wire-up.
+- **`useCronHumanizer` hook deferred.** F-5's `trigger_summary`
+  already ships a server-computed humanized label, so the card uses
+  it directly. F-14 can land the richer hook alongside other
+  per-step humanization.
+
+### Verified
+
+- `pnpm typecheck` ✓
+- `pnpm lint` ✓ (0 errors; 47 pre-existing warnings, none from F-6)
+- `pnpm format:check` ✓
+- `pnpm debug unit workflows` — **31 tests passing** (5
+  StarterWorkflowCard + 5 StarterWorkflowsSection + 3 new slice
+  thunk-flow tests + the existing F-4 surface).
+- `pnpm debug unit i18n` — 44 parity tests green after adding 10 new
+  catalog keys + 1 Settings section title key to every locale chunk.
+
+### Files
+
+- New: `app/src/components/workflows/StarterWorkflowCard.tsx`.
+- New: `app/src/components/workflows/StarterWorkflowsSection.tsx`.
+- New: `app/src/components/workflows/__tests__/StarterWorkflowCard.test.tsx`.
+- New: `app/src/components/workflows/__tests__/StarterWorkflowsSection.test.tsx`.
+- Modified: `app/src/types/workflows.ts` (added `StarterTemplateView`
+  + `ListStarterTemplatesRequest`).
+- Modified: `app/src/services/api/workflows.ts` (added
+  `workflowsApi.listStarterTemplates`).
+- Modified: `app/src/store/workflowsSlice.ts` (starter state +
+  `fetchStarterTemplates` + `addStarterTemplate` thunk with the
+  parallel refetch + selectors).
+- Modified: `app/src/store/__tests__/workflowsSlice.test.ts` (3 new
+  thunk-flow tests).
+- Modified: `app/src/pages/Workflows/WorkflowsList.tsx` (replaced
+  both `starter-section-placeholder` placeholders; renders catalog
+  ABOVE the chat CTA on empty workspace, BELOW user's list
+  otherwise; keeps the legacy testid on the wrapper).
+- Modified: `app/src/lib/i18n/en.ts` + every `chunks/{xx}-5.ts` (10
+  new catalog keys + 1 settings key).
+
+### **Second live-test milestone** (per the locked execution contract)
+
+Before F-7 we pause for a checkpoint. The user should:
+
+1. Restart `pnpm dev:app`.
+2. Visit `/workflows` on a fresh workspace.
+3. Verify RU-1..RU-4 render under the empty-state hero.
+4. Click `[Add]` on RU-1; confirm RU-1 disappears from the catalog
+   and a new row appears in "Your workflows" with `enabled = false`.
+5. Open the new workflow's overflow → Delete (or fire
+   `dispatch(deleteWorkflow('<id>'))` from devtools — F-12 wires the
+   delete-preview UI).
+6. Confirm RU-1 re-appears in the catalog.
+7. Click `[Add & Enable]` on RU-2; confirm the toggle reads
+   `Enabled = true` and RU-2 drops from the catalog.
+8. Click "Hide starter workflows"; confirm the section disappears.
+   Restore via `dispatch(setHideStarterSection(false))` from
+   devtools (Settings toggle ships in a follow-up).
+
+### Next
+
+F-7 — Cron + manual trigger dispatch. `workflows_run_now` RPC +
+scheduler integration so [Add & Enable]'d templates actually fire.
+The overflow-menu "Run now" handler from F-4 gets wired then.

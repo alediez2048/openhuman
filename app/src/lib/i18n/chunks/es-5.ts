@@ -470,6 +470,21 @@ const es5: TranslationMap = {
   'workflows.card.never_run': 'Never run',
   'workflows.list_error': 'Couldn’t load your workflows.',
   'workflows.list_retry': 'Retry',
+
+  // Starter catalog (F-6). translate later
+  'workflows.starter_subtitle':
+    'Curated workflows you can add in one click — connections shown below each card.',
+  'workflows.add_to_my_workflows': 'Add',
+  'workflows.add_and_enable': 'Add & Enable',
+  'workflows.hide_starter': 'Hide starter workflows',
+  'workflows.show_starter': 'Show starter workflows',
+  'workflows.starter_empty_catalog':
+    'All starter workflows added — you can still build more in chat.',
+  'workflows.starter_card.missing_connections': 'Needs',
+  'workflows.starter_load_error': 'Couldn’t load starter workflows.',
+  'workflows.starter_adding': 'Adding…',
+  'settings.workflows.section_title': 'Workflows',
+  'settings.workflows.show_starter_label': 'Show starter workflows on the Workflows page',
 };
 
 export default es5;

@@ -10,6 +10,7 @@
  */
 import { useEffect } from 'react';
 
+import StarterWorkflowsSection from '../../components/workflows/StarterWorkflowsSection';
 import WorkflowCard from '../../components/workflows/WorkflowCard';
 import WorkflowEmptyState from '../../components/workflows/WorkflowEmptyState';
 import { useT } from '../../lib/i18n/I18nContext';
@@ -65,11 +66,16 @@ export default function WorkflowsList() {
 
       {!isLoading && !hasWorkflows ? (
         <>
-          <WorkflowEmptyState />
-          {/* F-5 / F-6 fill the Starter section. The placeholder div
-              gives those tickets a clean insertion point with a stable
-              data-testid the tests can assert against. */}
-          <div data-testid="starter-section-placeholder" className="mt-8" />
+          {/* Empty workspace: the catalog is the hero (FR-1.2.6),
+              rendered ABOVE the empty-state CTA. Keep the
+              starter-section-placeholder testid on the section
+              wrapper so existing tests continue to pass. */}
+          <div data-testid="starter-section-placeholder">
+            <StarterWorkflowsSection />
+          </div>
+          <div className="mt-2">
+            <WorkflowEmptyState />
+          </div>
         </>
       ) : null}
 
@@ -85,7 +91,9 @@ export default function WorkflowsList() {
               ))}
             </div>
           </section>
-          <div data-testid="starter-section-placeholder" className="mt-8" />
+          <div data-testid="starter-section-placeholder" className="mt-8">
+            <StarterWorkflowsSection />
+          </div>
         </>
       ) : null}
     </div>
