@@ -3,14 +3,30 @@
  * enable/disable toggle is the primary action; everything else is
  * supporting context (FR-1.2.3).
  *
- * Overflow menu (Edit / Run now / Delete) is stubbed in F-4: clicks
- * emit a `console.debug` placeholder. F-7 wires "Run now" to
- * `workflows_run_now`, F-14 wires Edit through the proposal-preview
- * flow, and F-12 wires Delete through `workflow_propose_delete`.
+ * Overflow menu actions (post-F-15):
+ *   - **Run now** → `workflowsApi.runNow(id)`. Disabled until
+ *     `workflow.health.type === 'ready'`; the server is the final
+ *     gate (returns `health_blocked` on race) but we keep the
+ *     button greyed out for honest UX.
+ *   - **Delete** → `deleteWorkflow` thunk + refresh the starter
+ *     catalog so a deleted Seed-origin row re-appears in the
+ *     catalog (matches the F-15 catalog E2E semantics).
+ *   - **Edit** → surfaces an inline "describe the change in chat"
+ *     message. The full edit flow lives on the
+ *     `workflow_propose_update` → `<WorkflowEditPreview>` chat
+ *     path that's pending the Phase 1.5 chat-runtime protocol
+ *     extension.
+ *
+ * Inline `actionMessage` shows the outcome (or error) directly on
+ * the card — keeps the user focused without bouncing through a
+ * global toast surface.
  */
 import { useEffect, useRef, useState } from 'react';
 
 import { useT } from '../../lib/i18n/I18nContext';
+import { workflowsApi } from '../../services/api/workflows';
+import { useAppDispatch } from '../../store/hooks';
+import { deleteWorkflow, fetchStarterTemplates, fetchWorkflows } from '../../store/workflowsSlice';
 import type { Trigger, Workflow } from '../../types/workflows';
 import WorkflowEnableToggle from './WorkflowEnableToggle';
 import WorkflowHealthBadge from './WorkflowHealthBadge';
@@ -52,8 +68,19 @@ interface Props {
 
 export default function WorkflowCard({ workflow }: Props) {
   const { t } = useT();
+  const dispatch = useAppDispatch();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [actionMessage, setActionMessage] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
+
+  // Clear the inline action message after a short delay so the
+  // card doesn't accumulate stale toasts.
+  useEffect(() => {
+    if (!actionMessage) return;
+    const t = window.setTimeout(() => setActionMessage(null), 4000);
+    return () => window.clearTimeout(t);
+  }, [actionMessage]);
 
   // Close the overflow menu on outside click + Esc.
   useEffect(() => {
@@ -74,10 +101,68 @@ export default function WorkflowCard({ workflow }: Props) {
     };
   }, [menuOpen]);
 
+  const handleRunNow = async () => {
+    setBusy(true);
+    setActionMessage(null);
+    console.debug('[workflows-ui] run_now_clicked id=%s', workflow.id);
+    try {
+      const runId = await workflowsApi.runNow(workflow.id);
+      setActionMessage(`Run started (${runId.slice(0, 8)}…)`);
+    } catch (err) {
+      const message = (err as Error | undefined)?.message ?? 'unknown error';
+      console.error('[workflows-ui] run_now_failed id=%s message=%s', workflow.id, message, err);
+      // The server returns `health_blocked: {...}` when health !=
+      // Ready. Surface a friendly inline message instead of the
+      // raw error.
+      if (message.includes('health_blocked')) {
+        setActionMessage('Cannot run — connect the missing services first.');
+      } else if (message.includes('not_found')) {
+        setActionMessage('Workflow no longer exists.');
+      } else {
+        setActionMessage(`Run failed: ${message}`);
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    setBusy(true);
+    setActionMessage(null);
+    console.debug('[workflows-ui] delete_clicked id=%s', workflow.id);
+    try {
+      await dispatch(deleteWorkflow(workflow.id)).unwrap();
+      // Refresh the starter-catalog so the deleted Seed row's
+      // template reappears in the catalog (matches the F-15
+      // E2E flow).
+      void dispatch(fetchStarterTemplates());
+      void dispatch(fetchWorkflows(undefined));
+    } catch (err) {
+      const message = (err as Error | undefined)?.message ?? 'unknown error';
+      console.error('[workflows-ui] delete_failed id=%s message=%s', workflow.id, message, err);
+      setActionMessage(`Delete failed: ${message}`);
+      setBusy(false);
+    }
+    // No `setBusy(false)` on success — the card unmounts.
+  };
+
+  const handleEdit = () => {
+    // Edit lives on the chat-driven propose path (F-12's
+    // `workflow_propose_update` → `<WorkflowEditPreview>`). The
+    // chat-runtime protocol extension that renders the preview
+    // inside `AgentMessageBubble` is deferred to Phase 1.5.
+    setActionMessage('Edit lands in chat — say what you want to change.');
+  };
+
   const handleOverflow = (action: 'edit' | 'run_now' | 'delete') => {
     setMenuOpen(false);
-    // F-7 / F-12 / F-14 wire these. F-4 ships a placeholder.
-    console.debug(`[workflows-ui] overflow_clicked action=${action} id=${workflow.id}`);
+    if (action === 'run_now') {
+      void handleRunNow();
+    } else if (action === 'delete') {
+      void handleDelete();
+    } else {
+      handleEdit();
+    }
   };
 
   return (
@@ -99,6 +184,14 @@ export default function WorkflowCard({ workflow }: Props) {
         <div className="text-[11px] text-stone-400 dark:text-neutral-500 mt-0.5 truncate">
           {summarizeLastRun(workflow.last_run_at ?? null, t)}
         </div>
+        {actionMessage && (
+          <div
+            role="status"
+            aria-live="polite"
+            className="text-[11px] text-primary-700 dark:text-primary-300 mt-1 truncate">
+            {actionMessage}
+          </div>
+        )}
       </div>
 
       <WorkflowEnableToggle
@@ -129,21 +222,27 @@ export default function WorkflowCard({ workflow }: Props) {
               type="button"
               role="menuitem"
               onClick={() => handleOverflow('edit')}
-              className="w-full text-left px-3 py-1.5 text-xs text-stone-700 dark:text-neutral-200 hover:bg-stone-100 dark:hover:bg-neutral-800">
+              disabled={busy}
+              className="w-full text-left px-3 py-1.5 text-xs text-stone-700 dark:text-neutral-200 hover:bg-stone-100 dark:hover:bg-neutral-800 disabled:opacity-50">
               {t('workflows.edit')}
             </button>
             <button
               type="button"
               role="menuitem"
               onClick={() => handleOverflow('run_now')}
-              className="w-full text-left px-3 py-1.5 text-xs text-stone-700 dark:text-neutral-200 hover:bg-stone-100 dark:hover:bg-neutral-800">
+              disabled={busy || workflow.health.type !== 'ready'}
+              title={
+                workflow.health.type !== 'ready' ? 'Connect the missing services first.' : undefined
+              }
+              className="w-full text-left px-3 py-1.5 text-xs text-stone-700 dark:text-neutral-200 hover:bg-stone-100 dark:hover:bg-neutral-800 disabled:opacity-50 disabled:cursor-not-allowed">
               {t('workflows.run_now')}
             </button>
             <button
               type="button"
               role="menuitem"
               onClick={() => handleOverflow('delete')}
-              className="w-full text-left px-3 py-1.5 text-xs text-coral-600 hover:bg-stone-100 dark:hover:bg-neutral-800">
+              disabled={busy}
+              className="w-full text-left px-3 py-1.5 text-xs text-coral-600 hover:bg-stone-100 dark:hover:bg-neutral-800 disabled:opacity-50">
               {t('workflows.delete')}
             </button>
           </div>
