@@ -1128,6 +1128,15 @@ fn register_domain_subscribers(
                 {
                     log::warn!("[workflows-scheduler] reconcile_at_startup failed: {err:#}");
                 }
+                // Boot-time health recompute. Catches stale
+                // `NeedsConnections` rows whose health was computed
+                // before a matching-rule fix (e.g. F-15's wildcard
+                // account_id/channel_id semantics). The per-connection
+                // recompute path only fires on `ConnectionAdded` /
+                // `ConnectionRemoved` events, so a connection added
+                // BEFORE a matcher fix never re-triggers without this
+                // boot pass.
+                crate::openhuman::workflows::bus::recompute_all_workflows(&config).await;
                 if let Err(err) = crate::openhuman::workflows::scheduler::run(config).await {
                     log::error!("[workflows-scheduler] poll loop exited: {err:#}");
                 }

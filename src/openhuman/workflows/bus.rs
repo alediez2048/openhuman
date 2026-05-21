@@ -197,3 +197,82 @@ pub async fn recompute_for_ref(config: &Config, r#ref: &ConnectionRef) {
         }
     }
 }
+
+/// Walk every workflow and recompute its health against the live
+/// connections snapshot, persisting + publishing only when the
+/// computed value actually changes.
+///
+/// Use case: a fix to the health-matching logic (e.g. F-15's
+/// wildcard `account_id` / `channel_id` semantics) needs to roll
+/// forward against already-persisted workflows. The per-connection
+/// recompute path only fires on `ConnectionAdded` /
+/// `ConnectionRemoved` events; a workflow saved before the fix
+/// keeps its stale `NeedsConnections` health until something
+/// triggers a recompute. This helper runs at boot to flush stale
+/// state forward.
+pub async fn recompute_all_workflows(config: &Config) {
+    let workflows = match store::list_workflows(
+        config,
+        &crate::openhuman::workflows::types::ListFilter::default(),
+    ) {
+        Ok(rows) => rows,
+        Err(err) => {
+            tracing::error!(
+                target: "workflows-bus",
+                "[workflows-bus] list_workflows failed during boot recompute: {err:#}"
+            );
+            return;
+        }
+    };
+    if workflows.is_empty() {
+        return;
+    }
+    let snapshot = match aggregator::list_all(config).await {
+        Ok(views) => ConnectionsSnapshot::new(views),
+        Err(err) => {
+            tracing::warn!(
+                target: "workflows-bus",
+                "[workflows-bus] aggregator::list_all failed during boot recompute: {err:#}; skipping"
+            );
+            return;
+        }
+    };
+    let mut updated = 0u32;
+    let mut total = 0u32;
+    for wf in workflows {
+        total += 1;
+        let new_health = health::recompute(&wf, &snapshot);
+        if new_health == wf.health {
+            continue;
+        }
+        let now = chrono::Utc::now();
+        match store::set_health(config, &wf.id, &new_health, now) {
+            Ok(true) => {
+                updated += 1;
+                tracing::info!(
+                    target: "workflows-bus",
+                    "[workflows-bus] boot recompute wf={} old={:?} new={:?}",
+                    wf.id, wf.health, new_health
+                );
+                let health_json =
+                    serde_json::to_value(&new_health).unwrap_or(serde_json::Value::Null);
+                publish_global(DomainEvent::WorkflowHealthChanged {
+                    workflow_id: wf.id.clone(),
+                    health_json,
+                });
+            }
+            Ok(false) => {}
+            Err(err) => {
+                tracing::error!(
+                    target: "workflows-bus",
+                    "[workflows-bus] boot recompute set_health failed wf={}: {err:#}",
+                    wf.id
+                );
+            }
+        }
+    }
+    tracing::info!(
+        target: "workflows-bus",
+        "[workflows-bus] boot recompute done: {updated}/{total} workflows transitioned"
+    );
+}

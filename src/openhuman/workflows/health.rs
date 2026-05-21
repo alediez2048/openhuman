@@ -48,8 +48,16 @@ impl ConnectionsSnapshot {
 
     /// Return `true` iff a connection matching `r#ref` is present in the
     /// snapshot and counts as "live" per the Phase 0 truth table.
+    ///
+    /// `account_id` / `channel_id` / `tool_name` are treated as
+    /// wildcards when the requested ref leaves them empty / null. The
+    /// starter templates (F-5) emit refs like
+    /// `Webview { provider: "linkedin", account_id: "" }` because they
+    /// can't know the user's specific account at bundle time; the
+    /// match here lets "any LinkedIn webview the user actually
+    /// connected" satisfy the requirement.
     pub fn is_connected(&self, r#ref: &ConnectionRef) -> bool {
-        let Some(view) = self.views.iter().find(|v| &v.r#ref == r#ref) else {
+        let Some(view) = self.views.iter().find(|v| matches_ref(&v.r#ref, r#ref)) else {
             return false;
         };
         if !matches!(view.status, ConnectionStatus::Connected) {
@@ -148,4 +156,91 @@ fn requires_verification(r#ref: &ConnectionRef) -> bool {
             | ConnectionRef::Mcp { .. }
             | ConnectionRef::Channel { .. }
     )
+}
+
+/// Wildcard-aware comparison between a live connection's ref and the
+/// caller's required ref. Returns true when the two refer to the
+/// "same" connection per the matching rules below.
+///
+/// **Matching rules:**
+/// - Variant must match (Composio ≠ Channel ≠ Webview ≠ Builtin ≠
+///   Mcp ≠ GenericHttp).
+/// - For Composio: `toolkit_id` must match exactly; `account_id`
+///   matches when the requested ref leaves it empty / None
+///   (wildcard) or when both sides are equal.
+/// - For Channel: `provider` must match; `channel_id` is wildcard
+///   when the requested ref leaves it empty (starter templates use
+///   this for "any channel under provider X").
+/// - For Webview: `provider` must match; `account_id` is wildcard
+///   when empty.
+/// - For Mcp: `server_id` must match; `tool_name` is wildcard when
+///   None on the requested side.
+/// - For Builtin / GenericHttp: full equality (no wildcard slots).
+///
+/// The wildcard semantics fix the F-5 starter-catalog mismatch
+/// where templates ship `{ provider: "linkedin", account_id: "" }`
+/// but live connections carry a real `account_id`.
+fn matches_ref(live: &ConnectionRef, requested: &ConnectionRef) -> bool {
+    use ConnectionRef as R;
+    match (live, requested) {
+        (
+            R::Composio {
+                toolkit_id: l_tk,
+                account_id: l_aid,
+            },
+            R::Composio {
+                toolkit_id: r_tk,
+                account_id: r_aid,
+            },
+        ) => {
+            if l_tk != r_tk {
+                return false;
+            }
+            match r_aid.as_deref() {
+                None | Some("") => true,
+                Some(want) => l_aid.as_deref() == Some(want),
+            }
+        }
+        (
+            R::Channel {
+                provider: l_p,
+                channel_id: l_cid,
+            },
+            R::Channel {
+                provider: r_p,
+                channel_id: r_cid,
+            },
+        ) => l_p == r_p && (r_cid.is_empty() || l_cid == r_cid),
+        (
+            R::Webview {
+                provider: l_p,
+                account_id: l_aid,
+            },
+            R::Webview {
+                provider: r_p,
+                account_id: r_aid,
+            },
+        ) => l_p == r_p && (r_aid.is_empty() || l_aid == r_aid),
+        (R::Builtin { integration: l }, R::Builtin { integration: r }) => l == r,
+        (
+            R::Mcp {
+                server_id: l_s,
+                tool_name: l_t,
+            },
+            R::Mcp {
+                server_id: r_s,
+                tool_name: r_t,
+            },
+        ) => {
+            if l_s != r_s {
+                return false;
+            }
+            match r_t.as_deref() {
+                None | Some("") => true,
+                Some(want) => l_t.as_deref() == Some(want),
+            }
+        }
+        (R::GenericHttp { connection_id: l }, R::GenericHttp { connection_id: r }) => l == r,
+        _ => false,
+    }
 }
