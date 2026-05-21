@@ -9,6 +9,7 @@
  * phase-1-foundation/F-4.md`.
  */
 import { useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 
 import StarterWorkflowsSection from '../../components/workflows/StarterWorkflowsSection';
 import WorkflowCard from '../../components/workflows/WorkflowCard';
@@ -17,17 +18,21 @@ import { useT } from '../../lib/i18n/I18nContext';
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
 import {
   fetchWorkflows,
+  selectHideStarterSection,
   selectWorkflows,
   selectWorkflowsError,
   selectWorkflowsLoadStatus,
+  setHideStarterSection,
 } from '../../store/workflowsSlice';
 
 export default function WorkflowsList() {
   const { t } = useT();
   const dispatch = useAppDispatch();
+  const navigate = useNavigate();
   const workflows = useAppSelector(selectWorkflows);
   const loadStatus = useAppSelector(selectWorkflowsLoadStatus);
   const error = useAppSelector(selectWorkflowsError);
+  const hideStarterSection = useAppSelector(selectHideStarterSection);
 
   useEffect(() => {
     void dispatch(fetchWorkflows());
@@ -35,13 +40,27 @@ export default function WorkflowsList() {
 
   const hasWorkflows = workflows.length > 0;
   const isLoading = loadStatus === 'loading' && workflows.length === 0;
+  // When the user previously hid the catalog AND has at least one
+  // workflow, the catalog section returns null. Render a compact
+  // "Show starter workflows" toggle so they can un-hide without
+  // visiting Settings.
+  const showStarterToggle = hasWorkflows && hideStarterSection;
 
   return (
     <div data-testid="workflows-page-root" className="min-h-full p-4 pt-6 max-w-3xl mx-auto">
-      <header className="mb-5">
+      <header className="mb-5 flex items-start justify-between gap-3">
         <h1 className="text-2xl font-display font-bold text-stone-900 dark:text-neutral-100">
           {t('nav.workflows')}
         </h1>
+        {hasWorkflows ? (
+          <button
+            type="button"
+            onClick={() => navigate('/chat')}
+            data-testid="workflows-new-cta"
+            className="px-3 py-1.5 text-xs font-medium text-white bg-primary-500 hover:bg-primary-600 rounded-lg shadow-soft transition-colors focus:outline-none focus:ring-2 focus:ring-primary-500 whitespace-nowrap">
+            {t('workflows.empty_cta')}
+          </button>
+        ) : null}
       </header>
 
       {loadStatus === 'error' ? (
@@ -92,7 +111,17 @@ export default function WorkflowsList() {
             </div>
           </section>
           <div data-testid="starter-section-placeholder" className="mt-8">
-            <StarterWorkflowsSection />
+            {showStarterToggle ? (
+              <button
+                type="button"
+                onClick={() => dispatch(setHideStarterSection(false))}
+                data-testid="workflows-starter-show"
+                className="text-xs text-primary-600 hover:text-primary-700 hover:underline">
+                {t('workflows.show_starter')}
+              </button>
+            ) : (
+              <StarterWorkflowsSection />
+            )}
           </div>
         </>
       ) : null}
