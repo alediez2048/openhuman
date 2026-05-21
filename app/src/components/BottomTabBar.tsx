@@ -74,6 +74,26 @@ const makeTabs = (t: (key: string) => string) => [
     ),
   },
   {
+    // Workflows & Automations Phase 1 (F-4). Placed between Connections
+    // (inputs) and Intelligence (memory) — connections are the
+    // building blocks workflows compose. Icon is a placeholder ⚡ glyph
+    // per OQ-6; the BottomTabBar test asserts on the `nav.workflows`
+    // i18n key so the icon can be swapped without breaking the test.
+    id: 'workflows',
+    label: t('nav.workflows'),
+    path: '/workflows',
+    icon: (
+      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={1.8}
+          d="M13 10V3L4 14h7v7l9-11h-7z"
+        />
+      </svg>
+    ),
+  },
+  {
     id: 'intelligence',
     label: t('nav.memory'),
     path: '/intelligence',

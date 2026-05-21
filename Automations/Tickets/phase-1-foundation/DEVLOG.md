@@ -228,3 +228,118 @@ F-4 — `/workflows` route + bottom-tab nav + `WorkflowsList` +
 locked execution contract: after F-4 we pause, run the app, and
 verify the route renders + the empty-state CTA is wired before
 moving on to F-5.
+
+---
+
+## F-4 — `/workflows` route + bottom-tab + list view + empty state
+
+**Status:** Complete · **Date:** 2026-05-21 · **Branch/commit:** direct-to-main on `alediez2048/openhuman`.
+
+First user-visible Phase 1 surface. New 8th bottom-tab between
+**Connections** and **Intelligence** (ADR-001 / OQ-1=A); `/workflows`
+route; `<WorkflowsList>` page renders rows from `workflows_list` with
+`<WorkflowCard>` (activation-first layout — prominent
+enable/disable toggle as the primary action per FR-1.2.3);
+`<WorkflowHealthBadge>` covers all four states; empty state surfaces
+the chat-driven creation hero CTA per FR-1.2.6. Adds
+`workflowsSlice` + `workflowsApi` client + full i18n key set across
+every locale.
+
+### Tactical deviations from the F-4 primer
+
+- **i18n keys live in `chunks/{xx}-5.ts`, not just `xx.ts`.** The
+  primer said "add `nav.workflows` to `en.ts` + `// translate later`
+  to every other locale." The repo's i18n coverage tests
+  (`src/lib/i18n/__tests__/coverage.test.ts` +
+  `I18nContext.test.tsx`) enforce key parity between
+  `en.ts` ↔ `en-*.ts` chunks AND every non-English locale against
+  English. Updating only the flat `xx.ts` files broke both tests.
+  Added the workflow keys to `en-5.ts` AND to every `{xx}-5.ts`
+  chunk (10 non-English locales) with the English value + a
+  `// translate later` block-comment marker.
+
+- **Page subdirectory mirrors `pages/Channels.tsx` vs
+  `pages/Workflows/WorkflowsList.tsx`.** The primer suggested
+  `pages/Workflows/WorkflowsList.tsx`; we kept the subdirectory so
+  F-5 / F-6 / F-14 / F-15 have a natural place to land their pages
+  (`StarterWorkflowsSection`, `WorkflowProposalPreview`, etc.) without
+  collision with `pages/Channels.tsx`-style flat files.
+
+- **Enable toggle "off-only block" on unhealthy workflows.** Primer
+  said `aria-disabled` when `health !== Ready`. We refined: the
+  off→on transition is blocked when health isn't Ready, but the
+  on→off transition stays enabled. Otherwise a user couldn't
+  disable a workflow whose health just degraded — they'd be stuck
+  with it firing on cron. Captured in `WorkflowEnableToggle`'s
+  `blocked = !enabled && !healthy` check + a Vitest case for the
+  "disable an enabled-but-unhealthy workflow" path.
+
+- **Overflow menu items are stubs in F-4.** Edit → F-14
+  (proposal-preview), Run now → F-7 (`workflows_run_now`), Delete
+  → F-12 (`workflow_propose_delete`). Clicks emit `console.debug`
+  placeholders so the wiring is visible in devtools without
+  pretending to do work.
+
+- **`hideStarterSection` lives in `workflowsSlice` from day one**
+  (persisted via `whitelist: ['hideStarterSection']` in
+  `store/index.ts`). F-5 / F-6 read/write it; landing it now avoids
+  a follow-up slice migration.
+
+### Verified
+
+- `pnpm typecheck` ✓
+- `pnpm lint` ✓ (0 errors; 47 pre-existing warnings, none from
+  F-4 code)
+- `pnpm format:check` ✓
+- `pnpm test` — 2 701 passed / 1 failed / 3 skipped. The single
+  failure is `src/test/mockApiCore.portSelection.test.ts` — a
+  pre-existing test-infrastructure flake where port 5005 doesn't
+  release between vitest runs; unrelated to F-4. All 18 F-4 tests
+  + 5 BottomTabBar tests + 44 i18n parity tests pass.
+
+### Files
+
+- New TS types: `app/src/types/workflows.ts` (mirrors
+  `src/openhuman/workflows/types.rs`).
+- New RPC client: `app/src/services/api/workflows.ts` (list / get /
+  create / update / delete / enable / disable). Envelope-unwrap
+  helper mirrors `connectionsApi.ts`.
+- New Redux slice: `app/src/store/workflowsSlice.ts`. Thunks for
+  fetch / enable / disable / delete; per-id `pending` map; selectors;
+  `setHideStarterSection` action.
+- New page: `app/src/pages/Workflows/WorkflowsList.tsx`.
+- New components in `app/src/components/workflows/`:
+  `WorkflowCard.tsx`, `WorkflowEnableToggle.tsx`,
+  `WorkflowHealthBadge.tsx`, `WorkflowEmptyState.tsx`.
+- Modified: `app/src/AppRoutes.tsx` (registered `/workflows`
+  route).
+- Modified: `app/src/components/BottomTabBar.tsx` (inserted
+  workflows tab between connections and intelligence).
+- Modified: `app/src/store/index.ts` (wired
+  `workflowsSlice` + persist config for `hideStarterSection`).
+- Modified: `app/src/lib/i18n/en.ts` + 11 chunks
+  (`en-5.ts`, `ar-5.ts`, …, `zh-CN-5.ts`) with `nav.workflows`
+  + 23 page-content keys.
+- New tests: `WorkflowCard.test.tsx`, `WorkflowHealthBadge.test.tsx`,
+  `WorkflowsList.test.tsx`, `workflowsSlice.test.ts` + new
+  assertion in `BottomTabBar.test.tsx`.
+
+### **First live-test milestone** (per locked execution contract)
+
+After F-4 we pause for a checkpoint. The user should:
+1. Restart `pnpm dev:app`.
+2. Confirm the Workflows tab appears in the bottom bar between
+   Connections and Intelligence.
+3. Click it → `/workflows` renders the empty state.
+4. Click the "Ask OpenHuman to build a workflow" CTA → navigates to
+   `/chat`.
+5. (Optional) Inject a workflow via the dev console (
+   `await window.__OPENHUMAN_STORE__.dispatch(...)`) and verify the
+   row + toggle render. F-15 will provide the proper hero E2E once
+   the chat-driven creation path lands in F-14.
+
+### Next
+
+F-5 — Starter templates catalog. Bundles RU-1..RU-4 JSON +
+`workflows_list_starter_templates` RPC. F-4's
+`data-testid="starter-section-placeholder"` is the insertion point.

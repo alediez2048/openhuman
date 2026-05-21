@@ -6,6 +6,7 @@ const en: TranslationMap = {
   'nav.human': 'Human',
   'nav.chat': 'Chat',
   'nav.connections': 'Connections',
+  'nav.workflows': 'Workflows',
   'nav.memory': 'Intelligence',
   'nav.alerts': 'Alerts',
   'nav.rewards': 'Rewards',
@@ -2113,6 +2114,32 @@ const en: TranslationMap = {
   'settings.localModel.status.ollamaDocs': 'Ollama docs',
   'settings.localModel.status.thenRetry':
     'for setup instructions, then retry after your runtime is reachable.',
+
+  // Workflows (Phase 1)
+  'workflows.your_workflows': 'Your workflows',
+  'workflows.starter_workflows': 'Starter workflows',
+  'workflows.empty_title': 'No workflows yet',
+  'workflows.empty_subtitle':
+    'Describe what you want OpenHuman to do for you, and we’ll set up the workflow.',
+  'workflows.empty_cta': 'Ask OpenHuman to build a workflow',
+  'workflows.enable': 'Enable',
+  'workflows.disable': 'Disable',
+  'workflows.edit': 'Edit',
+  'workflows.run_now': 'Run now',
+  'workflows.delete': 'Delete',
+  'workflows.toggle_disabled_health': 'Cannot enable — needs: {reason}',
+  'workflows.health.ready': 'Ready',
+  'workflows.health.needs_connections': 'Needs connections',
+  'workflows.health.last_run_failed': 'Last run failed',
+  'workflows.health.session_expired': 'Session expired',
+  'workflows.card.runs_on_demand': 'Run on demand',
+  'workflows.card.last_run': 'Last run',
+  'workflows.card.next_run': 'Next run',
+  'workflows.card.step_count_one': '{count} step',
+  'workflows.card.step_count_other': '{count} steps',
+  'workflows.card.never_run': 'Never run',
+  'workflows.list_error': 'Couldn’t load your workflows.',
+  'workflows.list_retry': 'Retry',
 };
 
 export default en;

@@ -27,6 +27,7 @@ import socketReducer from './socketSlice';
 import themeReducer from './themeSlice';
 import threadReducer from './threadSlice';
 import { userScopedStorage } from './userScopedStorage';
+import workflowsReducer from './workflowsSlice';
 
 // Persisted slices write through `userScopedStorage` so each user's blob
 // lives at `${userId}:persist:<key>` instead of a single per-device blob
@@ -136,6 +137,12 @@ const persistedThreadReducer = persistReducer(threadPersistConfig, threadReducer
 const mascotPersistConfig = { key: 'mascot', storage, whitelist: ['color', 'voiceId'] };
 const persistedMascotReducer = persistReducer(mascotPersistConfig, mascotReducer);
 
+// Workflows list is server-derived and re-fetched on every visit, so it
+// is NOT persisted. The `hideStarterSection` user preference IS — F-5/F-6
+// surface the catalog toggle and the choice should survive reloads.
+const workflowsPersistConfig = { key: 'workflows', storage, whitelist: ['hideStarterSection'] };
+const persistedWorkflowsReducer = persistReducer(workflowsPersistConfig, workflowsReducer);
+
 export const store = configureStore({
   reducer: {
     socket: socketReducer,
@@ -152,6 +159,7 @@ export const store = configureStore({
     locale: persistedLocaleReducer,
     mascot: persistedMascotReducer,
     theme: persistedThemeReducer,
+    workflows: persistedWorkflowsReducer,
   },
   middleware: getDefaultMiddleware => {
     const middleware = getDefaultMiddleware({

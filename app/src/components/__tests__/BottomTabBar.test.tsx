@@ -94,6 +94,21 @@ describe('BottomTabBar', () => {
     expect(settingsBtn).toHaveAttribute('data-walkthrough', 'tab-settings');
   });
 
+  // F-4 — Workflows & Automations Phase 1. Assertion keys on the
+  // resolved `nav.workflows` label, not the icon glyph, so the icon
+  // can be swapped without breaking this test (OQ-6).
+  it('renders the Workflows tab between Connections and Intelligence', async () => {
+    await renderBottomTabBar('/home');
+    const buttons = screen.getAllByRole('button');
+    const labels = buttons.map(b => b.getAttribute('aria-label') ?? b.textContent?.trim() ?? '');
+    const workflowsIdx = labels.findIndex(l => l.includes('Workflows'));
+    const connectionsIdx = labels.findIndex(l => l.includes('Connections'));
+    const intelligenceIdx = labels.findIndex(l => l.includes('Intelligence'));
+    expect(workflowsIdx).toBeGreaterThan(-1);
+    expect(workflowsIdx).toBeGreaterThan(connectionsIdx);
+    expect(workflowsIdx).toBeLessThan(intelligenceIdx);
+  });
+
   it('returns null when there is no session token', async () => {
     const { container } = await renderBottomTabBar('/home', false);
     expect(container.firstChild).toBeNull();

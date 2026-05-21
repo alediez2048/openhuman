@@ -14,6 +14,7 @@ import Onboarding from './pages/onboarding/Onboarding';
 import Rewards from './pages/Rewards';
 import Settings from './pages/Settings';
 import Welcome from './pages/Welcome';
+import WorkflowsList from './pages/Workflows/WorkflowsList';
 
 const AppRoutes = () => {
   return (
@@ -78,6 +79,17 @@ const AppRoutes = () => {
         }
       />
       <Route path="/skills" element={<Navigate to="/connections" replace />} />
+
+      {/* Workflows & Automations Phase 1 (F-4). Lives between
+          /connections and /intelligence in the bottom-tab order. */}
+      <Route
+        path="/workflows"
+        element={
+          <ProtectedRoute requireAuth={true}>
+            <WorkflowsList />
+          </ProtectedRoute>
+        }
+      />
 
       {/* Unified chat = agent + connected web apps. Replaces the old
           /conversations and /accounts routes. */}
