@@ -57,6 +57,8 @@ mod health_tests;
 #[cfg(test)]
 mod ops_tests;
 #[cfg(test)]
+mod proposer_tests;
+#[cfg(test)]
 mod scheduler_tests;
 #[cfg(test)]
 mod store_tests;
@@ -64,14 +66,16 @@ mod store_tests;
 mod templates_tests;
 #[cfg(test)]
 mod types_tests;
+#[cfg(test)]
+mod validator_tests;
 
 pub use schemas::{all_workflows_controller_schemas, all_workflows_registered_controllers};
 pub use types::{
-    ActiveHours, AgentPromptConfig, CanvasPosition, Confidence, CreateWorkflowRequest, Edge,
-    HealthFilter, ListFilter, ListStarterTemplatesRequest, ManualInitiator, MessageFilter, Node,
-    NodeConfig, NodeKind, OnErrorPolicy, ProposalValidationError, Run, RunId, RunNowError,
-    RunStatus, RunStep, RunStepId, SkippedReason, StarterTemplate, StarterTemplateView,
-    StateAction, Trigger, TriggerSource, UpdateWorkflowRequest, Workflow, WorkflowDeletePreview,
-    WorkflowEditProposal, WorkflowHealth, WorkflowId, WorkflowOrigin, WorkflowPatch,
-    WorkflowProposal, WorkflowSettings, WorkflowStateProposal,
+    ActiveHours, AgentPromptConfig, CanvasPosition, Confidence, CreateWorkflowRequest,
+    DraftFailure, Edge, HealthFilter, ListFilter, ListStarterTemplatesRequest, ManualInitiator,
+    MessageFilter, Node, NodeConfig, NodeKind, OnErrorPolicy, ProposalValidationError, Run, RunId,
+    RunNowError, RunStatus, RunStep, RunStepId, SkippedReason, StarterTemplate,
+    StarterTemplateView, StateAction, Trigger, TriggerSource, UpdateWorkflowRequest, Workflow,
+    WorkflowDeletePreview, WorkflowEditProposal, WorkflowHealth, WorkflowId, WorkflowOrigin,
+    WorkflowPatch, WorkflowProposal, WorkflowSettings, WorkflowStateProposal,
 };

@@ -565,6 +565,62 @@ impl ProposalValidationError {
     }
 }
 
+/// Failure modes for the F-11 drafting retry loop (ADR-015).
+///
+/// `proposer::draft_with_retries` returns `Ok(WorkflowProposal)` after
+/// any attempt the validator accepts; otherwise one of these:
+///
+///  - [`DraftFailure::ValidationFailedAfterRetries`] — the drafting
+///    sub-agent ran the full `max_attempts` budget without producing a
+///    valid proposal. `last_error` carries the most recent validator
+///    error so the UI / call site can render a focused message.
+///  - [`DraftFailure::RunFailure`] — the sub-agent itself failed
+///    (LLM provider error, timeout, no `emit_proposal` call). Distinct
+///    from a validation failure so callers can branch on transient vs.
+///    semantic errors.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum DraftFailure {
+    /// All `max_attempts` validator runs failed; `last_error` is the
+    /// final attempt's error. Retry budget is 3 by FR-1.13.4 / ADR-015.
+    ValidationFailedAfterRetries {
+        attempts: u32,
+        last_error: ProposalValidationError,
+    },
+    /// The sub-agent itself failed (LLM provider error, hard timeout,
+    /// no `emit_proposal` tool call observed). The `reason` is a
+    /// short human-readable string; it must never carry proposal
+    /// content (NFR-2.4.4).
+    RunFailure { reason: String },
+}
+
+impl DraftFailure {
+    /// Stable lowercase snake_case label for metrics + log filtering.
+    pub fn kind_label(&self) -> &'static str {
+        match self {
+            Self::ValidationFailedAfterRetries { .. } => "validation_failed_after_retries",
+            Self::RunFailure { .. } => "run_failure",
+        }
+    }
+}
+
+impl std::fmt::Display for DraftFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ValidationFailedAfterRetries {
+                attempts,
+                last_error,
+            } => write!(
+                f,
+                "drafting failed after {attempts} attempts; last_error={last_error:?}"
+            ),
+            Self::RunFailure { reason } => write!(f, "drafting sub-agent failed: {reason}"),
+        }
+    }
+}
+
+impl std::error::Error for DraftFailure {}
+
 // ── RPC request / list-filter payloads (F-2) ────────────────────────────
 
 /// Request payload for `workflows_create`. Every field that isn't

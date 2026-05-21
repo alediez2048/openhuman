@@ -1057,3 +1057,142 @@ F-11 — drafting sub-agent + deterministic validator +
 allowlist (different from `agent_prompt`'s): `list_connections`
 + `workflow_list` + a synthetic `emit_proposal` tool. F-11
 mirrors F-10's negative allowlist test for that surface.
+
+---
+
+## 2026-05-21 — F-11 shipped: drafting sub-agent + validator + draft_with_retries
+
+### What landed
+
+- **`validator::validate(proposal, snapshot, phase)`** — pure
+  deterministic check, sub-50 ms on real proposals (NFR-2.1.5).
+  Covers every `ProposalValidationError` variant:
+  - `MissingRequiredField` for empty `name` / `description` /
+    `nodes`.
+  - `UnsupportedNodeKind { node_kind, phase }` via
+    `allowed_node_kinds(phase)` (Phase 1 = `[AgentPrompt]`; Phase 2
+    adds 7 kinds; Phase 3 adds `FanOut`).
+  - `InvalidCron { expr, parse_error }` — routes through
+    `cron::normalize_expression` (5-field → 6-field) so
+    `*/15 * * * *` parses without the caller knowing about the
+    Quartz translation.
+  - `EdgeIntegrity { from, to, reason }` — both `from` + `to` must
+    reference a node id in `nodes`; vacuously true with `edges = []`.
+  - `UnknownConnection { ref, candidates }` for both
+    `required_connections` and per-node `allowed_connections`
+    walks. `candidates` carries up to 3 fuzzy suggestions ranked
+    by Levenshtein, scoped to the same `ConnectionRef` mechanism
+    (a Composio typo doesn't suggest a Channel row).
+- **`fuzzy_candidates`** — pluggable helper, char-aware
+  Levenshtein, limit 3 + max edit distance 3. Tested via
+  `gmaill → [gmail]` (typo) + cross-mechanism rejection (a Channel
+  with `provider = "gmail"` is NOT suggested for a missing
+  Composio `gmail`).
+- **`Drafter` trait + `draft_with_retries(drafter, description,
+  snapshot, phase, max_attempts)`** — bounded-retry loop per
+  ADR-015:
+  - Trait-based for testability (`MockDrafter` in tests scripts
+    the response sequence; the production `AgentDrafter` is the
+    F-15 swap point with a clearly-labelled placeholder body).
+  - On each attempt, calls `build_system_prompt(snapshot, phase,
+    last_error)` and the drafter, then runs `validator::validate`.
+  - On Ok: returns the proposal.
+  - On `ProposalValidationError`: appends the error to the next
+    attempt's prompt and loops.
+  - On `RunFailure` from the drafter: surfaces immediately without
+    consuming retries (so a transient LLM 503 doesn't burn the
+    budget).
+  - After `max_attempts` validation failures:
+    `DraftFailure::ValidationFailedAfterRetries { attempts,
+    last_error }`.
+- **`build_system_prompt`** — pure function composing:
+  1. The `workflow_builder.md` base (bundled via `include_str!`
+     from `src/openhuman/agent/prompts/workflow_builder.md`).
+  2. A "Your connections" group-by-mechanism summary (Composio /
+     Channels / Webview / Built-in / MCP / Generic HTTP).
+  3. A Phase N constraints block listing
+     `allowed_node_kinds(phase)` so the model's output surface is
+     tight.
+  4. (Optional) A "PREVIOUS ATTEMPT FAILED" block carrying the
+     structured `ProposalValidationError` per
+     `format_validation_error` — deliberately terse, no proposal
+     content (NFR-2.4.4).
+- **Constants exposed for ADR/spec drift detection**:
+  - `DEFAULT_MAX_ATTEMPTS = 3` (ADR-015 / FR-1.13.4).
+  - `DEFAULT_ITERATION_CAP = 6` (FR-1.13.2).
+  - `DRAFTING_TOOL_ALLOWLIST = ["list_connections", "workflow_list", "emit_proposal"]`
+    (ADR-016). Test asserts the slice verbatim — adding a tool
+    requires updating ADR-016 + this test in lock-step.
+- **`DraftFailure` + `RunFailure` types** added to `types.rs`
+  with `Display + Error + kind_label` impls. `DraftFailure`
+  serialises with the standard `{"type": "snake_case", ...}`
+  tag pattern matching `ProposalValidationError`.
+- **`workflow_builder.md`** placeholder copied from
+  `Automations/Artifacts/prompts/` → `src/openhuman/agent/prompts/`
+  so `include_str!` resolves at build time. F-13 owns the file
+  content + Tauri bundling; the path is locked.
+
+### Deviations
+
+- **`AgentDrafter` is a labelled placeholder.** Same F-8
+  reasoning: invoking the agent from a non-Turn context
+  (standalone tests, future RPC entry points) requires
+  `Agent::from_config(...).run_single()` which exceeds F-11's
+  budget. The placeholder returns
+  `RunFailure { reason: "AgentDrafter is the F-11 placeholder;
+  live agent invocation lands at F-15." }` so any caller exercising
+  the live path observes a stable error code instead of looping
+  silently. F-15 swaps the body without changing the `Drafter`
+  trait signature.
+- **`metrics::counter!` deferred.** F-11 spec called for a
+  metrics counter per retry. The workspace doesn't currently
+  depend on `metrics`; replaced with structured `tracing::warn!`
+  on every validator failure (kind = label). A future
+  observability ticket can swap in the real counter against the
+  same log site.
+- **`emit_proposal` synthetic tool not separately wired.** F-11
+  spec described a tool the `run_subagent` wrapper intercepts.
+  In our trait-based design the synthetic step is collapsed into
+  the `Drafter::draft` return value — `Ok(WorkflowProposal)` IS
+  the "emit_proposal payload extracted". F-15's swap-in
+  `AgentDrafter` implementation will resurrect the synthetic
+  tool inside the live agent loop.
+
+### Verified
+
+- `cargo check` ✓
+- `cargo fmt` ✓
+- `cargo test --lib openhuman::workflows` — **138/138 passing**
+  (32 new: 19 validator + 13 proposer).
+
+### Files
+
+- New: `src/openhuman/agent/prompts/workflow_builder.md`
+  (placeholder copy from `Automations/Artifacts/prompts/`; F-13
+  owns).
+- New: `src/openhuman/workflows/validator_tests.rs` (19 tests).
+- New: `src/openhuman/workflows/proposer_tests.rs` (13 tests).
+- Modified: `src/openhuman/workflows/validator.rs` (filled the
+  F-1 stub: `validate`, `allowed_node_kinds`, `fuzzy_candidates`,
+  `levenshtein`, `validate_cron_expr`, `name_for_fuzzy`).
+- Modified: `src/openhuman/workflows/proposer.rs` (filled the
+  F-1 stub: `Drafter` trait, `draft_with_retries`,
+  `build_system_prompt`, `summarize_connections`,
+  `phase_constraints_block`, `format_validation_error`,
+  `AgentDrafter` placeholder, `RunFailure`).
+- Modified: `src/openhuman/workflows/types.rs` (added
+  `DraftFailure` with `kind_label` + `Display + Error`).
+- Modified: `src/openhuman/workflows/mod.rs` (declared
+  `validator_tests` + `proposer_tests` + re-exported
+  `DraftFailure`).
+
+### Next
+
+F-12 — propose-only agent tools. Six new tools register on the
+agent surface (`workflow_propose_create`, `_update`, `_delete`,
+`_enable`, `_disable`, `_run_now`). Each calls into
+`draft_with_retries` (create) or builds the matching
+`Workflow{Edit,State,Delete}Proposal` preview (others) and
+returns the JSON preview WITHOUT mutating. The F-10 negative
+allowlist test will expand to ALLOW `workflow_propose_*` names
+while still forbidding the seven mutation RPCs.
