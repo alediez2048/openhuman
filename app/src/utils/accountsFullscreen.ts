@@ -2,17 +2,22 @@
 export const AGENT_ACCOUNT_ID = '__agent__';
 
 /**
- * True when the route + selection means the app should render the
- * embedded webview edge-to-edge (no bottom tab bar, no reserved padding).
- * The Agent entry keeps the regular chrome visible so the user still has
- * access to the tab bar while chatting.
+ * Always returns `false` — the auto-hide-the-tab-bar fullscreen mode was
+ * disabled after live testing showed it strands the user inside an
+ * embedded provider webview with no visible way back. The CEF child
+ * webview composites natively above the HTML layer, so the prior
+ * 12px hover-strip reveal affordance was hidden behind the webview and
+ * unreachable; users reported "the connector connects but there's no
+ * easy exit" once Instagram / LinkedIn / etc. went fullscreen.
+ *
+ * Tab bar now stays mounted on every route. The kept signature lets
+ * callers (BottomTabBar, AppShell) opt in again later if a real
+ * fullscreen experience ships (with an HTML reveal handle positioned
+ * outside the webview rect).
  */
 export function isAccountsFullscreen(
-  pathname: string,
-  activeAccountId: string | null | undefined
+  _pathname: string,
+  _activeAccountId: string | null | undefined
 ): boolean {
-  if (!pathname.startsWith('/chat')) return false;
-  // Agent selected (or nothing selected → defaults to Agent) keeps chrome.
-  if (!activeAccountId || activeAccountId === AGENT_ACCOUNT_ID) return false;
-  return true;
+  return false;
 }

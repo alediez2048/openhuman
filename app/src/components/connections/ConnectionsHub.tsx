@@ -53,6 +53,33 @@ export default function ConnectionsHub() {
     dispatch(fetchConnections());
   }, [dispatch]);
 
+  // Background polling so delayed CEF cookie flushes (LinkedIn / WhatsApp /
+  // etc.) get picked up even after the BrowserAccountConnectModal's own
+  // post-close 2.5s grace period has expired. CEF batches cookie writes in
+  // memory and the flush-to-SQLite cadence is non-deterministic (observed
+  // 5–60s after sign-in) — without this, a "successfully signed in but Hub
+  // still says Connect" race-loses indefinitely until the user navigates
+  // away and back. 10s is a reasonable trade-off between freshness and
+  // RPC churn (the aggregator is ~50ms locally).
+  //
+  // Also refetch on window focus so returning to the app after signing in
+  // through some other path (e.g., opening LinkedIn in the system browser)
+  // picks up state immediately.
+  useEffect(() => {
+    const POLL_MS = 10_000;
+    const intervalId = window.setInterval(() => {
+      void dispatch(fetchConnections());
+    }, POLL_MS);
+    const onFocus = () => {
+      void dispatch(fetchConnections());
+    };
+    window.addEventListener('focus', onFocus);
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener('focus', onFocus);
+    };
+  }, [dispatch]);
+
   // Honor #channels hash from the /channels redirect (P0-4).
   useEffect(() => {
     if (location.hash !== '#channels') return;
@@ -118,16 +145,27 @@ export default function ConnectionsHub() {
 
   return (
     <div data-testid="connections-page-root" className="min-h-full p-4 pt-6 max-w-3xl mx-auto">
-      <header className="mb-4">
-        <h1 className="text-2xl font-display font-bold text-stone-900 dark:text-neutral-100">
-          Connections
-        </h1>
-        <p className="mt-1 text-sm text-stone-500 dark:text-neutral-400">
-          Every connected service OpenHuman can use, in one place.{' '}
-          {totalCount > 0 ? (
-            <span className="text-stone-700 dark:text-neutral-300">{totalCount} connected</span>
-          ) : null}
-        </p>
+      <header className="mb-4 flex items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-display font-bold text-stone-900 dark:text-neutral-100">
+            Connections
+          </h1>
+          <p className="mt-1 text-sm text-stone-500 dark:text-neutral-400">
+            Every connected service OpenHuman can use, in one place.{' '}
+            {totalCount > 0 ? (
+              <span className="text-stone-700 dark:text-neutral-300">{totalCount} connected</span>
+            ) : null}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => dispatch(fetchConnections())}
+          disabled={loadStatus === 'loading'}
+          className="px-3 py-1.5 text-xs text-stone-700 dark:text-neutral-200 bg-white dark:bg-neutral-900 border border-stone-300 dark:border-neutral-700 rounded-lg shadow-subtle hover:bg-stone-50 dark:hover:bg-neutral-800 disabled:opacity-50"
+          data-testid="connections-refresh-button"
+          title="Refresh — useful if a browser sign-in hasn’t shown as connected yet (CEF flushes cookies asynchronously).">
+          {loadStatus === 'loading' ? 'Refreshing…' : 'Refresh'}
+        </button>
       </header>
 
       <div className="mb-4">
