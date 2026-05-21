@@ -12,7 +12,8 @@
 use crate::openhuman::config::Config;
 use crate::openhuman::workflows::ops;
 use crate::openhuman::workflows::types::{
-    CreateWorkflowRequest, ListFilter, UpdateWorkflowRequest, Workflow, WorkflowId,
+    CreateWorkflowRequest, ListFilter, ListStarterTemplatesRequest, StarterTemplateView,
+    UpdateWorkflowRequest, Workflow, WorkflowId,
 };
 use crate::rpc::RpcOutcome;
 
@@ -75,4 +76,17 @@ pub async fn workflows_disable(
     id: WorkflowId,
 ) -> Result<RpcOutcome<Workflow>, String> {
     ops::disable(config, id).await.map_err(|e| e.to_string())
+}
+
+/// `openhuman.workflows_list_starter_templates` — read-only catalog
+/// query (F-5 / ADR-008). Returns the bundled RU-* templates the user
+/// hasn't already seeded, with `missing_connections` computed against
+/// the live aggregator snapshot.
+pub async fn workflows_list_starter_templates(
+    config: &Config,
+    req: ListStarterTemplatesRequest,
+) -> Result<RpcOutcome<Vec<StarterTemplateView>>, String> {
+    ops::list_starter_templates(config, req.phase)
+        .await
+        .map_err(|e| e.to_string())
 }

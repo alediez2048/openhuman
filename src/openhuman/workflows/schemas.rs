@@ -16,13 +16,13 @@ use crate::core::all::{ControllerFuture, RegisteredController};
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 use crate::openhuman::config::rpc as config_rpc;
 use crate::openhuman::workflows::types::{
-    CreateWorkflowRequest, ListFilter, UpdateWorkflowRequest,
+    CreateWorkflowRequest, ListFilter, ListStarterTemplatesRequest, UpdateWorkflowRequest,
 };
 use crate::rpc::RpcOutcome;
 use serde::Serialize;
 use serde_json::{Map, Value};
 
-/// All controller schemas declared by the workflows domain (F-2).
+/// All controller schemas declared by the workflows domain (F-2 + F-5).
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
     vec![
         schemas("list"),
@@ -32,6 +32,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("delete"),
         schemas("enable"),
         schemas("disable"),
+        schemas("list_starter_templates"),
     ]
 }
 
@@ -66,6 +67,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("disable"),
             handler: handle_disable,
+        },
+        RegisteredController {
+            schema: schemas("list_starter_templates"),
+            handler: handle_list_starter_templates,
         },
     ]
 }
@@ -202,6 +207,23 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 required: true,
             }],
         },
+        "list_starter_templates" => ControllerSchema {
+            namespace: "workflows",
+            function: "list_starter_templates",
+            description: "Read-only catalog of bundled RU-* starter templates filtered by phase and deduplicated against the user's existing Seed{template_id} workflows. Each row carries missing_connections computed against the live aggregator snapshot.",
+            inputs: vec![FieldSchema {
+                name: "request",
+                ty: TypeSchema::Ref("ListStarterTemplatesRequest"),
+                comment: "Optional phase override (defaults to the current Phase server-side).",
+                required: false,
+            }],
+            outputs: vec![FieldSchema {
+                name: "templates",
+                ty: TypeSchema::Array(Box::new(TypeSchema::Ref("StarterTemplateView"))),
+                comment: "Catalog rows the F-6 UI renders. F-6's [Add] flow passes raw_payload back into workflows_create.",
+                required: true,
+            }],
+        },
         _other => ControllerSchema {
             namespace: "workflows",
             function: "unknown",
@@ -284,6 +306,24 @@ fn handle_disable(params: Map<String, Value>) -> ControllerFuture {
         let config = config_rpc::load_config_with_timeout().await?;
         let id = required_string(&params, "id")?;
         to_json(crate::openhuman::workflows::rpc::workflows_disable(&config, id).await?)
+    })
+}
+
+fn handle_list_starter_templates(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        // The `request` param is optional — both unset and `{}` map to
+        // the default `ListStarterTemplatesRequest` (phase=None).
+        let req: ListStarterTemplatesRequest = match params.get("request") {
+            Some(v) if !v.is_null() => {
+                serde_json::from_value(v.clone()).map_err(|e| format!("invalid `request`: {e}"))?
+            }
+            _ => ListStarterTemplatesRequest::default(),
+        };
+        to_json(
+            crate::openhuman::workflows::rpc::workflows_list_starter_templates(&config, req)
+                .await?,
+        )
     })
 }
 

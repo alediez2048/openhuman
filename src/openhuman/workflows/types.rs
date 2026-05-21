@@ -595,3 +595,79 @@ pub enum HealthFilter {
     LastRunFailed,
     SessionExpired,
 }
+
+// ── Starter templates (F-5) ────────────────────────────────────────────
+
+/// Deserialized shape of a `templates/*.json` file. The trigger / nodes
+/// / edges / settings fields are kept as opaque `serde_json::Value` so
+/// the catalog [Add] flow can pass them through to `workflows_create`
+/// untouched — that lets the JSON files include forward-compat fields
+/// (e.g. `nodes[].name`, per-node `on_error`) that Phase 1's typed
+/// shapes don't model yet without rejecting the file at parse time.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct StarterTemplate {
+    pub template_id: String,
+    /// Minimum Phase number required to support the template's node
+    /// kinds + trigger. Phase 1 ships with `min_phase = 1` everywhere;
+    /// Phase 2+ templates land later.
+    pub min_phase: u32,
+    pub name: String,
+    pub description: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    /// Cron / manual / Phase-2-stub trigger payload. Used by the
+    /// catalog for `trigger_summary` derivation and passed through to
+    /// `workflows_create` on [Add].
+    pub trigger: serde_json::Value,
+    /// Opaque node list. Phase 1's typed `Vec<Node>` doesn't model
+    /// every field the artifact templates include (`name`,
+    /// per-node `on_error`); keeping this as JSON avoids losing those
+    /// fields on the round-trip.
+    pub nodes: serde_json::Value,
+    #[serde(default)]
+    pub edges: serde_json::Value,
+    #[serde(default)]
+    pub settings: serde_json::Value,
+    /// Connections the workflow needs to be `Ready`. The catalog
+    /// computes `missing_connections` against the current snapshot.
+    pub required_connections: Vec<ConnectionRef>,
+    #[serde(default)]
+    pub rationale_at_seed: Vec<String>,
+}
+
+/// Catalog response row — what the F-6 `StarterWorkflowsSection`
+/// renders, and what `workflows_list_starter_templates` returns.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct StarterTemplateView {
+    pub template_id: String,
+    pub name: String,
+    pub description: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    /// Humanized cron / trigger summary (e.g. `"Weekdays at 8:00"`,
+    /// `"Run on demand"`). Computed server-side so the UI doesn't pull
+    /// a cron-parsing dependency.
+    pub trigger_summary: String,
+    /// Every connection the template requires.
+    pub required_connections: Vec<ConnectionRef>,
+    /// Subset of `required_connections` that the user does NOT have
+    /// in a "live" state per the Phase 0 honest-connection truth
+    /// table. The catalog card surfaces these as amber pills.
+    pub missing_connections: Vec<ConnectionRef>,
+    #[serde(default)]
+    pub rationale_at_seed: Vec<String>,
+    /// Full template body as JSON — F-6's [Add] button passes this
+    /// straight back to `workflows_create` so the round-trip doesn't
+    /// require parsing/reserializing on the client.
+    pub raw_payload: serde_json::Value,
+}
+
+/// Request payload for `workflows_list_starter_templates`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ListStarterTemplatesRequest {
+    /// Override the current Phase (defaults to Phase 1 server-side).
+    /// Mainly useful for tests + future cross-phase UIs.
+    #[serde(default)]
+    pub phase: Option<u32>,
+}

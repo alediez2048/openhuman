@@ -455,3 +455,125 @@ async fn delete_on_unknown_id_is_idempotent() {
         .value;
     assert!(!removed);
 }
+
+// ── F-5: list_starter_templates ────────────────────────────────────────
+
+#[tokio::test]
+async fn list_starter_templates_returns_all_four_on_a_fresh_workspace() {
+    let (_dir, config) = config_with_temp_workspace();
+    let views = ops::list_starter_templates(&config, Some(1))
+        .await
+        .unwrap()
+        .value;
+    assert_eq!(views.len(), 4);
+    let ids: std::collections::HashSet<_> = views.iter().map(|v| v.template_id.clone()).collect();
+    assert!(ids.contains("ru-1-founder-morning-digest"));
+    assert!(ids.contains("ru-2-linkedin-engagement-queue"));
+    assert!(ids.contains("ru-3-spotify-friday-five"));
+    assert!(ids.contains("ru-4-jira-sprint-retro"));
+}
+
+#[tokio::test]
+async fn list_starter_templates_dedups_added_seed_workflows() {
+    let (_dir, config) = config_with_temp_workspace();
+
+    // Promote RU-1 into the user's table by mimicking what F-6's [Add]
+    // button will do: create a workflow with origin = Seed{ru-1}.
+    let mut req = sample_create(WorkflowOrigin::Seed {
+        template_id: "ru-1-founder-morning-digest".into(),
+    });
+    req.name = "Founder morning digest".into();
+    ops::create(&config, req).await.unwrap();
+
+    let views = ops::list_starter_templates(&config, Some(1))
+        .await
+        .unwrap()
+        .value;
+    assert_eq!(views.len(), 3, "RU-1 must be deduped out after [Add]");
+    assert!(views
+        .iter()
+        .all(|v| v.template_id != "ru-1-founder-morning-digest"));
+}
+
+#[tokio::test]
+async fn list_starter_templates_re_includes_deleted_templates() {
+    let (_dir, config) = config_with_temp_workspace();
+    let req = sample_create(WorkflowOrigin::Seed {
+        template_id: "ru-2-linkedin-engagement-queue".into(),
+    });
+    let created = ops::create(&config, req).await.unwrap().value;
+    assert_eq!(
+        ops::list_starter_templates(&config, Some(1))
+            .await
+            .unwrap()
+            .value
+            .len(),
+        3
+    );
+
+    ops::delete(&config, created.id.clone()).await.unwrap();
+    assert_eq!(
+        ops::list_starter_templates(&config, Some(1))
+            .await
+            .unwrap()
+            .value
+            .len(),
+        4,
+        "deleted seed workflows release their template back into the catalog"
+    );
+}
+
+#[tokio::test]
+async fn list_starter_templates_honors_min_phase_filter() {
+    let (_dir, config) = config_with_temp_workspace();
+    // Every Phase-1 template has min_phase=1; phase=0 must filter them all.
+    let views = ops::list_starter_templates(&config, Some(0))
+        .await
+        .unwrap()
+        .value;
+    assert!(views.is_empty());
+}
+
+#[tokio::test]
+async fn list_starter_templates_populates_missing_connections() {
+    let (_dir, config) = config_with_temp_workspace();
+    // Test workspace has no connections registered, so every required
+    // connection must surface in missing_connections.
+    let views = ops::list_starter_templates(&config, Some(1))
+        .await
+        .unwrap()
+        .value;
+    for v in views {
+        assert!(
+            !v.missing_connections.is_empty(),
+            "template `{}` should report missing connections on an empty workspace",
+            v.template_id
+        );
+        assert_eq!(
+            v.missing_connections.len(),
+            v.required_connections.len(),
+            "with zero user connections, every required must be missing"
+        );
+    }
+}
+
+#[tokio::test]
+async fn list_starter_templates_carries_trigger_summary_and_raw_payload() {
+    let (_dir, config) = config_with_temp_workspace();
+    let views = ops::list_starter_templates(&config, Some(1))
+        .await
+        .unwrap()
+        .value;
+    for v in views {
+        assert!(
+            !v.trigger_summary.is_empty(),
+            "template `{}` must populate trigger_summary",
+            v.template_id
+        );
+        assert!(
+            v.raw_payload.is_object(),
+            "template `{}` raw_payload must be a JSON object (consumed by workflows_create)",
+            v.template_id
+        );
+    }
+}

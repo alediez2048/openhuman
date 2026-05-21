@@ -1,0 +1,46 @@
+{
+  "template_id": "ru-4-jira-sprint-retro",
+  "min_phase": 1,
+  "name": "Sprint retro summary",
+  "description": "Every other Friday at 4pm, pull closed Jira tickets from the past two weeks, group them by epic, and publish a retro summary in your voice to your team's Notion 'Sprint Reviews' database.",
+  "tags": ["team", "sprint", "retro", "voice"],
+  "trigger": {
+    "type": "cron",
+    "expr": "0 16 */14 * 5",
+    "tz": null,
+    "active_hours": null
+  },
+  "nodes": [
+    {
+      "id": "n1",
+      "kind": "agent_prompt",
+      "config": {
+        "kind": "agent_prompt",
+        "prompt": "You are publishing the team's biweekly sprint retro. Sequence:\n\n1. Read closed Jira tickets from the past 14 days (status transitioned to `Done` / `Closed`):\n   - Capture title, key, assignee, epic, story points (if present), and the cycle time from `In Progress` → `Done`.\n2. Group the tickets by epic. For each epic with ≥2 closed tickets in the window, surface:\n   - Total tickets closed + sum of story points.\n   - One-line summary of the through-line: what shipped, who carried it, any pattern (e.g., 'three follow-ups to last sprint's auth migration').\n3. Compose a retro post in the user's voice:\n   - Title: `Sprint retro — <ISO date range>`.\n   - Three sections: 'What shipped' (epic-grouped bullets), 'Patterns' (cross-epic observations), 'What's open going into next sprint' (top 3 in-progress tickets carried over).\n   - Length: 200–400 words. Reference memory for team context (people, recurring blockers).\n4. Create a new page in the user's Notion `Sprint Reviews` database with that body as the page content.\n\nConstraints:\n- Read-only on Jira — never reassign, comment, or close anything.\n- One Notion page per run. Do not re-open or edit existing retro pages.\n- If the Notion database isn't accessible (auth expired), produce the retro as a Markdown message and ask the user to paste it manually.",
+        "allowed_connections": [
+          { "type": "composio", "toolkit_id": "jira" },
+          { "type": "composio", "toolkit_id": "notion" }
+        ],
+        "iteration_cap": 15,
+        "model_tier": null
+      },
+      "position": null
+    }
+  ],
+  "edges": [],
+  "settings": {
+    "timeout_secs": 1200,
+    "on_error": "halt"
+  },
+  "required_connections": [
+    { "type": "composio", "toolkit_id": "jira" },
+    { "type": "composio", "toolkit_id": "notion" }
+  ],
+  "rationale_at_seed": [
+    "Cron `0 16 */14 * 5` fires every 14th of the month at 4pm IF it lands on a Friday — best Phase 1 approximation of 'every other Friday'. True biweekly cadence (last-Friday-was-N-days-ago) needs Phase 2's stateful trigger, documented as a follow-up.",
+    "iteration_cap=15 is generous because the agent pages through Jira (per-epic queries) and writes a single sizeable Notion page.",
+    "Timeout 1200s (20 min) accommodates the larger Jira fetch + Notion write; F-8's 5-min default would be too tight.",
+    "Notion database is the egress; the user pre-creates the `Sprint Reviews` database and grants access via Composio. The agent picks the database by name on first run.",
+    "Composio surfaces both Jira and Notion — no browser-account required. Both have strong read+write API support."
+  ]
+}

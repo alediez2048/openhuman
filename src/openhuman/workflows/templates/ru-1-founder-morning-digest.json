@@ -1,0 +1,50 @@
+{
+  "template_id": "ru-1-founder-morning-digest",
+  "min_phase": 1,
+  "name": "Founder morning digest",
+  "description": "Every weekday at 8am, scan unread Gmail, your assigned Linear issues, and unread Slack DMs. Using memory of what you're focused on this week, OpenHuman sends a single triage message to your Telegram.",
+  "tags": ["productivity", "morning-routine", "summary"],
+  "trigger": {
+    "type": "cron",
+    "expr": "0 8 * * 1-5",
+    "tz": null,
+    "active_hours": null
+  },
+  "nodes": [
+    {
+      "id": "n1",
+      "kind": "agent_prompt",
+      "config": {
+        "kind": "agent_prompt",
+        "prompt": "You are summarizing the user's morning attention queue. Sequence:\n\n1. Read unread Gmail messages from the last 24 hours. Skim subjects and senders; ignore newsletters, automated notifications, and bulk marketing.\n2. Read Linear issues assigned to the user with status `open` or `in_progress`. Note any with `priority >= high` or `due_date` within the next 48 hours.\n3. Read unread Slack DMs from the last 24 hours (DMs only — not channels).\n4. Cross-reference everything you've read against the user's memory of what they're working on this week. Surface only items that intersect their current priorities, mention specific projects/people they're invested in, or contain blockers.\n5. Compose a single Telegram message (max 600 chars) structured as:\n   - One headline line: the single most attention-worthy item today.\n   - 3 to 5 one-line bullets, ordered by urgency. Reference the source (Gmail / Linear / Slack) inline.\n   - A trailing summary line: `Skipped N low-priority items.`\n6. Send the message to the user via their connected Telegram channel.\n\nConstraints:\n- Read-only on Gmail, Linear, and Slack. Do not reply, archive, or label anything.\n- Send exactly one Telegram message. Do not send follow-ups in this run.\n- If any data source is unreachable (e.g., Slack workspace expired), note it in the message and proceed with the others.",
+        "allowed_connections": [
+          { "type": "composio", "toolkit_id": "gmail" },
+          { "type": "composio", "toolkit_id": "linear" },
+          { "type": "composio", "toolkit_id": "slack" },
+          { "type": "channel", "provider": "telegram", "channel_id": "" }
+        ],
+        "iteration_cap": 12,
+        "model_tier": null
+      },
+      "position": null
+    }
+  ],
+  "edges": [],
+  "settings": {
+    "timeout_secs": 600,
+    "on_error": "halt"
+  },
+  "required_connections": [
+    { "type": "composio", "toolkit_id": "gmail" },
+    { "type": "composio", "toolkit_id": "linear" },
+    { "type": "composio", "toolkit_id": "slack" },
+    { "type": "channel", "provider": "telegram", "channel_id": "" }
+  ],
+  "rationale_at_seed": [
+    "Cron `0 8 * * 1-5` fires at 8:00 on Monday–Friday. Timezone null defaults to UTC; the user can override via the workflow's edit dialog.",
+    "Single agent_prompt node — the agent calls Gmail / Linear / Slack tool surfaces sequentially within one execution. Phase 1 doesn't yet split steps across nodes.",
+    "iteration_cap = 12 because there are 4 distinct connection reads + 1 send + headroom for retries within the run.",
+    "Memory is implicitly available (every agent_prompt sub-agent has memory in its baseline toolset).",
+    "Required connections cover both ingest (Gmail / Linear / Slack via Composio) and the egress (Telegram channel)."
+  ]
+}

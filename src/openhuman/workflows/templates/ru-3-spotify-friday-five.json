@@ -1,0 +1,46 @@
+{
+  "template_id": "ru-3-spotify-friday-five",
+  "min_phase": 1,
+  "name": "Friday Five",
+  "description": "Every Friday at 5pm, look at the songs you added to Spotify this week. Pick the top three by listen count, write a one-line description for each in your voice, and post the round-up to your personal Discord as Friday Five.",
+  "tags": ["social", "music", "voice", "weekly"],
+  "trigger": {
+    "type": "cron",
+    "expr": "0 17 * * 5",
+    "tz": null,
+    "active_hours": null
+  },
+  "nodes": [
+    {
+      "id": "n1",
+      "kind": "agent_prompt",
+      "config": {
+        "kind": "agent_prompt",
+        "prompt": "You are publishing the user's Friday Five — a weekly music round-up in their voice. Sequence:\n\n1. Read the user's Spotify activity for the past 7 days via the Composio Spotify surface:\n   - Songs added to playlists or saved tracks since last Friday.\n   - Listen counts per track over the same window (use `recently_played` to estimate frequency).\n2. From the newly-added set, pick the top 3 by listen frequency. Tiebreak by recency.\n3. For each pick, write one short line in the user's voice:\n   - Reference memory: mention why this track fits the user's current taste, current project mood, or a person they associate with the artist.\n   - 1 sentence per song, ≤120 chars.\n   - Never invent biographical facts about the artist.\n4. Compose a single Discord message titled `Friday Five — <ISO date>` listing the 3 tracks with their one-line descriptions and Spotify URLs.\n5. Send the message to the user's connected Discord (DM or the agreed personal channel).\n\nConstraints:\n- Read-only on Spotify — do not modify playlists or library state.\n- Single Discord message — no threading, no reactions, no follow-ups.\n- If Spotify auth is expired, surface a Discord one-liner asking the user to reconnect, and skip the picks.",
+        "allowed_connections": [
+          { "type": "composio", "toolkit_id": "spotify" },
+          { "type": "composio", "toolkit_id": "discord" }
+        ],
+        "iteration_cap": 10,
+        "model_tier": null
+      },
+      "position": null
+    }
+  ],
+  "edges": [],
+  "settings": {
+    "timeout_secs": 600,
+    "on_error": "halt"
+  },
+  "required_connections": [
+    { "type": "composio", "toolkit_id": "spotify" },
+    { "type": "composio", "toolkit_id": "discord" }
+  ],
+  "rationale_at_seed": [
+    "Cron `0 17 * * 5` fires at 5pm Friday — chosen so the round-up lands as the user transitions out of work mode.",
+    "Top-3 (not top-5) keeps the message tight and posts well in Discord's preview card.",
+    "Composio surfaces for both Spotify (read history) and Discord (post message) — no browser-account required.",
+    "iteration_cap=10: Spotify reads + 3 contextual lookups + Discord send + retry headroom.",
+    "Memory is the secret sauce — without it the picks read generic; with it they read like the user wrote them."
+  ]
+}

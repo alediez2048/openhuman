@@ -1,0 +1,46 @@
+{
+  "template_id": "ru-2-linkedin-engagement-queue",
+  "min_phase": 1,
+  "name": "LinkedIn engagement queue",
+  "description": "Every weekday at 11am, scan your LinkedIn feed for the 5 most relevant posts in your industry, draft thoughtful comments in your voice, and queue them in Telegram for you to review and post manually.",
+  "tags": ["social", "linkedin", "voice", "engagement"],
+  "trigger": {
+    "type": "cron",
+    "expr": "0 11 * * 1-5",
+    "tz": null,
+    "active_hours": null
+  },
+  "nodes": [
+    {
+      "id": "n1",
+      "kind": "agent_prompt",
+      "config": {
+        "kind": "agent_prompt",
+        "prompt": "You are surfacing daily LinkedIn engagement opportunities. Sequence:\n\n1. Open the user's LinkedIn home feed (via the connected browser account) and scan the top 30 posts. Skip ads, reshares with no commentary, and anything that has already been liked or commented by the user.\n2. Cross-reference the surviving posts against the user's memory of their current focus (industry, recent topics, companies and people they engage with). Rank the top 5 by relevance.\n3. For each of the top 5, draft a thoughtful comment in the user's voice:\n   - Match their existing tone (warm but direct; reference memory).\n   - 1–3 sentences. Add a specific observation, question, or counterpoint — never a generic compliment.\n   - Never fabricate facts about the user's experience or the original poster.\n4. Compose a single Telegram message structured as:\n   - One headline line: `5 LinkedIn comments queued for review.`\n   - For each of the 5 candidates, three lines: original-post one-line summary + author name, the drafted comment, the LinkedIn post URL.\n5. Send the message to the user's connected Telegram channel for swipe-approval. The user copy-pastes manually back into LinkedIn — Phase 1 does not auto-post.\n\nConstraints:\n- Read-only on LinkedIn — no auto-comment, no auto-like, no auto-follow.\n- Drafts are suggestions only. The user owns the decision to post.\n- If LinkedIn is unreachable (login expired), note it in the Telegram message and skip the rest.",
+        "allowed_connections": [
+          { "type": "webview", "provider": "linkedin", "account_id": "" },
+          { "type": "channel", "provider": "telegram", "channel_id": "" }
+        ],
+        "iteration_cap": 12,
+        "model_tier": null
+      },
+      "position": null
+    }
+  ],
+  "edges": [],
+  "settings": {
+    "timeout_secs": 900,
+    "on_error": "halt"
+  },
+  "required_connections": [
+    { "type": "webview", "provider": "linkedin", "account_id": "" },
+    { "type": "channel", "provider": "telegram", "channel_id": "" }
+  ],
+  "rationale_at_seed": [
+    "Cron `0 11 * * 1-5` fires at 11:00 Monday–Friday so the queue lands before lunch — peak time to actually engage.",
+    "Phase 1 degradation: the 'true' RU-2 design uses `await_human_approval` for swipe approval. That node kind ships in Phase 3; the Phase 1 version queues drafts in Telegram and the user copies them back into LinkedIn manually.",
+    "Browser account for LinkedIn is required because Composio's LinkedIn surface does not expose the user's feed; scraping happens through the embedded CEF webview.",
+    "Telegram is the queue surface because it's the user's chosen morning channel (matches the RU-1 digest). Both run-anywhere alternatives (Slack, Discord) work — Telegram is the curated default.",
+    "iteration_cap=12 covers: open feed → 30 reads → 5 deeper context lookups → 1 Telegram send + retry headroom."
+  ]
+}

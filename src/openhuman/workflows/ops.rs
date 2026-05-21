@@ -15,14 +15,23 @@ use crate::openhuman::config::Config;
 use crate::openhuman::connections::aggregator;
 use crate::openhuman::workflows::health::{self, ConnectionsSnapshot};
 use crate::openhuman::workflows::store;
+use crate::openhuman::workflows::templates;
 use crate::openhuman::workflows::types::{
-    CreateWorkflowRequest, ListFilter, UpdateWorkflowRequest, Workflow, WorkflowHealth, WorkflowId,
-    WorkflowOrigin,
+    CreateWorkflowRequest, ListFilter, StarterTemplate, StarterTemplateView, Trigger,
+    UpdateWorkflowRequest, Workflow, WorkflowHealth, WorkflowId, WorkflowOrigin,
 };
 use crate::rpc::RpcOutcome;
 use anyhow::{anyhow, Result};
 use chrono::Utc;
+use std::collections::HashSet;
 use uuid::Uuid;
+
+/// Phase the workflows engine reports as "current". Hard-coded to 1
+/// for Phase 1; F-15 will surface this via `about_app::catalog` so the
+/// catalog filter doesn't require code-level edits to advance.
+///
+/// TODO(F-15): replace with `about_app::current_phase()`.
+const CURRENT_PHASE: u32 = 1;
 
 /// Build a `ConnectionsSnapshot` from the live aggregator output. On
 /// aggregator failure (network blip during a Composio fan-out, etc.)
@@ -264,4 +273,96 @@ async fn set_enabled_to(
 
     let log = format!("workflows_{action} id={id}");
     Ok(RpcOutcome::single_log(workflow, log))
+}
+
+/// `workflows_list_starter_templates` — read-only catalog query.
+///
+/// Pipeline: parse the bundled templates → filter by `phase` (defaults
+/// to [`CURRENT_PHASE`]) → dedup against the user's existing
+/// `Seed { template_id }` workflows → compute `missing_connections`
+/// against the live aggregator snapshot → return one
+/// [`StarterTemplateView`] per surviving template.
+///
+/// Per ADR-008 the catalog is **read-only**: this op never persists
+/// anything. F-6's [Add] button calls `workflows_create` with the
+/// view's `raw_payload`.
+pub async fn list_starter_templates(
+    config: &Config,
+    phase: Option<u32>,
+) -> Result<RpcOutcome<Vec<StarterTemplateView>>> {
+    let phase = phase.unwrap_or(CURRENT_PHASE);
+    let bundled = templates::all_bundled();
+    let user_seeded: HashSet<String> = store::list_seed_origins(config)?.into_iter().collect();
+    let snapshot = current_snapshot(config).await;
+
+    let views: Vec<StarterTemplateView> = bundled
+        .into_iter()
+        .filter(|t| t.min_phase <= phase)
+        .filter(|t| !user_seeded.contains(&t.template_id))
+        .map(|t| build_view(t, &snapshot))
+        .collect();
+
+    let log = format!(
+        "workflows_list_starter_templates phase={phase} returned={count}",
+        count = views.len()
+    );
+    Ok(RpcOutcome::single_log(views, log))
+}
+
+/// Assemble a [`StarterTemplateView`] from a parsed [`StarterTemplate`]
+/// + the current connections snapshot. The `raw_payload` is the
+/// serde_json representation of the original template body — F-6's
+/// [Add] flow passes it straight into `workflows_create` without
+/// reparsing.
+fn build_view(template: StarterTemplate, snapshot: &ConnectionsSnapshot) -> StarterTemplateView {
+    let trigger_summary = summarize_trigger_value(&template.trigger);
+    let missing_connections: Vec<_> = template
+        .required_connections
+        .iter()
+        .filter(|r| !snapshot.is_connected(r))
+        .cloned()
+        .collect();
+    let raw_payload = serde_json::to_value(&template).unwrap_or(serde_json::Value::Null);
+
+    StarterTemplateView {
+        template_id: template.template_id,
+        name: template.name,
+        description: template.description,
+        tags: template.tags,
+        trigger_summary,
+        required_connections: template.required_connections,
+        missing_connections,
+        rationale_at_seed: template.rationale_at_seed,
+        raw_payload,
+    }
+}
+
+/// Cheap, deterministic trigger summary. Phase 1 produces a stable
+/// label per [`Trigger`] variant; F-14's cron-humanizer hook can land
+/// the full natural-language string later without changing this
+/// surface.
+fn summarize_trigger_value(value: &serde_json::Value) -> String {
+    // Best-effort: deserialize into the typed `Trigger` shape. If the
+    // template carries a Phase-2 variant we don't model yet, fall back
+    // to the raw `type` discriminator.
+    match serde_json::from_value::<Trigger>(value.clone()) {
+        Ok(Trigger::Cron { expr, tz, .. }) => match tz.as_deref() {
+            Some(z) => format!("{expr} ({z})"),
+            None => expr,
+        },
+        Ok(Trigger::Manual) => "Run on demand".into(),
+        Ok(Trigger::Webhook { target_path, .. }) => format!("Webhook → {target_path}"),
+        Ok(Trigger::ComposioEvent {
+            toolkit,
+            trigger_id,
+        }) => {
+            format!("{toolkit}: {trigger_id}")
+        }
+        Ok(Trigger::ChannelMessage { provider, .. }) => format!("{provider} message"),
+        Err(_) => value
+            .get("type")
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+            .unwrap_or_else(|| "Custom trigger".into()),
+    }
 }

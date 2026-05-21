@@ -44,6 +44,7 @@ pub mod rpc;
 pub mod scheduler;
 pub mod schemas;
 pub mod store;
+pub mod templates;
 pub mod types;
 pub mod validator;
 
@@ -56,14 +57,17 @@ mod ops_tests;
 #[cfg(test)]
 mod store_tests;
 #[cfg(test)]
+mod templates_tests;
+#[cfg(test)]
 mod types_tests;
 
 pub use schemas::{all_workflows_controller_schemas, all_workflows_registered_controllers};
 pub use types::{
     ActiveHours, AgentPromptConfig, CanvasPosition, Confidence, CreateWorkflowRequest, Edge,
-    HealthFilter, ListFilter, MessageFilter, Node, NodeConfig, NodeKind, OnErrorPolicy,
-    ProposalValidationError, Run, RunId, RunStatus, RunStep, RunStepId, SkippedReason, StateAction,
-    Trigger, TriggerSource, UpdateWorkflowRequest, Workflow, WorkflowDeletePreview,
-    WorkflowEditProposal, WorkflowHealth, WorkflowId, WorkflowOrigin, WorkflowPatch,
-    WorkflowProposal, WorkflowSettings, WorkflowStateProposal,
+    HealthFilter, ListFilter, ListStarterTemplatesRequest, MessageFilter, Node, NodeConfig,
+    NodeKind, OnErrorPolicy, ProposalValidationError, Run, RunId, RunStatus, RunStep, RunStepId,
+    SkippedReason, StarterTemplate, StarterTemplateView, StateAction, Trigger, TriggerSource,
+    UpdateWorkflowRequest, Workflow, WorkflowDeletePreview, WorkflowEditProposal, WorkflowHealth,
+    WorkflowId, WorkflowOrigin, WorkflowPatch, WorkflowProposal, WorkflowSettings,
+    WorkflowStateProposal,
 };

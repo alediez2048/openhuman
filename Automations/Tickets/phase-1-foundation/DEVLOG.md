@@ -343,3 +343,101 @@ After F-4 we pause for a checkpoint. The user should:
 F-5 — Starter templates catalog. Bundles RU-1..RU-4 JSON +
 `workflows_list_starter_templates` RPC. F-4's
 `data-testid="starter-section-placeholder"` is the insertion point.
+
+---
+
+## F-5 — Starter templates catalog + RU-1..RU-4 + `workflows_list_starter_templates`
+
+**Status:** Complete · **Date:** 2026-05-21 · **Branch/commit:** direct-to-main on `alediez2048/openhuman`.
+
+Bundled four RU-* starter templates into the binary via `include_str!`
+(ADR-004 / ADR-008) and exposed them through a read-only
+`workflows_list_starter_templates` RPC that filters by `min_phase`,
+dedupes against the user's existing `Seed { template_id }` workflows,
+and computes `missing_connections` server-side from the live
+aggregator snapshot.
+
+### Templates shipped
+
+| id | Trigger | Connections |
+| --- | --- | --- |
+| `ru-1-founder-morning-digest` | `0 8 * * 1-5` | Composio: gmail / linear / slack + Telegram channel |
+| `ru-2-linkedin-engagement-queue` | `0 11 * * 1-5` | Webview: linkedin + Telegram channel |
+| `ru-3-spotify-friday-five` | `0 17 * * 5` | Composio: spotify / discord |
+| `ru-4-jira-sprint-retro` | `0 16 */14 * 5` | Composio: jira / notion |
+
+### Tactical deviations from the F-5 primer
+
+- **Templates parse as opaque JSON for `trigger` / `nodes` / `edges` /
+  `settings`.** The artifact RU-1 file uses fields not in Phase 1's
+  typed `Node` shape (per-node `name`, per-node `on_error`). Modelling
+  `StarterTemplate.nodes` as `serde_json::Value` (instead of
+  `Vec<Node>`) preserves those forward-compat fields losslessly on the
+  `raw_payload` that F-6's [Add] button passes back to
+  `workflows_create`. The strict typed fields the catalog DOES need
+  (`template_id`, `name`, `description`, `required_connections`,
+  `min_phase`) stay typed.
+- **Empty `channel_id: ""` added to RU-1's Telegram entry.** The
+  artifact spec at `Automations/Artifacts/templates/ru-1-...json` omits
+  `channel_id` entirely, which the strict `ConnectionRef::Channel`
+  parser rejects. Adding the empty string keeps the field present at
+  parse time; the user picks a real channel on [Add] (per the F-5
+  primer's design for RU-2..RU-4). Updated the bundled copy only —
+  the design-time artifact stays untouched.
+- **Cron normalization via `cron::normalize_expression`.** The `cron`
+  crate uses Quartz-style 6-field expressions (with seconds). The
+  templates use standard 5-field crontab. The shipping path routes
+  both through `crate::openhuman::cron::normalize_expression`
+  (production scheduler convention) which prepends `0` for the
+  seconds field. Pinned the same normalizer in
+  `templates_tests::every_template_has_a_parseable_cron_expression`
+  so a future template can't ship a 5-field cron that breaks the
+  validator.
+- **Phase 1 degradation of RU-2** — the "true" RU-2 uses
+  `await_human_approval` (Phase 3 node kind). The Phase 1 template
+  queues drafts to Telegram for manual copy-paste; documented in
+  the template's `rationale_at_seed` so the user understands the
+  difference.
+- **Hard-coded `CURRENT_PHASE = 1` in `ops.rs`.** F-15 will swap
+  this for `about_app::current_phase()` when that surface lands;
+  TODO comment in the file flags the follow-up.
+
+### Verified
+
+- `cargo check` ✓ (both manifests)
+- `cargo fmt --check` ✓
+- `pnpm test:rust workflows` — **72/72 passing** (21 F-1 + 15 F-2 +
+  24 F-3 + 6 templates_tests + 6 ops_tests for the catalog).
+- The bundled JSON survives `cargo build --bin openhuman-core`
+  (verified via the templates_tests parse loop).
+
+### Files
+
+- New: `src/openhuman/workflows/templates/ru-{1,2,3,4}-*.json`
+- New: `src/openhuman/workflows/templates/mod.rs` (`include_str!` +
+  `all_bundled()` + `BUNDLED_JSON` + `raw_payload_for`).
+- New: `src/openhuman/workflows/templates/README.md` (file-shape
+  docs + new-template checklist).
+- New: `src/openhuman/workflows/templates_tests.rs` (6 tests).
+- Modified: `src/openhuman/workflows/types.rs` (new
+  `StarterTemplate`, `StarterTemplateView`,
+  `ListStarterTemplatesRequest`).
+- Modified: `src/openhuman/workflows/ops.rs`
+  (`list_starter_templates` + `build_view` +
+  `summarize_trigger_value`).
+- Modified: `src/openhuman/workflows/rpc.rs`
+  (`workflows_list_starter_templates` handler).
+- Modified: `src/openhuman/workflows/schemas.rs` (registered the
+  new controller + schema).
+- Modified: `src/openhuman/workflows/ops_tests.rs` (6 dedup +
+  min_phase + missing_connections + raw_payload assertions).
+- Modified: `src/openhuman/workflows/mod.rs`
+  (`pub mod templates;` + test-module wiring + re-exports).
+
+### Next
+
+F-6 — `<StarterWorkflowsSection>` UI renders this catalog into F-4's
+`data-testid="starter-section-placeholder"` slot, with `[Add]` /
+`[Add & Enable]` buttons that call `workflows_create` with
+`origin = Seed{template_id}` + the `raw_payload`. **Second locked
+live-test milestone**.
