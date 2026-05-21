@@ -314,11 +314,313 @@ fn registered_tools_contain_no_mutating_workflow_names() {
         );
     }
 
-    // Positive: all four read-only workflow tools are present.
+    // Positive: all four read-only + six propose-only workflow
+    // tools are present after F-12.
+    for expected in PROPOSE_TOOL_NAMES {
+        assert!(
+            names.iter().any(|n| n == expected),
+            "F-12 propose tool not registered: {expected} (registered = {names:?})"
+        );
+    }
     for expected in READ_ONLY_TOOL_NAMES {
         assert!(
             names.iter().any(|n| n == expected),
             "F-10 tool not registered: {expected} (registered = {names:?})"
+        );
+    }
+}
+
+// ── F-12 propose tools ─────────────────────────────────────────────────
+
+#[test]
+fn propose_tool_names_constant_carries_all_six_propose_tools() {
+    let mut names: Vec<&str> = PROPOSE_TOOL_NAMES.to_vec();
+    names.sort();
+    let mut expected = vec![
+        TOOL_WORKFLOW_PROPOSE_CREATE,
+        TOOL_WORKFLOW_PROPOSE_UPDATE,
+        TOOL_WORKFLOW_PROPOSE_DELETE,
+        TOOL_WORKFLOW_PROPOSE_ENABLE,
+        TOOL_WORKFLOW_PROPOSE_DISABLE,
+        TOOL_WORKFLOW_PROPOSE_RUN_NOW,
+    ];
+    expected.sort();
+    assert_eq!(names, expected);
+}
+
+#[test]
+fn build_node_agent_definition_excludes_propose_tools() {
+    // F-12 regression check (ADR-016): propose tools must NOT leak
+    // into the `agent_prompt` sub-agent's allowlist. They live on
+    // the chat-agent surface only.
+    let def = build_node_agent_definition(&[], 12, None);
+    for propose in PROPOSE_TOOL_NAMES {
+        assert!(
+            !def.allowed_tools.iter().any(|n| n == propose),
+            "F-12 propose tool leaked into agent_prompt allowlist: {propose}"
+        );
+    }
+    // Also belt-and-suspenders: the connection-resolved variant.
+    let def = build_node_agent_definition(
+        &[ConnectionRef::Composio {
+            toolkit_id: "gmail".into(),
+            account_id: None,
+        }],
+        12,
+        None,
+    );
+    for propose in PROPOSE_TOOL_NAMES {
+        assert!(
+            !def.allowed_tools.iter().any(|n| n == propose),
+            "F-12 propose tool leaked into agent_prompt allowlist (with connections): {propose}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn workflow_propose_enable_returns_state_proposal_enable_payload() {
+    let (_d, config) = config_with_temp_workspace();
+    let req = CreateWorkflowRequest {
+        name: "for-enable".into(),
+        description: None,
+        trigger: Trigger::Cron {
+            expr: "0 9 * * 1-5".into(),
+            tz: None,
+            active_hours: None,
+        },
+        nodes: vec![Node {
+            id: "n1".into(),
+            kind: NodeKind::AgentPrompt,
+            config: NodeConfig::AgentPrompt(AgentPromptConfig {
+                prompt: "x".into(),
+                allowed_connections: vec![],
+                iteration_cap: 12,
+                model_tier: None,
+            }),
+            position: None,
+        }],
+        edges: vec![],
+        settings: None,
+        origin: WorkflowOrigin::UserChat,
+    };
+    let created = ops::create(&config, req).await.unwrap().value;
+
+    let tool = WorkflowProposeEnableTool::new(config.clone());
+    let result = tool
+        .execute(json!({ "workflow_id": created.id }))
+        .await
+        .unwrap();
+    assert!(!result.is_error);
+    let payload = parse_output(&result.output());
+    assert_eq!(payload["state_proposal"]["action"].as_str(), Some("enable"));
+    let rationale = payload["state_proposal"]["rationale"]
+        .as_array()
+        .expect("rationale array");
+    assert!(!rationale.is_empty());
+    assert!(rationale[0].as_str().unwrap().contains("0 9 * * 1-5"));
+}
+
+#[tokio::test]
+async fn workflow_propose_disable_returns_state_proposal_disable_payload() {
+    let (_d, config) = config_with_temp_workspace();
+    let created = ops::create(&config, sample_create("p"))
+        .await
+        .unwrap()
+        .value;
+    let tool = WorkflowProposeDisableTool::new(config.clone());
+    let result = tool
+        .execute(json!({ "workflow_id": created.id }))
+        .await
+        .unwrap();
+    let payload = parse_output(&result.output());
+    assert_eq!(
+        payload["state_proposal"]["action"].as_str(),
+        Some("disable")
+    );
+    // Workflow defaults `enabled: false` — rationale notes the no-op.
+    let rationale = payload["state_proposal"]["rationale"]
+        .as_array()
+        .expect("rationale array");
+    assert!(rationale[0].as_str().unwrap().contains("Already disabled"));
+}
+
+#[tokio::test]
+async fn workflow_propose_delete_returns_preview_with_run_count_and_retention_30() {
+    let (_d, config) = config_with_temp_workspace();
+    let created = ops::create(&config, sample_create("p"))
+        .await
+        .unwrap()
+        .value;
+    let tool = WorkflowProposeDeleteTool::new(config.clone());
+    let result = tool
+        .execute(json!({ "workflow_id": created.id }))
+        .await
+        .unwrap();
+    let payload = parse_output(&result.output());
+    let preview = &payload["delete_preview"];
+    assert_eq!(preview["workflow_id"].as_str(), Some(created.id.as_str()));
+    assert_eq!(preview["name"].as_str(), Some("agent-tool-test"));
+    assert_eq!(preview["run_count"].as_u64(), Some(0));
+    assert_eq!(preview["retention_days"].as_u64(), Some(30));
+}
+
+#[tokio::test]
+async fn workflow_propose_run_now_returns_run_now_when_health_is_ready() {
+    let (_d, config) = config_with_temp_workspace();
+    let created = ops::create(&config, sample_create("p"))
+        .await
+        .unwrap()
+        .value;
+    assert!(matches!(
+        created.health,
+        crate::openhuman::workflows::types::WorkflowHealth::Ready
+    ));
+    let tool = WorkflowProposeRunNowTool::new(config.clone());
+    let result = tool
+        .execute(json!({ "workflow_id": created.id }))
+        .await
+        .unwrap();
+    let payload = parse_output(&result.output());
+    assert_eq!(
+        payload["state_proposal"]["action"].as_str(),
+        Some("run_now")
+    );
+    assert_eq!(payload["state_proposal"]["enabled"].as_bool(), Some(true));
+    let rationale = payload["state_proposal"]["rationale"]
+        .as_array()
+        .expect("rationale array");
+    assert!(rationale[0].as_str().unwrap().contains("Estimated time"));
+}
+
+#[tokio::test]
+async fn workflow_propose_run_now_returns_disabled_when_health_blocks() {
+    // Create a workflow whose `allowed_connections` references a
+    // connection not in the snapshot — health is NeedsConnections.
+    let (_d, config) = config_with_temp_workspace();
+    let req = CreateWorkflowRequest {
+        name: "blocked".into(),
+        description: None,
+        trigger: Trigger::Manual,
+        nodes: vec![Node {
+            id: "n1".into(),
+            kind: NodeKind::AgentPrompt,
+            config: NodeConfig::AgentPrompt(AgentPromptConfig {
+                prompt: "x".into(),
+                allowed_connections: vec![ConnectionRef::Composio {
+                    toolkit_id: "missing-toolkit".into(),
+                    account_id: None,
+                }],
+                iteration_cap: 12,
+                model_tier: None,
+            }),
+            position: None,
+        }],
+        edges: vec![],
+        settings: None,
+        origin: WorkflowOrigin::UserChat,
+    };
+    let created = ops::create(&config, req).await.unwrap().value;
+    assert!(matches!(
+        created.health,
+        crate::openhuman::workflows::types::WorkflowHealth::NeedsConnections { .. }
+    ));
+
+    let tool = WorkflowProposeRunNowTool::new(config.clone());
+    let result = tool
+        .execute(json!({ "workflow_id": created.id }))
+        .await
+        .unwrap();
+    let payload = parse_output(&result.output());
+    assert_eq!(payload["state_proposal"]["enabled"].as_bool(), Some(false));
+    let rationale = payload["state_proposal"]["rationale"].as_array().unwrap();
+    assert!(rationale[0].as_str().unwrap().contains("Cannot run"));
+}
+
+#[tokio::test]
+async fn workflow_propose_create_returns_drafting_failed_with_f11_placeholder() {
+    // The AgentDrafter is the F-11 placeholder. Calling
+    // workflow_propose_create surfaces its RunFailure as a
+    // structured `{ error: "drafting_failed", ... }` payload.
+    let (_d, config) = config_with_temp_workspace();
+    let tool = WorkflowProposeCreateTool::new(config.clone());
+    let result = tool
+        .execute(json!({ "description": "build me a digest" }))
+        .await
+        .unwrap();
+    assert!(!result.is_error);
+    let payload = parse_output(&result.output());
+    assert_eq!(payload["error"].as_str(), Some("drafting_failed"));
+    assert_eq!(payload["kind_label"].as_str(), Some("run_failure"));
+    assert!(payload["reason"]
+        .as_str()
+        .unwrap()
+        .contains("F-11 placeholder"));
+}
+
+#[tokio::test]
+async fn workflow_propose_create_rejects_empty_description() {
+    let (_d, config) = config_with_temp_workspace();
+    let tool = WorkflowProposeCreateTool::new(config);
+    let result = tool.execute(json!({ "description": "   " })).await.unwrap();
+    let payload = parse_output(&result.output());
+    assert_eq!(payload["error"].as_str(), Some("empty_description"));
+}
+
+#[tokio::test]
+async fn workflow_propose_update_returns_not_found_for_unknown_workflow_id() {
+    let (_d, config) = config_with_temp_workspace();
+    let tool = WorkflowProposeUpdateTool::new(config);
+    let result = tool
+        .execute(json!({
+            "workflow_id": "ghost",
+            "instructions": "make it run at 9"
+        }))
+        .await
+        .unwrap();
+    let payload = parse_output(&result.output());
+    assert_eq!(payload["error"].as_str(), Some("not_found"));
+}
+
+#[tokio::test]
+async fn propose_tools_appear_alongside_read_only_in_registered_set() {
+    use crate::openhuman::config::{BrowserConfig, HttpRequestConfig, MemoryConfig};
+    use crate::openhuman::memory::Memory;
+    use crate::openhuman::security::SecurityPolicy;
+    use std::collections::HashMap;
+
+    let dir = TempDir::new().unwrap();
+    let mut config = Config::default();
+    config.workspace_dir = dir.path().join("workspace");
+    config.config_path = dir.path().join("config.toml");
+    let config = Arc::new(config);
+    let security = Arc::new(SecurityPolicy::default());
+    let mem_cfg = MemoryConfig {
+        backend: "markdown".into(),
+        ..MemoryConfig::default()
+    };
+    let memory: Arc<dyn Memory> =
+        Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, dir.path()).unwrap());
+    let browser = BrowserConfig::default();
+    let http = HttpRequestConfig::default();
+    let agents = HashMap::new();
+
+    let tools = crate::openhuman::tools::all_tools(
+        config.clone(),
+        &security,
+        memory,
+        &browser,
+        &http,
+        &config.workspace_dir,
+        &agents,
+        &config,
+    );
+    let names: Vec<String> = tools.iter().map(|t| t.name().to_string()).collect();
+
+    // The full 10 — 4 read + 6 propose.
+    for expected in READ_ONLY_TOOL_NAMES.iter().chain(PROPOSE_TOOL_NAMES.iter()) {
+        assert!(
+            names.iter().any(|n| n == expected),
+            "F-10/F-12 tool not registered: {expected}"
         );
     }
 }

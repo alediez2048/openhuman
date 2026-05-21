@@ -343,6 +343,16 @@ pub async fn cancel_run(
     Ok(RpcOutcome::single_log(true, log))
 }
 
+/// Count of `workflow_runs` rows for a workflow. F-12's
+/// `workflow_propose_delete` surfaces this through
+/// [`WorkflowDeletePreview::run_count`] so the user sees how much
+/// history will be dropped on the cascade delete (FR-1.3.4).
+pub async fn count_runs(config: &Config, workflow_id: &WorkflowId) -> Result<RpcOutcome<u32>> {
+    let n = store::count_runs(config, workflow_id)?;
+    let log = format!("workflows_count_runs wf={workflow_id} count={n}");
+    Ok(RpcOutcome::single_log(n, log))
+}
+
 /// `workflows_list_runs` — paginated runs view, newest-first.
 ///
 /// Phase 1 caps `limit` to 100 (NFR-2.5.6) via [`Pagination::clamp`]

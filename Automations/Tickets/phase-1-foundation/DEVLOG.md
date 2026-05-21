@@ -1196,3 +1196,143 @@ agent surface (`workflow_propose_create`, `_update`, `_delete`,
 returns the JSON preview WITHOUT mutating. The F-10 negative
 allowlist test will expand to ALLOW `workflow_propose_*` names
 while still forbidding the seven mutation RPCs.
+
+---
+
+## 2026-05-21 — F-12 shipped: propose-only agent tools + workflow_diff
+
+### What landed
+
+- **Six propose-only tools** under `src/openhuman/tools/impl/workflows/`:
+  - `workflow_propose_create` — calls
+    `proposer::draft_with_retries` against the F-11 retry loop;
+    surfaces `DraftFailure` as structured
+    `{ error, kind_label, ... }` JSON. Uses the F-11 placeholder
+    `AgentDrafter` (F-15 swap point) — chat agent observes a
+    `drafting_failed/run_failure` payload today; production
+    invocation lands at F-15 without changing the tool's
+    surface.
+  - `workflow_propose_update` — fetches the current workflow,
+    runs the new `draft_with_retries_for_update` (sibling
+    drafter that inlines the current shape via
+    `build_update_system_prompt`), computes the
+    `workflow_diff`, returns a `WorkflowEditProposal { workflow_id,
+    current, proposed, diff_summary, rationale }` payload.
+    Returns `{ error: "not_found" }` for unknown ids.
+  - `workflow_propose_delete` — returns
+    `WorkflowDeletePreview { workflow_id, name, run_count,
+    retention_days: 30 }` from the new `ops::count_runs`.
+    Retention is hard-coded to 30 per FR-1.3.4.
+  - `workflow_propose_enable` / `workflow_propose_disable` —
+    static-rationale state proposals (no LLM call). Already-enabled
+    or already-disabled paths produce a no-op rationale.
+  - `workflow_propose_run_now` — health-gated: `enabled: false`
+    when `health != Ready` with a "Cannot run: missing connections"
+    rationale; `enabled: true` with a duration estimate
+    (median of last 5 successful runs, or "unknown (no past runs)").
+- **`workflow_diff(current, proposed)`** in
+  `src/openhuman/workflows/diff.rs` — flat `Vec<String>` of human-
+  friendly bullets covering name, description, trigger
+  (cron expr/tz/active hours + kind change), settings
+  (timeout_secs, on_error), nodes (length delta, kind change,
+  prompt rewrite by line count, iteration_cap, model_tier,
+  allowed_connections adds + removes per step). Capped at
+  `MAX_DIFF_BULLETS = 20` with a tail bullet
+  "… and N more changes." on overflow.
+- **`draft_with_retries_for_update`** in `proposer.rs` — sibling
+  of `draft_with_retries`; runs the same validator-or-retry loop
+  with an `UpdateDrafter` trait surface. The proposed shape is
+  projected through `WorkflowProposal` so the F-11 validator
+  reuses every check (no duplicate validation logic).
+- **`AgentUpdateDrafter`** placeholder mirrors `AgentDrafter` —
+  same F-15 swap point semantics.
+- **`build_update_system_prompt`** extends the F-11 base prompt
+  with a "Current workflow" pretty-printed JSON block + an
+  instruction to return the full proposed shape (not a diff).
+- **`ops::count_runs`** — wraps `store::count_runs` so
+  `_propose_delete` doesn't need to reach into the store
+  directly.
+- **`PROPOSE_TOOL_NAMES`** constant in
+  `tools::implementations::workflows` + re-exported from
+  `workflows::agent_tools`. F-10's negative-allowlist test now
+  asserts the six names are registered (the previous-attempt
+  "zero propose" check is gone, replaced by "no mutations").
+- **New regression test** in
+  `tools::implementations::workflows::tests`:
+  `build_node_agent_definition_excludes_propose_tools` — asserts
+  zero `workflow_propose_*` names appear in `agent_prompt`'s
+  allowlist (ADR-016). Belt-and-suspenders: tested with and
+  without connection-resolved tools.
+- **Boot wiring** in `tools::ops::all_tools_with_runtime` — six
+  `Box::new(...)` entries after the F-10 block, comment cites
+  ADR-016 + the regression test path.
+
+### Deviations
+
+- **No `metrics::counter!`**. Same call as F-11: the workspace
+  doesn't depend on `metrics`; `tracing` covers every tool
+  invocation with the `[workflows-agent]` prefix.
+- **`workflow_propose_create` lives on the live drafter today**
+  → returns `RunFailure` from the F-11 placeholder. The tool's
+  surface is locked; F-15 swap is body-only inside
+  `AgentDrafter::draft`. Two test cases lock the behaviour:
+  `workflow_propose_create_returns_drafting_failed_with_f11_placeholder`
+  + the empty-description guard.
+- **Generic HTTP "saved connection" agent tool deferred to
+  Phase 2** per the F-12 ticket's Phase 0 follow-up note: a
+  proposal that lists `ConnectionRef::GenericHttp { connection_id }`
+  in its `allowed_connections` is accepted today, but the
+  sub-agent at run time has no per-id `http_call(connection_id=...)`
+  tool — it falls back to the existing raw `http_request`. F-3's
+  health computation + F-8's executor still gate against the
+  connection's existence, and the secret stays server-side via
+  `secret_ref` resolution in the HTTP probe path; this is
+  acceptable for Phase 1.
+
+### Verified
+
+- `cargo check` ✓
+- `cargo fmt` ✓
+- `cargo test --lib openhuman::tools::implementations::workflows`
+  — **22/22 passing** (11 new F-12 tests on top of F-10's 11).
+- `cargo test --lib openhuman::workflows` — **148/148 passing**
+  (10 new diff tests).
+
+### Files
+
+- New: `src/openhuman/workflows/diff.rs` (`workflow_diff`,
+  `MAX_DIFF_BULLETS`, per-field helpers).
+- New: `src/openhuman/workflows/diff_tests.rs` (10 tests).
+- New: `src/openhuman/tools/impl/workflows/propose_create.rs`.
+- New: `src/openhuman/tools/impl/workflows/propose_update.rs`.
+- New: `src/openhuman/tools/impl/workflows/propose_delete.rs`.
+- New: `src/openhuman/tools/impl/workflows/propose_enable.rs`.
+- New: `src/openhuman/tools/impl/workflows/propose_disable.rs`.
+- New: `src/openhuman/tools/impl/workflows/propose_run_now.rs`.
+- Modified: `src/openhuman/tools/impl/workflows/mod.rs`
+  (added six propose-tool modules + `PROPOSE_TOOL_NAMES` +
+  the six per-tool name constants).
+- Modified: `src/openhuman/tools/impl/mod.rs` (added
+  `WorkflowPropose*Tool` to the re-exports).
+- Modified: `src/openhuman/tools/ops.rs` (registered six tools).
+- Modified: `src/openhuman/tools/impl/workflows/tests.rs`
+  (F-12 regression test + 9 propose-tool unit tests; updated
+  the registered-tools test to expect the six propose names).
+- Modified: `src/openhuman/workflows/agent_tools.rs`
+  (re-exported the propose name constants).
+- Modified: `src/openhuman/workflows/mod.rs` (`pub mod diff` +
+  `diff_tests` test module).
+- Modified: `src/openhuman/workflows/ops.rs` (added
+  `count_runs`).
+- Modified: `src/openhuman/workflows/proposer.rs` (added
+  `UpdateDrafter` trait, `AgentUpdateDrafter`,
+  `draft_with_retries_for_update`, `build_update_system_prompt`,
+  `collect_required_connections`).
+
+### Next
+
+F-13 — finalize `workflow_builder.md` + bundle it in
+`tauri.conf.json` resources so the production binary ships the
+prompt alongside the existing `agent/prompts/*.md` files. The
+F-11 placeholder copy is already on disk; F-13 verifies the
+build-time + runtime resolution paths.

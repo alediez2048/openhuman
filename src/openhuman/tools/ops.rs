@@ -141,6 +141,20 @@ pub fn all_tools_with_runtime(
         Box::new(WorkflowGetTool::new(config.clone())),
         Box::new(WorkflowsListRunsTool::new(config.clone())),
         Box::new(WorkflowsGetRunTool::new(config.clone())),
+        // F-12: propose-only workflow tools. Each returns a preview
+        // payload (`WorkflowProposal` / `WorkflowEditProposal` /
+        // `WorkflowDeletePreview` / `WorkflowStateProposal`); the
+        // user's click on the rendered preview is what triggers the
+        // matching mutation RPC. Per ADR-016 these names must NOT
+        // appear in any `agent_prompt` sub-agent's allowlist — the
+        // regression test in `tools::implementations::workflows::tests`
+        // enforces that invariant.
+        Box::new(WorkflowProposeCreateTool::new(config.clone())),
+        Box::new(WorkflowProposeUpdateTool::new(config.clone())),
+        Box::new(WorkflowProposeDeleteTool::new(config.clone())),
+        Box::new(WorkflowProposeEnableTool::new(config.clone())),
+        Box::new(WorkflowProposeDisableTool::new(config.clone())),
+        Box::new(WorkflowProposeRunNowTool::new(config.clone())),
         Box::new(MemoryStoreTool::new(memory.clone(), security.clone())),
         Box::new(MemoryRecallTool::new(memory.clone())),
         Box::new(MemoryForgetTool::new(memory.clone(), security.clone())),

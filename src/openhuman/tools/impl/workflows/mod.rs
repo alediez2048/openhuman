@@ -22,6 +22,12 @@ mod get;
 mod get_run;
 mod list;
 mod list_runs;
+mod propose_create;
+mod propose_delete;
+mod propose_disable;
+mod propose_enable;
+mod propose_run_now;
+mod propose_update;
 
 #[cfg(test)]
 mod tests;
@@ -30,6 +36,12 @@ pub use get::WorkflowGetTool;
 pub use get_run::WorkflowsGetRunTool;
 pub use list::WorkflowListTool;
 pub use list_runs::WorkflowsListRunsTool;
+pub use propose_create::WorkflowProposeCreateTool;
+pub use propose_delete::WorkflowProposeDeleteTool;
+pub use propose_disable::WorkflowProposeDisableTool;
+pub use propose_enable::WorkflowProposeEnableTool;
+pub use propose_run_now::WorkflowProposeRunNowTool;
+pub use propose_update::WorkflowProposeUpdateTool;
 
 /// Stable tool name for [`WorkflowListTool`]. F-8's allowlist references
 /// this verbatim — keep in sync with
@@ -53,4 +65,29 @@ pub const READ_ONLY_TOOL_NAMES: &[&str] = &[
     TOOL_WORKFLOW_GET,
     TOOL_WORKFLOWS_LIST_RUNS,
     TOOL_WORKFLOWS_GET_RUN,
+];
+
+/// F-12 propose-only tool name constants. ADR-012's "single mutation
+/// boundary" contract means these tools return preview payloads
+/// only — the user's [Save] / [Apply] click on the rendered preview
+/// is the only path to mutation.
+pub const TOOL_WORKFLOW_PROPOSE_CREATE: &str = "workflow_propose_create";
+pub const TOOL_WORKFLOW_PROPOSE_UPDATE: &str = "workflow_propose_update";
+pub const TOOL_WORKFLOW_PROPOSE_DELETE: &str = "workflow_propose_delete";
+pub const TOOL_WORKFLOW_PROPOSE_ENABLE: &str = "workflow_propose_enable";
+pub const TOOL_WORKFLOW_PROPOSE_DISABLE: &str = "workflow_propose_disable";
+pub const TOOL_WORKFLOW_PROPOSE_RUN_NOW: &str = "workflow_propose_run_now";
+
+/// Canonical list of the six propose-only workflow tool names.
+/// The F-10 allowlist test reads this and the
+/// [`workflows::executor::build_node_agent_definition`] regression
+/// test asserts none of these names leak into the `agent_prompt`
+/// sub-agent surface (per ADR-016).
+pub const PROPOSE_TOOL_NAMES: &[&str] = &[
+    TOOL_WORKFLOW_PROPOSE_CREATE,
+    TOOL_WORKFLOW_PROPOSE_UPDATE,
+    TOOL_WORKFLOW_PROPOSE_DELETE,
+    TOOL_WORKFLOW_PROPOSE_ENABLE,
+    TOOL_WORKFLOW_PROPOSE_DISABLE,
+    TOOL_WORKFLOW_PROPOSE_RUN_NOW,
 ];

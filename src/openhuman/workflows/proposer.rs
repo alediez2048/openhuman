@@ -36,7 +36,9 @@
 //! [`workflow_builder.md`]: ../../agent/prompts/workflow_builder.md
 
 use crate::openhuman::workflows::health::ConnectionsSnapshot;
-use crate::openhuman::workflows::types::{DraftFailure, ProposalValidationError, WorkflowProposal};
+use crate::openhuman::workflows::types::{
+    DraftFailure, ProposalValidationError, Workflow, WorkflowProposal,
+};
 use crate::openhuman::workflows::validator;
 use async_trait::async_trait;
 
@@ -341,4 +343,190 @@ fn format_validation_error(err: &ProposalValidationError) -> String {
             )
         }
     }
+}
+
+// ── Update sibling (F-12) ──────────────────────────────────────────────
+
+/// Sibling of [`Drafter`] for edit-style proposals. The signature
+/// returns a full [`Workflow`] (the proposed shape) rather than a
+/// [`WorkflowProposal`]: edits land against an existing row's id,
+/// so the diff payload is `(current, proposed)` rather than the
+/// freshly-drafted shape.
+#[async_trait]
+pub trait UpdateDrafter: Send + Sync {
+    /// Run the update-drafting sub-agent once with the current
+    /// workflow JSON inlined into `system_prompt` and the user's
+    /// edit instructions passed as `instructions`. Returns the
+    /// agent's proposed [`Workflow`] shape (validation happens
+    /// outside).
+    async fn draft_update(
+        &self,
+        system_prompt: &str,
+        instructions: &str,
+        current: &Workflow,
+    ) -> Result<Workflow, RunFailure>;
+}
+
+/// Production-side [`UpdateDrafter`]. Same F-15 placeholder pattern
+/// as [`AgentDrafter`].
+pub struct AgentUpdateDrafter;
+
+impl AgentUpdateDrafter {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Default for AgentUpdateDrafter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl UpdateDrafter for AgentUpdateDrafter {
+    async fn draft_update(
+        &self,
+        _system_prompt: &str,
+        _instructions: &str,
+        _current: &Workflow,
+    ) -> Result<Workflow, RunFailure> {
+        // F-15 SWAP POINT — replace this body with the agent
+        // invocation. Signature is locked.
+        Err(RunFailure::new(
+            "AgentUpdateDrafter is the F-12 placeholder; live agent invocation lands at F-15.",
+        ))
+    }
+}
+
+/// Sibling of [`draft_with_retries`] for edit-style proposals.
+/// Inlines the current workflow JSON into the system prompt
+/// (via [`build_update_system_prompt`]) and walks the same
+/// validate-or-retry loop as the create path.
+///
+/// On success returns the proposed [`Workflow`] (caller assembles
+/// the `WorkflowEditProposal` by diffing against `current`).
+pub async fn draft_with_retries_for_update<D: UpdateDrafter + ?Sized>(
+    drafter: &D,
+    instructions: &str,
+    current: &Workflow,
+    snapshot: &ConnectionsSnapshot,
+    phase: u32,
+    max_attempts: u32,
+) -> Result<Workflow, DraftFailure> {
+    if max_attempts == 0 {
+        return Err(DraftFailure::RunFailure {
+            reason: "max_attempts must be > 0".into(),
+        });
+    }
+    let preview: String = instructions.chars().take(80).collect();
+    let mut last_error: Option<ProposalValidationError> = None;
+    for attempt in 0..max_attempts {
+        tracing::info!(
+            target: "workflows-proposer",
+            "[workflows-proposer] update attempt {n}/{max_attempts} wf={} instructions=\"{preview}\"",
+            current.id,
+            n = attempt + 1,
+        );
+        let system_prompt =
+            build_update_system_prompt(snapshot, phase, current, last_error.as_ref());
+        let proposed = match drafter
+            .draft_update(&system_prompt, instructions, current)
+            .await
+        {
+            Ok(w) => w,
+            Err(err) => {
+                return Err(DraftFailure::RunFailure { reason: err.reason });
+            }
+        };
+        // Reuse the same validator: it walks the same checks
+        // against the proposed shape's nodes / edges / triggers.
+        // The validator API takes a `WorkflowProposal`; project the
+        // proposed `Workflow` into that shape for validation only.
+        let projected = WorkflowProposal {
+            name: proposed.name.clone(),
+            description: proposed.description.clone().unwrap_or_default(),
+            trigger: proposed.trigger.clone(),
+            nodes: proposed.nodes.clone(),
+            edges: proposed.edges.clone(),
+            settings: proposed.settings.clone(),
+            required_connections: collect_required_connections(&proposed),
+            rationale: vec![],
+            confidence: crate::openhuman::workflows::types::Confidence::Medium,
+        };
+        match validator::validate(&projected, snapshot, phase) {
+            Ok(()) => {
+                tracing::info!(
+                    target: "workflows-proposer",
+                    "[workflows-proposer] update attempt {n} accepted",
+                    n = attempt + 1
+                );
+                return Ok(proposed);
+            }
+            Err(err) => {
+                tracing::warn!(
+                    target: "workflows-validator",
+                    "[workflows-validator] update attempt {n} failed kind={kind}",
+                    n = attempt + 1,
+                    kind = err.kind_label()
+                );
+                last_error = Some(err);
+            }
+        }
+    }
+    Err(DraftFailure::ValidationFailedAfterRetries {
+        attempts: max_attempts,
+        last_error: last_error
+            .expect("loop ran ≥ once and at least one validator error must have been recorded"),
+    })
+}
+
+/// Compose the update-drafting system prompt: same base as
+/// [`build_system_prompt`] plus a "Current workflow" block
+/// carrying the existing row's JSON so the model can edit
+/// surgically rather than re-draft from scratch.
+pub fn build_update_system_prompt(
+    snapshot: &ConnectionsSnapshot,
+    phase: u32,
+    current: &Workflow,
+    last_error: Option<&ProposalValidationError>,
+) -> String {
+    let mut prompt = build_system_prompt(snapshot, phase, last_error);
+    prompt.push_str("\n\n## Current workflow\n\n");
+    prompt.push_str("```json\n");
+    match serde_json::to_string_pretty(current) {
+        Ok(s) => prompt.push_str(&s),
+        Err(err) => {
+            // Should never fail — the workflow round-trips through
+            // SQLite as JSON. Log and fall back to a stable
+            // placeholder so the prompt stays valid.
+            tracing::warn!(
+                target: "workflows-proposer",
+                "[workflows-proposer] failed to serialise current workflow for update prompt: {err:#}"
+            );
+            prompt.push_str("{ /* serialise error */ }");
+        }
+    }
+    prompt.push_str("\n```\n");
+    prompt.push_str("\nApply the user's instructions to this workflow. Return the FULL proposed workflow shape (same fields), not a diff.\n");
+    prompt
+}
+
+/// Union of every `ConnectionRef` referenced anywhere in the
+/// proposed workflow's `agent_prompt.allowed_connections`. Used to
+/// populate `WorkflowProposal::required_connections` when projecting
+/// a `Workflow` through the create-shape validator.
+fn collect_required_connections(
+    wf: &Workflow,
+) -> Vec<crate::openhuman::connections::types::ConnectionRef> {
+    let mut out: Vec<crate::openhuman::connections::types::ConnectionRef> = Vec::new();
+    for node in &wf.nodes {
+        let crate::openhuman::workflows::types::NodeConfig::AgentPrompt(cfg) = &node.config;
+        for r in &cfg.allowed_connections {
+            if !out.contains(r) {
+                out.push(r.clone());
+            }
+        }
+    }
+    out
 }

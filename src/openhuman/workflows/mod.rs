@@ -36,6 +36,7 @@
 
 pub mod agent_tools;
 pub mod bus;
+pub mod diff;
 pub mod executor;
 pub mod health;
 pub mod ops;
@@ -50,6 +51,8 @@ pub mod validator;
 
 #[cfg(test)]
 mod bus_tests;
+#[cfg(test)]
+mod diff_tests;
 #[cfg(test)]
 mod executor_tests;
 #[cfg(test)]
