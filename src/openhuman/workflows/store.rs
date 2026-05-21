@@ -380,6 +380,336 @@ fn matches_health_filter(
     )
 }
 
+// ── F-8 run-row CRUD ────────────────────────────────────────────────────
+
+use crate::openhuman::workflows::types::{
+    Run, RunId, RunStatus, RunStep, RunStepId, TriggerSource,
+};
+
+/// Maximum byte length for `workflow_run_steps.output_json` per
+/// NFR-2.3.5. F-8 truncates output to this size on the UTF-8 boundary
+/// before persisting; the truncation marker (`"\n…[truncated]"`)
+/// counts toward the cap.
+pub const RUN_STEP_OUTPUT_MAX_BYTES: usize = 64 * 1024;
+const RUN_STEP_TRUNCATION_MARKER: &str = "\n…[truncated]";
+
+/// UTF-8-safe truncation: returns at most `max_bytes` bytes of `s`,
+/// appending a `…[truncated]` marker iff truncation actually
+/// happened. The byte boundary is moved backwards if needed so no
+/// multibyte character is split (SQLite would reject invalid UTF-8).
+///
+/// Public so the executor + future propose-tools can share the same
+/// rule.
+pub fn truncate_output_to_64kib(s: String) -> String {
+    if s.len() <= RUN_STEP_OUTPUT_MAX_BYTES {
+        return s;
+    }
+    // Leave headroom for the marker so the final string still fits
+    // under the cap.
+    let mut cut = RUN_STEP_OUTPUT_MAX_BYTES.saturating_sub(RUN_STEP_TRUNCATION_MARKER.len());
+    while cut > 0 && !s.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    let mut out = s[..cut].to_string();
+    out.push_str(RUN_STEP_TRUNCATION_MARKER);
+    out
+}
+
+fn run_status_str(status: &RunStatus) -> &'static str {
+    match status {
+        RunStatus::Pending => "pending",
+        RunStatus::Running => "running",
+        RunStatus::Succeeded => "succeeded",
+        RunStatus::Failed => "failed",
+        RunStatus::Cancelled => "cancelled",
+        RunStatus::TimedOut => "timed_out",
+    }
+}
+
+fn parse_run_status(raw: &str) -> Result<RunStatus> {
+    match raw {
+        "pending" => Ok(RunStatus::Pending),
+        "running" => Ok(RunStatus::Running),
+        "succeeded" => Ok(RunStatus::Succeeded),
+        "failed" => Ok(RunStatus::Failed),
+        "cancelled" => Ok(RunStatus::Cancelled),
+        "timed_out" => Ok(RunStatus::TimedOut),
+        other => anyhow::bail!("unknown run status `{other}`"),
+    }
+}
+
+/// Insert a `workflow_runs` row. Called by the executor (F-8)
+/// before spawning the execute_inner task.
+pub fn insert_run(config: &Config, run: &Run) -> Result<()> {
+    let trigger_source =
+        serde_json::to_string(&run.trigger_source).context("encode trigger_source")?;
+    with_connection(config, |db| {
+        db.execute(
+            "INSERT INTO workflow_runs \
+             (id, workflow_id, trigger_source, status, started_at, completed_at, error, cancelled) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            rusqlite::params![
+                run.id,
+                run.workflow_id,
+                trigger_source,
+                run_status_str(&run.status),
+                run.started_at.to_rfc3339(),
+                run.completed_at.map(|t| t.to_rfc3339()),
+                run.error,
+                run.cancelled as i64,
+            ],
+        )
+        .context("Failed to insert workflow_runs row")?;
+        Ok(())
+    })
+}
+
+/// Mark a run as terminal (Succeeded / Failed / Cancelled / TimedOut).
+/// Returns `false` when the id was unknown (e.g. the workflow was
+/// deleted mid-run and the cascade swept the row).
+pub fn mark_run_terminal(
+    config: &Config,
+    run_id: &RunId,
+    status: RunStatus,
+    completed_at: DateTime<Utc>,
+    error: Option<String>,
+) -> Result<bool> {
+    with_connection(config, |db| {
+        let rows = db
+            .execute(
+                "UPDATE workflow_runs SET status = ?2, completed_at = ?3, error = ?4 WHERE id = ?1",
+                rusqlite::params![
+                    run_id,
+                    run_status_str(&status),
+                    completed_at.to_rfc3339(),
+                    error,
+                ],
+            )
+            .context("Failed to mark run terminal")?;
+        Ok(rows > 0)
+    })
+}
+
+/// Mark a run as cancelled (the soft-cancel flag from ADR-014). F-9
+/// drives this from `executor::cancel_run`; F-8 leaves it unused.
+pub fn mark_run_cancelled_flag(config: &Config, run_id: &RunId) -> Result<bool> {
+    with_connection(config, |db| {
+        let rows = db
+            .execute(
+                "UPDATE workflow_runs SET cancelled = 1 WHERE id = ?1",
+                rusqlite::params![run_id],
+            )
+            .context("Failed to set workflow_runs.cancelled")?;
+        Ok(rows > 0)
+    })
+}
+
+/// Insert a `workflow_run_steps` row with status = Running. The
+/// executor calls this right before invoking the agent.
+pub fn insert_run_step(config: &Config, step: &RunStep) -> Result<()> {
+    with_connection(config, |db| {
+        db.execute(
+            "INSERT INTO workflow_run_steps \
+             (id, run_id, node_id, status, started_at, completed_at, output_json, error) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            rusqlite::params![
+                step.id,
+                step.run_id,
+                step.node_id,
+                run_status_str(&step.status),
+                step.started_at.to_rfc3339(),
+                step.completed_at.map(|t| t.to_rfc3339()),
+                step.output_json,
+                step.error,
+            ],
+        )
+        .context("Failed to insert workflow_run_steps row")?;
+        Ok(())
+    })
+}
+
+/// Update a step row's terminal fields. `output_json` is truncated to
+/// 64 KiB by the caller (executor) before this is called.
+pub fn update_run_step_terminal(
+    config: &Config,
+    step_id: &RunStepId,
+    status: RunStatus,
+    completed_at: DateTime<Utc>,
+    output_json: Option<String>,
+    error: Option<String>,
+) -> Result<bool> {
+    with_connection(config, |db| {
+        let rows = db
+            .execute(
+                "UPDATE workflow_run_steps SET \
+                 status = ?2, completed_at = ?3, output_json = ?4, error = ?5 \
+                 WHERE id = ?1",
+                rusqlite::params![
+                    step_id,
+                    run_status_str(&status),
+                    completed_at.to_rfc3339(),
+                    output_json,
+                    error,
+                ],
+            )
+            .context("Failed to update workflow_run_steps row")?;
+        Ok(rows > 0)
+    })
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct Pagination {
+    pub limit: u32,
+    pub offset: u32,
+}
+
+impl Default for Pagination {
+    fn default() -> Self {
+        Self {
+            limit: 50,
+            offset: 0,
+        }
+    }
+}
+
+impl Pagination {
+    /// Clamp `limit` to [1, 100] so agent tools / RPC clients can't
+    /// request a runaway page size (NFR-2.5.6).
+    pub fn clamp(self) -> Self {
+        Self {
+            limit: self.limit.clamp(1, 100),
+            offset: self.offset,
+        }
+    }
+}
+
+/// List runs for a workflow, newest-first. Used by F-8's
+/// `workflows_list_runs` RPC and the F-12 propose-delete preview.
+pub fn list_runs(
+    config: &Config,
+    workflow_id: &WorkflowId,
+    pagination: Pagination,
+) -> Result<Vec<Run>> {
+    let pagination = pagination.clamp();
+    with_connection(config, |db| {
+        let mut stmt = db
+            .prepare(
+                "SELECT id, workflow_id, trigger_source, status, started_at, completed_at, error, cancelled \
+                 FROM workflow_runs \
+                 WHERE workflow_id = ?1 \
+                 ORDER BY started_at DESC \
+                 LIMIT ?2 OFFSET ?3",
+            )
+            .context("Failed to prepare list_runs")?;
+        let rows = stmt
+            .query_map(
+                rusqlite::params![workflow_id, pagination.limit, pagination.offset],
+                |row| Ok(row_to_run(row)),
+            )?
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .collect::<Result<Vec<Run>>>()?;
+        Ok(rows)
+    })
+}
+
+/// Lightweight count of how many runs a workflow has. Used by the
+/// F-12 `workflow_propose_delete` preview ("X runs will be deleted").
+pub fn count_runs(config: &Config, workflow_id: &WorkflowId) -> Result<u32> {
+    with_connection(config, |db| {
+        let count: i64 = db.query_row(
+            "SELECT COUNT(*) FROM workflow_runs WHERE workflow_id = ?1",
+            rusqlite::params![workflow_id],
+            |row| row.get(0),
+        )?;
+        Ok(count.max(0) as u32)
+    })
+}
+
+/// Fetch one run + its steps. Returns `Ok(None)` when the run id is
+/// unknown — the list view should treat that as "deleted mid-poll".
+pub fn get_run(config: &Config, run_id: &RunId) -> Result<Option<(Run, Vec<RunStep>)>> {
+    with_connection(config, |db| {
+        let run: Option<Run> = {
+            let mut stmt = db.prepare(
+                "SELECT id, workflow_id, trigger_source, status, started_at, completed_at, error, cancelled \
+                 FROM workflow_runs WHERE id = ?1",
+            )?;
+            let mut rows = stmt.query(rusqlite::params![run_id])?;
+            if let Some(row) = rows.next()? {
+                Some(row_to_run(row)?)
+            } else {
+                None
+            }
+        };
+        let Some(run) = run else {
+            return Ok(None);
+        };
+        let mut stmt = db.prepare(
+            "SELECT id, run_id, node_id, status, started_at, completed_at, output_json, error \
+             FROM workflow_run_steps WHERE run_id = ?1 ORDER BY started_at ASC",
+        )?;
+        let raw_rows = stmt
+            .query_map(rusqlite::params![run_id], |row| Ok(row_to_run_step(row)))?
+            .collect::<Result<Vec<_>, _>>()?;
+        let steps = raw_rows.into_iter().collect::<Result<Vec<RunStep>>>()?;
+        Ok(Some((run, steps)))
+    })
+}
+
+fn row_to_run(row: &Row<'_>) -> Result<Run> {
+    let id: String = row.get(0).context("read run.id")?;
+    let workflow_id: String = row.get(1).context("read run.workflow_id")?;
+    let trigger_source_raw: String = row.get(2).context("read run.trigger_source")?;
+    let status_raw: String = row.get(3).context("read run.status")?;
+    let started_at_raw: String = row.get(4).context("read run.started_at")?;
+    let completed_at_raw: Option<String> = row.get(5).context("read run.completed_at")?;
+    let error: Option<String> = row.get(6).context("read run.error")?;
+    let cancelled: i64 = row.get(7).context("read run.cancelled")?;
+    Ok(Run {
+        id,
+        workflow_id,
+        trigger_source: serde_json::from_str::<TriggerSource>(&trigger_source_raw)
+            .context("decode trigger_source")?,
+        status: parse_run_status(&status_raw)?,
+        started_at: DateTime::parse_from_rfc3339(&started_at_raw)
+            .context("parse started_at")?
+            .with_timezone(&Utc),
+        completed_at: completed_at_raw
+            .map(|s| DateTime::parse_from_rfc3339(&s).map(|t| t.with_timezone(&Utc)))
+            .transpose()
+            .context("parse completed_at")?,
+        error,
+        cancelled: cancelled != 0,
+    })
+}
+
+fn row_to_run_step(row: &Row<'_>) -> Result<RunStep> {
+    let id: String = row.get(0).context("read step.id")?;
+    let run_id: String = row.get(1).context("read step.run_id")?;
+    let node_id: String = row.get(2).context("read step.node_id")?;
+    let status_raw: String = row.get(3).context("read step.status")?;
+    let started_at_raw: String = row.get(4).context("read step.started_at")?;
+    let completed_at_raw: Option<String> = row.get(5).context("read step.completed_at")?;
+    let output_json: Option<String> = row.get(6).context("read step.output_json")?;
+    let error: Option<String> = row.get(7).context("read step.error")?;
+    Ok(RunStep {
+        id,
+        run_id,
+        node_id,
+        status: parse_run_status(&status_raw)?,
+        started_at: DateTime::parse_from_rfc3339(&started_at_raw)
+            .context("parse step.started_at")?
+            .with_timezone(&Utc),
+        completed_at: completed_at_raw
+            .map(|s| DateTime::parse_from_rfc3339(&s).map(|t| t.with_timezone(&Utc)))
+            .transpose()
+            .context("parse step.completed_at")?,
+        output_json,
+        error,
+    })
+}
+
 // ── F-3 health-recompute helpers ────────────────────────────────────────
 
 use crate::openhuman::connections::types::ConnectionRef;

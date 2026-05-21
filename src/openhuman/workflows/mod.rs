@@ -51,6 +51,8 @@ pub mod validator;
 #[cfg(test)]
 mod bus_tests;
 #[cfg(test)]
+mod executor_tests;
+#[cfg(test)]
 mod health_tests;
 #[cfg(test)]
 mod ops_tests;

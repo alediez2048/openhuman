@@ -37,6 +37,8 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("list_starter_templates"),
         schemas("run_now"),
         schemas("cancel_run"),
+        schemas("list_runs"),
+        schemas("get_run"),
     ]
 }
 
@@ -83,6 +85,14 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("cancel_run"),
             handler: handle_cancel_run,
+        },
+        RegisteredController {
+            schema: schemas("list_runs"),
+            handler: handle_list_runs,
+        },
+        RegisteredController {
+            schema: schemas("get_run"),
+            handler: handle_get_run,
         },
     ]
 }
@@ -261,6 +271,54 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 required: true,
             }],
         },
+        "list_runs" => ControllerSchema {
+            namespace: "workflows",
+            function: "list_runs",
+            description: "Paginated runs view for a workflow, sorted by started_at DESC. limit is clamped to [1, 100] server-side.",
+            inputs: vec![
+                FieldSchema {
+                    name: "workflow_id",
+                    ty: TypeSchema::String,
+                    comment: "Workflow id to list runs for.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "limit",
+                    ty: TypeSchema::U64,
+                    comment: "Max rows to return. Clamped to [1, 100]. Defaults to 50 when omitted.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "offset",
+                    ty: TypeSchema::U64,
+                    comment: "Row offset. Defaults to 0 when omitted.",
+                    required: false,
+                },
+            ],
+            outputs: vec![FieldSchema {
+                name: "runs",
+                ty: TypeSchema::Array(Box::new(TypeSchema::Ref("Run"))),
+                comment: "Runs for the workflow, newest-first by started_at.",
+                required: true,
+            }],
+        },
+        "get_run" => ControllerSchema {
+            namespace: "workflows",
+            function: "get_run",
+            description: "Fetch a single run + its persisted step rows. Returns null when the run id is unknown.",
+            inputs: vec![FieldSchema {
+                name: "run_id",
+                ty: TypeSchema::String,
+                comment: "Run id to fetch.",
+                required: true,
+            }],
+            outputs: vec![FieldSchema {
+                name: "run_with_steps",
+                ty: TypeSchema::Ref("RunWithSteps"),
+                comment: "Run row + its step rows in started_at ASC order, or null when the id is unknown.",
+                required: false,
+            }],
+        },
         "list_starter_templates" => ControllerSchema {
             namespace: "workflows",
             function: "list_starter_templates",
@@ -386,6 +444,38 @@ fn handle_cancel_run(params: Map<String, Value>) -> ControllerFuture {
         let config = config_rpc::load_config_with_timeout().await?;
         let run_id = required_string(&params, "run_id")?;
         to_json(crate::openhuman::workflows::rpc::workflows_cancel_run(&config, run_id).await?)
+    })
+}
+
+fn handle_list_runs(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let workflow_id = required_string(&params, "workflow_id")?;
+        // Both `limit` and `offset` are optional — falling back to the
+        // default 50 / 0. Server-side clamping caps `limit` at 100.
+        let limit = params
+            .get("limit")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(50)
+            .min(u32::MAX as u64) as u32;
+        let offset = params
+            .get("offset")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0)
+            .min(u32::MAX as u64) as u32;
+        let pagination = crate::openhuman::workflows::store::Pagination { limit, offset };
+        to_json(
+            crate::openhuman::workflows::rpc::workflows_list_runs(&config, workflow_id, pagination)
+                .await?,
+        )
+    })
+}
+
+fn handle_get_run(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let run_id = required_string(&params, "run_id")?;
+        to_json(crate::openhuman::workflows::rpc::workflows_get_run(&config, run_id).await?)
     })
 }
 

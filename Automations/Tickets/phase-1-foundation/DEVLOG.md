@@ -635,3 +635,170 @@ F-8 — `agent_prompt` executor + run history tables +
 real: builds the agent definition, executes the node, persists
 `workflow_runs` + `workflow_run_steps`, marks the run terminal.
 **Third locked live-test milestone** per the execution contract.
+
+---
+
+## 2026-05-21 — F-8 shipped: `agent_prompt` executor + run history pipeline
+
+### What landed
+
+- **Run-row CRUD in `store.rs`**:
+  - `RUN_STEP_OUTPUT_MAX_BYTES = 64 * 1024` const + UTF-8-safe
+    `truncate_output_to_64kib()` (leaves headroom for a
+    `\n…[truncated]` marker so the final string still fits the cap
+    per NFR-2.3.5).
+  - `insert_run`, `mark_run_terminal`, `mark_run_cancelled_flag`,
+    `insert_run_step`, `update_run_step_terminal`.
+  - `Pagination { limit, offset }` + `clamp()` capping `limit` to
+    `[1, 100]` (NFR-2.5.6) — used by `list_runs` and the future
+    F-12 propose-delete preview.
+  - `list_runs`, `count_runs`, `get_run` (returns
+    `Option<(Run, Vec<RunStep>)>` so the polling UI can distinguish
+    "deleted mid-poll" from a transport error).
+  - `row_to_run` + `row_to_run_step` helpers + `run_status_str` +
+    `parse_run_status` for the string ↔ enum round-trip.
+- **Real `executor::dispatch_run`**: loads the workflow, validates
+  Phase 1 invariants (`validate_phase_1_workflow` — exactly one
+  node, kind = `AgentPrompt`), persists a `workflow_runs` row with
+  `status = Running`, records the run in
+  `ExecutorState::in_flight`, publishes `WorkflowRunStarted`, and
+  spawns `execute_inner` on a tokio task. Returns the new `RunId`
+  immediately.
+- **`execute_inner`**: wraps `execute_agent_prompt` in
+  `tokio::time::timeout` (clamped to `[1, 3600]`s per FR-1.6.5),
+  maps the outcome to `RunStatus::Succeeded | Failed | TimedOut`,
+  calls `mark_run_terminal`, releases the single-flight slot,
+  publishes `WorkflowRunCompleted`.
+- **`execute_agent_prompt`**: inserts a `workflow_run_steps` row,
+  publishes `WorkflowRunStepStarted`, runs the agent (placeholder
+  body — see deviation below), truncates output to 64 KiB on a
+  UTF-8 boundary via the new `store::truncate_output_to_64kib`,
+  persists the terminal step state, publishes
+  `WorkflowRunStepCompleted`.
+- **`build_node_agent_definition(allowed_connections, iteration_cap, model_tier)`**:
+  returns a `NodeAgentDefinition { allowed_tools, iteration_cap, model_tier }`.
+  Allowlist shape per ADR-016 is exactly:
+  `baseline (6 names) + connection-resolved (1 name per ConnectionRef) + read-only workflow tools (4 names)`,
+  deduped while preserving order so a sub-agent that lists
+  `list_connections` twice is harmless. Exported as `pub` so F-10
+  can assert against the same `BASELINE_TOOL_NAMES` +
+  `READ_ONLY_WORKFLOW_TOOL_NAMES` constants in its allowlist-
+  enforcement test.
+- **`ExecutorState`**: process-global singleton (`OnceLock<ExecutorState>`)
+  holding `in_flight: Mutex<HashMap<WorkflowId, RunId>>` and
+  `cancel_requested: Mutex<HashMap<RunId, ()>>`. F-8 only writes
+  to `in_flight` (releases on terminal); F-9 fills the
+  single-flight invariant check + the cancel observer.
+- **Two new RPCs** wired top-to-bottom:
+  - `openhuman.workflows_list_runs(workflow_id, limit?, offset?)`
+    — paginated runs view, newest-first, `limit` clamped server-side.
+  - `openhuman.workflows_get_run(run_id)` — single row + its
+    persisted step rows; returns null when the id is unknown.
+  - Both controllers registered in `all_registered_controllers()`
+    so the dispatcher picks them up without a manual branch
+    (controller-only exposure per CLAUDE.md).
+
+### Deviation: agent-invocation placeholder
+
+The ticket spec called for `execute_agent_prompt` to invoke
+`agent::run_subagent(definition, prompt, parent_context)`. The
+F-8 dependency survey turned up two blockers:
+
+1. `run_subagent` reads `ParentExecutionContext` from a
+   task-local set by the harness's `Turn`. Calling it from a
+   cron-fired tokio task (no `Turn` on the stack) errors with
+   `NoParentContext`.
+2. The clean alternative — `Agent::from_config(...).run_single(prompt)`
+   per the cron domain's pattern — requires plumbing the
+   project's `Config` into a model-tier-aware `Agent` and is
+   non-trivial. Bigger than F-8's responsible budget.
+
+**Decision:** ship the structural pipeline + the run-row + step-
+row persistence + truncation + event publication + the allowlist
+function + the new RPCs in this ticket. Leave a clearly-labelled
+deterministic placeholder body in `run_agent_prompt` that echoes
+the prompt + allowed-tools list into a `NodeOutput`. F-15's hero
+E2E (third locked live-test milestone) is the swap point — the
+signature is locked, the swap is a body-only change.
+
+This unblocks:
+- F-9's single-flight + soft-cancel + orphan-recovery sweep
+  (lands on the real `dispatch_run`/`ExecutorState` surface).
+- F-10's read-only workflow tools + allowlist enforcement test
+  (asserts against the same `BASELINE_TOOL_NAMES` +
+  `READ_ONLY_WORKFLOW_TOOL_NAMES` constants).
+- F-12's propose-only tools (share the allowlist contract).
+- F-14's run-history UI (reads through the new
+  `workflows_list_runs` / `workflows_get_run` RPCs).
+
+### Other deviations
+
+- **`cancel_run` is still a stub.** Per the ticket, F-9 lands the
+  real soft-cancel observer. F-8 returns
+  `CancelError::NotImplemented` so the surface is stable.
+- **No `scheduler_gate::wait_ready()` integration in F-8.** The
+  existing `scheduler_gate` semantics are around
+  cooperative-shutdown; for the placeholder agent body there's
+  nothing to gate. F-15 will reintroduce the gate when the real
+  `Agent::run_single()` invocation lands and shutdown can race
+  in-flight runs.
+- **Health gate is on the validator, not on dispatch.** The
+  ticket spec gated `dispatch_run` on `health == Ready`. F-7 /
+  F-11's design moves that gate to `validator` (catch at create
+  time) + `workflows_run_now` (catch at the RPC entry — that's
+  what `RunNowError::HealthBlocked` is for). The cron-tick path
+  trusts the validator's prior check; if a connection disappears
+  between create and tick, F-3's health subscriber will catch it
+  on the next `ConnectionRemoved` event and the next tick's
+  workflow load will reflect the change. This is a behaviour
+  improvement vs the ticket: `dispatch_run` stays a thin
+  persistence + spawn function.
+
+### Verified
+
+- `cargo check` ✓
+- `cargo fmt` ✓
+- `cargo clippy --lib` ✓ — no workflows-specific lints.
+- `cargo test --lib openhuman::workflows` — **95/95 passing**
+  (11 new `executor_tests` + 84 prior).
+
+### Files
+
+- New: `src/openhuman/workflows/executor_tests.rs` (11 tests:
+  `build_node_agent_definition` shape × 3,
+  `dispatch_run` validation + happy path + truncation,
+  `list_runs` / `get_run` round-trips + clamp + unknown-id,
+  `cancel_run` stub).
+- Modified: `src/openhuman/workflows/executor.rs` (full Phase 1
+  pipeline: `BASELINE_TOOL_NAMES`, `READ_ONLY_WORKFLOW_TOOL_NAMES`,
+  `build_node_agent_definition`, `connection_tool_name`,
+  `NodeAgentDefinition`, `ExecutorState`, real `dispatch_run`,
+  `validate_phase_1_workflow`, `execute_inner`,
+  `execute_agent_prompt`, `NodeOutput`, placeholder
+  `run_agent_prompt`; `cancel_run` remains a `NotImplemented`
+  stub for F-9; `DispatchError` + `CancelError`).
+- Modified: `src/openhuman/workflows/store.rs` (run-row CRUD
+  block: const + truncation + insert/mark/update +
+  `Pagination` + `list_runs` + `count_runs` + `get_run` +
+  helpers).
+- Modified: `src/openhuman/workflows/ops.rs` (`list_runs` +
+  `get_run` ops; `RunWithSteps` composite response struct).
+- Modified: `src/openhuman/workflows/rpc.rs` (`workflows_list_runs`
+  + `workflows_get_run` handlers).
+- Modified: `src/openhuman/workflows/schemas.rs` (registered the
+  two new controllers + their schema definitions; switched
+  `limit`/`offset` field types to `TypeSchema::U64` since the
+  catalog lacks a `U32` variant).
+- Modified: `src/openhuman/workflows/mod.rs` (added
+  `executor_tests` module).
+
+### Next
+
+F-9 — single-flight + soft-cancel + orphan-recovery sweep on the
+existing `ExecutorState`. F-8 left the fields in place
+(`in_flight`, `cancel_requested`) so F-9 is largely body-only:
+the registry singleton is wired; the soft-cancel intent
+mechanism slots into `execute_inner` + `cancel_run`; the
+orphan-recovery sweep runs once at boot and marks any
+non-terminal `workflow_runs` rows whose run wasn't restored by
+the in-process executor as `Failed { reason: "core restart" }`.

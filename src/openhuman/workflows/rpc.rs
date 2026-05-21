@@ -10,9 +10,10 @@
 //! All handlers return `RpcOutcome<T>` per `AGENTS.md`.
 
 use crate::openhuman::config::Config;
-use crate::openhuman::workflows::ops;
+use crate::openhuman::workflows::ops::{self, RunWithSteps};
+use crate::openhuman::workflows::store::Pagination;
 use crate::openhuman::workflows::types::{
-    CreateWorkflowRequest, ListFilter, ListStarterTemplatesRequest, ManualInitiator, RunId,
+    CreateWorkflowRequest, ListFilter, ListStarterTemplatesRequest, ManualInitiator, Run, RunId,
     StarterTemplateView, UpdateWorkflowRequest, Workflow, WorkflowId,
 };
 use crate::rpc::RpcOutcome;
@@ -114,6 +115,30 @@ pub async fn workflows_run_now(
                 body = serde_json::to_string(&e).unwrap_or_default()
             )
         })
+}
+
+/// `openhuman.workflows_list_runs` — paginated runs view, newest-first.
+///
+/// Limit is clamped to [1, 100] server-side; offset is unbounded.
+pub async fn workflows_list_runs(
+    config: &Config,
+    workflow_id: WorkflowId,
+    pagination: Pagination,
+) -> Result<RpcOutcome<Vec<Run>>, String> {
+    ops::list_runs(config, workflow_id, pagination)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// `openhuman.workflows_get_run` — fetch a single run + its persisted
+/// step rows. Returns `None` when the id is unknown.
+pub async fn workflows_get_run(
+    config: &Config,
+    run_id: RunId,
+) -> Result<RpcOutcome<Option<RunWithSteps>>, String> {
+    ops::get_run(config, run_id)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// `openhuman.workflows_cancel_run` — soft-cancel a running workflow

@@ -15,11 +15,12 @@ use crate::openhuman::config::Config;
 use crate::openhuman::connections::aggregator;
 use crate::openhuman::workflows::health::{self, ConnectionsSnapshot};
 use crate::openhuman::workflows::scheduler;
-use crate::openhuman::workflows::store;
+use crate::openhuman::workflows::store::{self, Pagination};
 use crate::openhuman::workflows::templates;
 use crate::openhuman::workflows::types::{
-    CreateWorkflowRequest, ListFilter, RunId, RunNowError, StarterTemplate, StarterTemplateView,
-    Trigger, UpdateWorkflowRequest, Workflow, WorkflowHealth, WorkflowId, WorkflowOrigin,
+    CreateWorkflowRequest, ListFilter, Run, RunId, RunNowError, RunStep, StarterTemplate,
+    StarterTemplateView, Trigger, UpdateWorkflowRequest, Workflow, WorkflowHealth, WorkflowId,
+    WorkflowOrigin,
 };
 use crate::rpc::RpcOutcome;
 use anyhow::{anyhow, Result};
@@ -340,6 +341,45 @@ pub async fn cancel_run(
     crate::openhuman::workflows::executor::cancel_run(config, run_id.clone()).await?;
     let log = format!("workflows_cancel_run run={run_id} cancelled=true");
     Ok(RpcOutcome::single_log(true, log))
+}
+
+/// `workflows_list_runs` — paginated runs view, newest-first.
+///
+/// Phase 1 caps `limit` to 100 (NFR-2.5.6) via [`Pagination::clamp`]
+/// so an agent tool / runaway client can't request a million-row page.
+pub async fn list_runs(
+    config: &Config,
+    workflow_id: WorkflowId,
+    pagination: Pagination,
+) -> Result<RpcOutcome<Vec<Run>>> {
+    let pagination = pagination.clamp();
+    let rows = store::list_runs(config, &workflow_id, pagination.clone())?;
+    let count = rows.len();
+    let log = format!(
+        "workflows_list_runs wf={workflow_id} limit={l} offset={o} count={count}",
+        l = pagination.limit,
+        o = pagination.offset
+    );
+    Ok(RpcOutcome::single_log(rows, log))
+}
+
+/// `workflows_get_run` — fetch a single run + its steps. Returns
+/// `Ok(None)` when the run id is unknown so the polling UI can
+/// distinguish "deleted mid-poll" from a transport error.
+pub async fn get_run(config: &Config, run_id: RunId) -> Result<RpcOutcome<Option<RunWithSteps>>> {
+    let row = store::get_run(config, &run_id)?;
+    let hit = row.is_some();
+    let payload = row.map(|(run, steps)| RunWithSteps { run, steps });
+    let log = format!("workflows_get_run id={run_id} hit={hit}");
+    Ok(RpcOutcome::single_log(payload, log))
+}
+
+/// Composite response for [`workflows_get_run`] — the run row plus
+/// its persisted step rows in started_at ASC order.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct RunWithSteps {
+    pub run: Run,
+    pub steps: Vec<RunStep>,
 }
 
 /// `workflows_list_starter_templates` — read-only catalog query.

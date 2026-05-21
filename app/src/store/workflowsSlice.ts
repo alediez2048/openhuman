@@ -152,10 +152,7 @@ export const addStarterTemplate = createAsyncThunk<
             : (payload.description as CreateWorkflowRequest['description']),
         trigger: payload.trigger as CreateWorkflowRequest['trigger'],
         nodes: payload.nodes as CreateWorkflowRequest['nodes'],
-        edges:
-          payload.edges === undefined
-            ? []
-            : (payload.edges as CreateWorkflowRequest['edges']),
+        edges: payload.edges === undefined ? [] : (payload.edges as CreateWorkflowRequest['edges']),
         settings:
           payload.settings === undefined
             ? null
