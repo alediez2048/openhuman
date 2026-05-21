@@ -136,32 +136,33 @@ export const addStarterTemplate = createAsyncThunk<
   'workflows/addStarterTemplate',
   async ({ template, enableImmediately }, { dispatch, rejectWithValue }) => {
     try {
-      // Build the CreateWorkflowRequest from raw_payload. The payload
-      // carries the full template body (trigger / nodes / edges /
-      // settings / name / description) plus extras like `tags` /
-      // `rationale_at_seed` / `min_phase` / `template_id` that the
-      // server-side request rejects via `deny_unknown_fields`. Strip
-      // the extras before passing through.
-      const {
-        template_id: _template_id,
-        min_phase: _min_phase,
-        tags: _tags,
-        rationale_at_seed: _rationale,
-        ...createRequestFields
-      } = template.raw_payload as Record<string, unknown>;
-      void _template_id;
-      void _min_phase;
-      void _tags;
-      void _rationale;
-      // The raw_payload's typed shape is `Record<string, unknown>` (the
-      // server preserves forward-compat extras); cast through `unknown`
-      // to land on `CreateWorkflowRequest` — the fields we need
-      // (`name`, `trigger`, `nodes`, `description`, `edges`, `settings`)
-      // are populated by F-5's templates.
-      const created = await workflowsApi.create({
-        ...(createRequestFields as unknown as CreateWorkflowRequest),
+      // Build the CreateWorkflowRequest by EXPLICITLY picking the
+      // fields the strict `#[serde(deny_unknown_fields)]` schema
+      // accepts — never spread `raw_payload` whole. The template body
+      // carries extras (template_id, min_phase, tags,
+      // required_connections, rationale_at_seed) that the server
+      // rejects with `unknown field`; picking by name keeps this
+      // robust against a future F-5 template-shape addition.
+      const payload = template.raw_payload as Record<string, unknown>;
+      const createReq: CreateWorkflowRequest = {
+        name: payload.name as CreateWorkflowRequest['name'],
+        description:
+          payload.description === undefined
+            ? null
+            : (payload.description as CreateWorkflowRequest['description']),
+        trigger: payload.trigger as CreateWorkflowRequest['trigger'],
+        nodes: payload.nodes as CreateWorkflowRequest['nodes'],
+        edges:
+          payload.edges === undefined
+            ? []
+            : (payload.edges as CreateWorkflowRequest['edges']),
+        settings:
+          payload.settings === undefined
+            ? null
+            : (payload.settings as CreateWorkflowRequest['settings']),
         origin: { type: 'seed', template_id: template.template_id },
-      });
+      };
+      const created = await workflowsApi.create(createReq);
 
       let result = created;
       if (enableImmediately) {
