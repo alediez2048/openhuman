@@ -509,3 +509,89 @@ impl ProposalValidationError {
         }
     }
 }
+
+// ── RPC request / list-filter payloads (F-2) ────────────────────────────
+
+/// Request payload for `workflows_create`. Every field that isn't
+/// server-generated lives here; `id`, `created_at`, `updated_at`,
+/// `last_run_at`, `health`, `schema_version`, and `enabled` are all
+/// stamped by `ops::create`.
+///
+/// `#[serde(deny_unknown_fields)]` rejects malformed payloads
+/// (typo'd field names, leaked `id` / `health` columns) at deserialize
+/// time so the handler returns a clean `invalid_argument` rather than
+/// silently dropping the field.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct CreateWorkflowRequest {
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    pub trigger: Trigger,
+    pub nodes: Vec<Node>,
+    #[serde(default)]
+    pub edges: Vec<Edge>,
+    #[serde(default)]
+    pub settings: Option<WorkflowSettings>,
+    /// Caller-supplied discriminator. UI / chat agent / catalog each
+    /// pass their own (ADR-018). `Imported` is rejected by `ops::create`
+    /// until an import path lands.
+    pub origin: WorkflowOrigin,
+}
+
+/// Partial update payload — every field is optional. `None` means "do
+/// not change". `id`, `origin`, `created_at`, `health`, `last_run_at`,
+/// and `enabled` are intentionally absent: identity / provenance /
+/// computed fields aren't editable through this surface.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct WorkflowPatch {
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub description: Option<Option<String>>,
+    #[serde(default)]
+    pub trigger: Option<Trigger>,
+    #[serde(default)]
+    pub nodes: Option<Vec<Node>>,
+    #[serde(default)]
+    pub edges: Option<Vec<Edge>>,
+    #[serde(default)]
+    pub settings: Option<WorkflowSettings>,
+}
+
+/// Request payload for `workflows_update`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct UpdateWorkflowRequest {
+    pub id: WorkflowId,
+    pub patches: WorkflowPatch,
+}
+
+/// Filter chips on the `/workflows` list view (FR-1.2.7).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ListFilter {
+    /// `Some(true)` returns enabled workflows only; `Some(false)`
+    /// returns disabled only; `None` returns both.
+    #[serde(default)]
+    pub enabled: Option<bool>,
+    /// Restrict to a single health-state discriminator.
+    #[serde(default)]
+    pub health_state: Option<HealthFilter>,
+    /// Case-insensitive substring against `name`.
+    #[serde(default)]
+    pub search: Option<String>,
+}
+
+/// Discriminator-only enum used by the [`ListFilter`] chip. Mirrors the
+/// four variants of [`WorkflowHealth`] but without their payloads, so
+/// the filter matches purely on health kind.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum HealthFilter {
+    Ready,
+    NeedsConnections,
+    LastRunFailed,
+    SessionExpired,
+}

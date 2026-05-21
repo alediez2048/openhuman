@@ -48,15 +48,18 @@ pub mod types;
 pub mod validator;
 
 #[cfg(test)]
+mod ops_tests;
+#[cfg(test)]
 mod store_tests;
 #[cfg(test)]
 mod types_tests;
 
 pub use schemas::{all_workflows_controller_schemas, all_workflows_registered_controllers};
 pub use types::{
-    ActiveHours, AgentPromptConfig, CanvasPosition, Confidence, Edge, MessageFilter, Node,
-    NodeConfig, NodeKind, OnErrorPolicy, ProposalValidationError, Run, RunId, RunStatus, RunStep,
-    RunStepId, SkippedReason, StateAction, Trigger, TriggerSource, Workflow, WorkflowDeletePreview,
-    WorkflowEditProposal, WorkflowHealth, WorkflowId, WorkflowOrigin, WorkflowProposal,
-    WorkflowSettings, WorkflowStateProposal,
+    ActiveHours, AgentPromptConfig, CanvasPosition, Confidence, CreateWorkflowRequest, Edge,
+    HealthFilter, ListFilter, MessageFilter, Node, NodeConfig, NodeKind, OnErrorPolicy,
+    ProposalValidationError, Run, RunId, RunStatus, RunStep, RunStepId, SkippedReason, StateAction,
+    Trigger, TriggerSource, UpdateWorkflowRequest, Workflow, WorkflowDeletePreview,
+    WorkflowEditProposal, WorkflowHealth, WorkflowId, WorkflowOrigin, WorkflowPatch,
+    WorkflowProposal, WorkflowSettings, WorkflowStateProposal,
 };
