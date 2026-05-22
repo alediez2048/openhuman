@@ -61,9 +61,13 @@ function summarizeSteps(stepCount: number, t: (key: string) => string): string {
  * "2d ago", and full month-day for anything older than a week.
  * Used in the dense row layout where the full locale-formatted
  * date is too long to fit.
+ *
+ * Caller is responsible for not invoking with a missing timestamp —
+ * a never-run workflow renders nothing in this slot rather than
+ * showing a stub like "Never run", which testing found
+ * confusing (looked button-like and didn't add real information).
  */
-function relativeTime(lastRunAt: string | null | undefined, t: (key: string) => string): string {
-  if (!lastRunAt) return t('workflows.card.never_run');
+function relativeTime(lastRunAt: string): string {
   const then = new Date(lastRunAt).getTime();
   const now = Date.now();
   const diffMs = now - then;
@@ -317,13 +321,13 @@ export default function WorkflowCard({ workflow }: Props) {
           <span className="text-xs text-stone-400 dark:text-neutral-500 truncate hidden sm:inline">
             {summarizeTrigger(workflow.trigger, t)}
           </span>
-          <span
-            className="ml-auto text-xs text-stone-400 dark:text-neutral-500 whitespace-nowrap"
-            title={
-              workflow.last_run_at ? new Date(workflow.last_run_at).toLocaleString() : undefined
-            }>
-            {relativeTime(workflow.last_run_at, t)}
-          </span>
+          {workflow.last_run_at && (
+            <span
+              className="ml-auto text-xs text-stone-400 dark:text-neutral-500 whitespace-nowrap"
+              title={new Date(workflow.last_run_at).toLocaleString()}>
+              {relativeTime(workflow.last_run_at)}
+            </span>
+          )}
         </button>
 
         <WorkflowEnableToggle
