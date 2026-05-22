@@ -142,10 +142,7 @@ fn build_node_agent_definition_dedups_duplicates_preserves_order() {
     // right action slug — otherwise it 400s with "Toolkit X is
     // not enabled" because it guesses the toolkit name as the slug).
     let baseline_len = BASELINE_TOOL_NAMES.len();
-    assert_eq!(
-        def.allowed_tools[baseline_len],
-        "composio_list_toolkits"
-    );
+    assert_eq!(def.allowed_tools[baseline_len], "composio_list_toolkits");
     assert_eq!(def.allowed_tools[baseline_len + 1], "composio_list_tools");
     assert_eq!(def.allowed_tools[baseline_len + 2], "composio_execute");
     assert_eq!(def.allowed_tools[baseline_len + 3], "builtin_memory");
