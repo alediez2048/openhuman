@@ -406,9 +406,7 @@ export default function WorkflowCard({ workflow }: Props) {
                   key: 'connections' as DetailSection,
                   label: t('workflows.preview.required_connections'),
                   badge:
-                    requiredConnections.length > 0
-                      ? String(requiredConnections.length)
-                      : undefined,
+                    requiredConnections.length > 0 ? String(requiredConnections.length) : undefined,
                   hintInline: null,
                 },
                 {
@@ -453,9 +451,7 @@ export default function WorkflowCard({ workflow }: Props) {
                     )}
                   </button>
                   {isOpen && section.key === 'prompt' && (
-                    <div
-                      id={`workflow-card-${workflow.id}-section-prompt`}
-                      className="pb-3 pl-5">
+                    <div id={`workflow-card-${workflow.id}-section-prompt`} className="pb-3 pl-5">
                       <div className="relative">
                         <pre
                           className="font-mono text-[11px] bg-stone-50 dark:bg-neutral-800 text-stone-700 dark:text-neutral-200 p-2 rounded-md max-h-64 overflow-auto whitespace-pre-wrap break-words"
@@ -522,9 +518,7 @@ export default function WorkflowCard({ workflow }: Props) {
                     </div>
                   )}
                   {isOpen && section.key === 'settings' && (
-                    <div
-                      id={`workflow-card-${workflow.id}-section-settings`}
-                      className="pb-3 pl-5">
+                    <div id={`workflow-card-${workflow.id}-section-settings`} className="pb-3 pl-5">
                       <table className="w-full text-xs">
                         <tbody>
                           {settingsRows.map(row => (
