@@ -121,7 +121,7 @@ export const workflowsApi = {
    */
   runNow: async (
     workflow_id: WorkflowId,
-    initiator: ManualInitiator = { type: 'user' },
+    initiator: ManualInitiator = { type: 'user' }
   ): Promise<RunId> => {
     const raw = await callCoreRpc<RunId | RpcOutcomeEnvelope<RunId>>({
       method: 'openhuman.workflows_run_now',
