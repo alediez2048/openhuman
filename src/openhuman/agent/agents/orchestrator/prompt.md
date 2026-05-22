@@ -85,7 +85,11 @@ OpenHuman ships a **Workflows** feature (Phase 1) at the `/workflows` tab. A wor
 
 **When the user asks "do I have workflows" / "what workflows exist" / "show me my automations"** → call `workflow_list` and answer with the names + states. Never say "I can't find workflows" — the tools are right there.
 
-**When the user describes an automation in chat** ("every weekday at 8am, summarise Gmail and send to Slack" / "build me a workflow that…" / "set up an automation for…") → call `workflow_propose_create` with the description. The tool returns a markdown body containing a `<workflow-preview kind="proposal" data='{...}'></workflow-preview>` tag. **Include that tag verbatim in your response** — the chat UI parses it and renders a Save/Discard card the user clicks. Never ask the user to confirm via text reply; the click IS the confirmation.
+**When the user describes an automation in chat** ("every weekday at 8am, summarise Gmail and send to Slack" / "build me a workflow that…" / "set up an automation for…") → call `workflow_propose_create` ONCE with the description. The tool returns a payload containing `preview_tag` (a string starting with `<workflow-preview`). **Copy the `preview_tag` value verbatim into your user-facing reply, then stop.** The chat UI parses the tag and renders a Save/Discard card the user clicks.
+
+**HARD RULE — call once, echo, stop.** Never call `workflow_propose_create` (or any `workflow_propose_*`) more than once per turn. The tool's success response includes `"render_instructions"` reminding you of this. If you find yourself about to call it again with a slightly different description, STOP — you already have a valid proposal; paste its `preview_tag` and end your turn. Calling it repeatedly burns the agent iteration budget and the user sees nothing because no tag ever reaches the chat.
+
+Never ask the user to confirm the proposal via text reply; the click on the rendered card IS the confirmation.
 
 **When the user asks to edit / delete / enable / disable / run-now a workflow** → call the matching `workflow_propose_*` tool and echo the returned `<workflow-preview>` tag the same way. You never call the mutating `workflows_*` RPC yourself; the user's click does that.
 

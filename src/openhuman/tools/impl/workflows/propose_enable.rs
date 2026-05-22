@@ -96,11 +96,18 @@ impl Tool for WorkflowProposeEnableTool {
             rationale,
             enabled: !workflow.enabled,
         };
-        let payload = json!({ "state_proposal": preview });
         let json_str = serde_json::to_string(&preview)?;
+        let preview_tag = format!(
+            "<workflow-preview kind=\"state\" data='{json_str}'></workflow-preview>"
+        );
+        let payload = json!({
+            "status": "state_preview_ready",
+            "render_instructions": "Include the `preview_tag` value verbatim in your user-facing reply. Do not call workflow_propose_enable again — the user clicks Apply on the rendered card.",
+            "preview_tag": preview_tag,
+            "state_proposal": preview,
+        });
         let markdown = format!(
-            "I prepared the enable preview. Include this tag verbatim:\n\n\
-             <workflow-preview kind=\"state\" data='{json_str}'></workflow-preview>"
+            "Enable preview ready. Include this tag verbatim in your reply, then stop — do NOT call this tool again.\n\n{preview_tag}"
         );
         Ok(ToolResult::success_with_markdown(payload, markdown))
     }

@@ -153,12 +153,18 @@ impl Tool for WorkflowProposeUpdateTool {
                     diff_summary,
                     rationale,
                 };
-                let payload = json!({ "edit_proposal": preview });
                 let json_str = serde_json::to_string(&preview)?;
+                let preview_tag = format!(
+                    "<workflow-preview kind=\"edit\" data='{json_str}'></workflow-preview>"
+                );
+                let payload = json!({
+                    "status": "draft_ready",
+                    "render_instructions": "Include the `preview_tag` value verbatim in your user-facing reply. Do not call workflow_propose_update again — the user clicks Save on the rendered diff card to commit.",
+                    "preview_tag": preview_tag,
+                    "edit_proposal": preview,
+                });
                 let markdown = format!(
-                    "I drafted these changes. To show the diff preview to the user, \
-                     include this tag verbatim in your response:\n\n\
-                     <workflow-preview kind=\"edit\" data='{json_str}'></workflow-preview>"
+                    "Draft ready. Include this tag verbatim in your reply, then stop — do NOT call this tool again.\n\n{preview_tag}"
                 );
                 Ok(ToolResult::success_with_markdown(payload, markdown))
             }

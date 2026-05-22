@@ -108,11 +108,18 @@ impl Tool for WorkflowProposeRunNowTool {
                 rationale: health_blocked_rationale(&workflow.health),
                 enabled: false,
             };
-            let payload = json!({ "state_proposal": preview });
             let json_str = serde_json::to_string(&preview)?;
+            let preview_tag = format!(
+                "<workflow-preview kind=\"state\" data='{json_str}'></workflow-preview>"
+            );
+            let payload = json!({
+                "status": "state_preview_ready",
+                "render_instructions": "Include the `preview_tag` value verbatim in your user-facing reply. Do not call workflow_propose_run_now again — the user clicks Apply on the rendered card.",
+                "preview_tag": preview_tag,
+                "state_proposal": preview,
+            });
             let markdown = format!(
-                "Run is blocked by missing connections. Include this tag verbatim:\n\n\
-                 <workflow-preview kind=\"state\" data='{json_str}'></workflow-preview>"
+                "Run-now is blocked by missing connections. Include this tag verbatim in your reply, then stop — do NOT call this tool again.\n\n{preview_tag}"
             );
             return Ok(ToolResult::success_with_markdown(payload, markdown));
         }
@@ -124,11 +131,18 @@ impl Tool for WorkflowProposeRunNowTool {
             rationale: vec![format!("Estimated time: {estimate}.")],
             enabled: true,
         };
-        let payload = json!({ "state_proposal": preview });
         let json_str = serde_json::to_string(&preview)?;
+        let preview_tag = format!(
+            "<workflow-preview kind=\"state\" data='{json_str}'></workflow-preview>"
+        );
+        let payload = json!({
+            "status": "state_preview_ready",
+            "render_instructions": "Include the `preview_tag` value verbatim in your user-facing reply. Do not call workflow_propose_run_now again — the user clicks Apply on the rendered card.",
+            "preview_tag": preview_tag,
+            "state_proposal": preview,
+        });
         let markdown = format!(
-            "I prepared a run-now preview. Include this tag verbatim:\n\n\
-             <workflow-preview kind=\"state\" data='{json_str}'></workflow-preview>"
+            "Run-now preview ready. Include this tag verbatim in your reply, then stop — do NOT call this tool again.\n\n{preview_tag}"
         );
         Ok(ToolResult::success_with_markdown(payload, markdown))
     }

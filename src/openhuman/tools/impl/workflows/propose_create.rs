@@ -132,19 +132,28 @@ impl Tool for WorkflowProposeCreateTool {
         .await
         {
             Ok(proposal) => {
-                let payload = json!({ "proposal": proposal });
                 let json_str = serde_json::to_string(&proposal)?;
-                // Wrap the payload in the `<workflow-preview>` tag the
-                // chat-runtime extension (AgentMessageBubble) parses
-                // out and dispatches to `<WorkflowProposalPreview>`.
-                // Single-quoted attribute so the JSON's double quotes
-                // nest cleanly. The instruction at the top tells the
-                // LLM to echo this verbatim into its user-facing
-                // response so the preview actually renders.
+                let preview_tag = format!(
+                    "<workflow-preview kind=\"proposal\" data='{json_str}'></workflow-preview>"
+                );
+                // The agent harness only forwards `markdown_formatted`
+                // to the LLM when `prefer_markdown_tool_output=true`
+                // (default off). Embedding the preview tag + the
+                // verbatim-echo instruction in the JSON payload itself
+                // guarantees the LLM ALWAYS sees them — without that
+                // signal it doesn't know it succeeded and loops calling
+                // this tool with description variations until it hits
+                // its iteration cap. The `markdown_formatted` body is
+                // still populated as a token-cheaper alternative when
+                // the markdown path IS configured.
+                let payload = json!({
+                    "status": "draft_ready",
+                    "render_instructions": "Include the `preview_tag` value verbatim in your user-facing reply. Do not call workflow_propose_create again — the user clicks Save on the rendered preview card to commit. Do not re-draft, do not summarize, just paste the tag.",
+                    "preview_tag": preview_tag,
+                    "proposal": proposal,
+                });
                 let markdown = format!(
-                    "I drafted this workflow. To show the preview card to the user, \
-                     include this tag verbatim in your response:\n\n\
-                     <workflow-preview kind=\"proposal\" data='{json_str}'></workflow-preview>"
+                    "Draft ready. Include this tag verbatim in your reply, then stop — do NOT call this tool again. The user clicks Save on the rendered card to commit.\n\n{preview_tag}"
                 );
                 Ok(ToolResult::success_with_markdown(payload, markdown))
             }
