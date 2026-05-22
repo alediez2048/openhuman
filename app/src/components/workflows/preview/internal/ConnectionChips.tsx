@@ -27,9 +27,7 @@ export function ConnectionChips({ required, missing }: Props) {
     return null;
   }
   return (
-    <div
-      className="flex items-baseline gap-1.5 mt-1.5 flex-wrap"
-      aria-label="Required connections">
+    <div className="flex items-baseline gap-1.5 mt-1.5 flex-wrap" aria-label="Required connections">
       <span className="text-xs font-medium text-stone-500 dark:text-neutral-500">Connections</span>
       <span className="text-xs text-stone-300 dark:text-neutral-600" aria-hidden>
         ·

@@ -75,10 +75,7 @@ function relativeTime(lastRunAt: string | null | undefined, t: (key: string) => 
   const diffDay = Math.floor(diffHr / 24);
   if (diffDay < 7) return `${diffDay}d ago`;
   // > 1 week: explicit date, locale-aware short form (e.g. "May 14").
-  return new Date(lastRunAt).toLocaleDateString(undefined, {
-    month: 'short',
-    day: 'numeric',
-  });
+  return new Date(lastRunAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
 interface Props {
