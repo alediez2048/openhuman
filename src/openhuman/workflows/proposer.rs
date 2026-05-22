@@ -238,9 +238,8 @@ async fn run_agent_for_text(
     kind: &str,
 ) -> Result<String, RunFailure> {
     let (provider, model) =
-        crate::openhuman::inference::provider::create_chat_provider("agentic", config).map_err(
-            |e| RunFailure::new(format!("create_chat_provider(agentic) failed: {e:#}")),
-        )?;
+        crate::openhuman::inference::provider::create_chat_provider("agentic", config)
+            .map_err(|e| RunFailure::new(format!("create_chat_provider(agentic) failed: {e:#}")))?;
     tracing::info!(
         target: "workflows-proposer",
         kind = %kind,
