@@ -134,12 +134,51 @@ fn build_node_agent_definition_dedups_duplicates_preserves_order() {
         composio_count, 1,
         "duplicate composio entries must collapse to a single tool name"
     );
-    // The first occurrence comes after the baseline names.
+    // Discovery tools (added when any Composio connection is present)
+    // land right after the baseline names; the execute tool comes
+    // after those; the Builtin-resolved tool follows. See the
+    // module docstring on `build_node_agent_definition` for the
+    // F-16-follow-up rationale (LLM needs discovery to find the
+    // right action slug — otherwise it 400s with "Toolkit X is
+    // not enabled" because it guesses the toolkit name as the slug).
     let baseline_len = BASELINE_TOOL_NAMES.len();
-    assert_eq!(def.allowed_tools[baseline_len], "composio_execute");
-    assert_eq!(def.allowed_tools[baseline_len + 1], "builtin_memory");
+    assert_eq!(
+        def.allowed_tools[baseline_len],
+        "composio_list_toolkits"
+    );
+    assert_eq!(def.allowed_tools[baseline_len + 1], "composio_list_tools");
+    assert_eq!(def.allowed_tools[baseline_len + 2], "composio_execute");
+    assert_eq!(def.allowed_tools[baseline_len + 3], "builtin_memory");
     assert_eq!(def.iteration_cap, 5);
     assert_eq!(def.model_tier.as_deref(), Some("reasoning"));
+}
+
+#[test]
+fn build_node_agent_definition_omits_composio_discovery_tools_when_no_composio_connection() {
+    // Non-Composio workflows must NOT carry the Composio discovery
+    // surface — keeps the allowlist tight per ADR-016 ("nothing
+    // else"). A Channel-only workflow's LLM has no business
+    // listing Composio toolkits.
+    let def = build_node_agent_definition(
+        &[ConnectionRef::Channel {
+            provider: "telegram".into(),
+            channel_id: "@my_channel".into(),
+        }],
+        12,
+        None,
+    );
+    assert!(
+        !def.allowed_tools.iter().any(|t| t == "composio_list_tools"),
+        "non-Composio workflow must not get composio_list_tools; allowlist: {:?}",
+        def.allowed_tools
+    );
+    assert!(
+        !def.allowed_tools
+            .iter()
+            .any(|t| t == "composio_list_toolkits"),
+        "non-Composio workflow must not get composio_list_toolkits; allowlist: {:?}",
+        def.allowed_tools
+    );
 }
 
 #[test]

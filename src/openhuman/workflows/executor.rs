@@ -164,6 +164,18 @@ pub struct NodeAgentDefinition {
 ///
 /// — and nothing else (no `workflow_propose_*`, no mutating workflow
 /// tools, no skill-creator surfaces).
+///
+/// **Composio discovery surface (F-16 follow-up).** When any
+/// `ConnectionRef::Composio` is present in `allowed_connections`,
+/// the connection-resolved block adds `composio_list_toolkits` and
+/// `composio_list_tools` alongside `composio_execute`. Without
+/// these, the LLM has no way to discover the real action slug to
+/// pass as `composio_execute`'s `tool` parameter (which expects
+/// e.g. `"GMAIL_SEND_EMAIL"`, not `"composio"` / `"gmail"` /
+/// `"slack"`). Live testing on 2026-05-22 surfaced the agent
+/// guessing `tool: "composio"` and the backend 400-ing with
+/// `Toolkit "composio" is not enabled`. The discovery tools give
+/// the agent a deterministic two-step path: list_tools → execute.
 pub fn build_node_agent_definition(
     allowed_connections: &[ConnectionRef],
     iteration_cap: u32,
@@ -171,6 +183,16 @@ pub fn build_node_agent_definition(
 ) -> NodeAgentDefinition {
     let mut allowed_tools: Vec<String> =
         BASELINE_TOOL_NAMES.iter().map(|s| s.to_string()).collect();
+    let has_composio = allowed_connections
+        .iter()
+        .any(|r| matches!(r, ConnectionRef::Composio { .. }));
+    if has_composio {
+        // Discovery tools land BEFORE the executor in the list so
+        // the LLM sees the natural order: "find the action, then
+        // run it". Both tools are read-only and cheap.
+        allowed_tools.push("composio_list_toolkits".into());
+        allowed_tools.push("composio_list_tools".into());
+    }
     for r in allowed_connections {
         allowed_tools.push(connection_tool_name(r));
     }
