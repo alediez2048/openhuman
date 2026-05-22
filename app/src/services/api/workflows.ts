@@ -119,7 +119,10 @@ export const workflowsApi = {
    * Fire a manual dispatch (F-7). Returns the new `RunId`.
    * `initiator` defaults to `User` server-side when omitted.
    */
-  runNow: async (workflow_id: WorkflowId, initiator: ManualInitiator = 'user'): Promise<RunId> => {
+  runNow: async (
+    workflow_id: WorkflowId,
+    initiator: ManualInitiator = { type: 'user' },
+  ): Promise<RunId> => {
     const raw = await callCoreRpc<RunId | RpcOutcomeEnvelope<RunId>>({
       method: 'openhuman.workflows_run_now',
       params: { workflow_id, initiator },

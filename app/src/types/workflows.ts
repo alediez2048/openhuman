@@ -210,7 +210,18 @@ export interface RunWithSteps {
   steps: RunStep[];
 }
 
-export type ManualInitiator = 'user' | 'agent' | { chat: { thread_id: string } };
+/**
+ * Wire shape of the Rust `ManualInitiator` enum (workflows/types.rs).
+ * `#[serde(tag = "type", rename_all = "snake_case")]` — every variant
+ * serializes as `{ "type": <snake_case_name>, ...fields }`. The
+ * frontend MUST send the discriminated object, not a bare string —
+ * passing `"user"` as a string deserializes as `invalid type: string
+ * "user", expected internally tagged enum ManualInitiator`.
+ */
+export type ManualInitiator =
+  | { type: 'user' }
+  | { type: 'agent'; session_id: string }
+  | { type: 'catalog'; template_id: string };
 
 // ── Proposals (F-11 / F-12 / F-14) ──────────────────────────────────────
 
