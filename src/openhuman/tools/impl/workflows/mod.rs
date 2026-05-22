@@ -18,6 +18,7 @@
 //! [`crate::openhuman::workflows::executor::READ_ONLY_WORKFLOW_TOOL_NAMES`]
 //! and [`crate::openhuman::workflows::executor::build_node_agent_definition`].
 
+mod channel_send_stub;
 mod get;
 mod get_run;
 mod list;
@@ -28,10 +29,12 @@ mod propose_disable;
 mod propose_enable;
 mod propose_run_now;
 mod propose_update;
+mod webview_account_send_stub;
 
 #[cfg(test)]
 mod tests;
 
+pub use channel_send_stub::ChannelSendStubTool;
 pub use get::WorkflowGetTool;
 pub use get_run::WorkflowsGetRunTool;
 pub use list::WorkflowListTool;
@@ -42,6 +45,7 @@ pub use propose_disable::WorkflowProposeDisableTool;
 pub use propose_enable::WorkflowProposeEnableTool;
 pub use propose_run_now::WorkflowProposeRunNowTool;
 pub use propose_update::WorkflowProposeUpdateTool;
+pub use webview_account_send_stub::WebviewAccountSendStubTool;
 
 /// Stable tool name for [`WorkflowListTool`]. F-8's allowlist references
 /// this verbatim — keep in sync with

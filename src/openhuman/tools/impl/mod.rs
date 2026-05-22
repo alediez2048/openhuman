@@ -21,7 +21,8 @@ pub use network::*;
 pub use system::*;
 pub use whatsapp_data::*;
 pub use workflows::{
-    WorkflowGetTool, WorkflowListTool, WorkflowProposeCreateTool, WorkflowProposeDeleteTool,
-    WorkflowProposeDisableTool, WorkflowProposeEnableTool, WorkflowProposeRunNowTool,
-    WorkflowProposeUpdateTool, WorkflowsGetRunTool, WorkflowsListRunsTool,
+    ChannelSendStubTool, WebviewAccountSendStubTool, WorkflowGetTool, WorkflowListTool,
+    WorkflowProposeCreateTool, WorkflowProposeDeleteTool, WorkflowProposeDisableTool,
+    WorkflowProposeEnableTool, WorkflowProposeRunNowTool, WorkflowProposeUpdateTool,
+    WorkflowsGetRunTool, WorkflowsListRunsTool,
 };

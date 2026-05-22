@@ -155,6 +155,13 @@ pub fn all_tools_with_runtime(
         Box::new(WorkflowProposeEnableTool::new(config.clone())),
         Box::new(WorkflowProposeDisableTool::new(config.clone())),
         Box::new(WorkflowProposeRunNowTool::new(config.clone())),
+        // Stubs for connection-resolved send tools the F-8 executor
+        // names in `build_node_agent_definition`. The real bodies are
+        // Phase 2 (F2-5). Stubs return a clear deferred-feature error
+        // so a workflow execution that reaches them fails loud rather
+        // than hitting an opaque `tool not registered` runtime crash.
+        Box::new(ChannelSendStubTool::new()),
+        Box::new(WebviewAccountSendStubTool::new()),
         Box::new(MemoryStoreTool::new(memory.clone(), security.clone())),
         Box::new(MemoryRecallTool::new(memory.clone())),
         Box::new(MemoryForgetTool::new(memory.clone(), security.clone())),
