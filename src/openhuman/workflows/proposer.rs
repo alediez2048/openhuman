@@ -21,19 +21,29 @@
 //! F-12's `workflow_propose_*` tools share the validator with the
 //! UI-side `workflows_create` path.
 //!
-//! ## F-15 / Phase 1.5 agent invocation
+//! ## LLM invocation — direct provider, not the agent harness
 //!
 //! Both [`AgentDrafter::draft`] and [`AgentUpdateDrafter::draft_update`]
-//! call `Agent::from_config(config).run_single(composed_prompt)` —
-//! the cron-domain pattern. The composed prompt packs the
-//! drafter-specific system instructions + the user's description
-//! into one `run_single` message; the OUTPUT FORMAT
-//! (CRITICAL OVERRIDE) section appended by [`build_system_prompt`]
-//! tells the LLM to emit the proposal as a fenced ```json``` block,
-//! which [`parse_proposal_from_response`] /
-//! [`extract_fenced_json`] pulls out and validates.
+//! issue a one-shot `Provider::chat_with_system` call against the
+//! `"agentic"` workload provider — bypassing the agent harness
+//! entirely. Earlier iterations routed through
+//! `Agent::from_config(config).run_single(...)`, but that defaults
+//! to the **orchestrator** agent whose identity ("you never write
+//! code, delegate only when needed") conflicts with the drafter's
+//! contract of emitting a fenced ```json``` proposal block. Live
+//! testing showed the orchestrator returning natural-language
+//! refusals / delegation attempts instead of the required JSON,
+//! exhausting `draft_with_retries`' budget on every chat-driven
+//! create attempt.
 //!
-//! The placeholder bodies F-11/F-12 originally shipped are gone.
+//! The drafter is a one-shot LLM call with a precise system prompt
+//! ([`build_system_prompt`] composes
+//! `workflow_builder.md` + live connections snapshot + any prior-attempt
+//! validation error + the OUTPUT FORMAT instruction) and a tightly-
+//! structured JSON output contract — no tools, no iteration, no
+//! agent identity. `chat_with_system` is the right primitive.
+//! [`parse_proposal_from_response`] / [`extract_fenced_json`] pull
+//! the JSON out of the response and validate it.
 //!
 //! [`workflow_builder.md`]: ../../agent/prompts/workflow_builder.md
 
@@ -200,34 +210,49 @@ impl Drafter for AgentDrafter {
     }
 }
 
-/// Shared agent invocation used by both [`AgentDrafter`] and
-/// [`AgentUpdateDrafter`]. Builds an [`Agent`] from the project
-/// config, tags events with `"workflows-proposer:<kind>"`, and
-/// streams a single turn against the composed prompt + the user's
-/// description as the message.
+/// Shared LLM invocation used by both [`AgentDrafter`] and
+/// [`AgentUpdateDrafter`].
 ///
-/// The harness's [`Agent::run_single`] returns the assistant's final
-/// text response, which both drafters then JSON-extract.
+/// **Bypasses the agent harness entirely.** Earlier iterations went
+/// through `Agent::from_config(config).run_single(...)`, but that
+/// defaults to the **orchestrator** agent definition — whose system
+/// prompt declares "you never write code / never directly modify
+/// files / delegate only when needed". The composed drafter prompt
+/// (workflow_builder.md + user description) conflicts with that
+/// identity, and live testing showed the model returning natural-
+/// language refusals / delegation rather than the required fenced
+/// `json` proposal block, causing `draft_with_retries` to exhaust
+/// its budget every time.
+///
+/// The drafter is fundamentally a one-shot LLM call with a precise
+/// system prompt and a tightly-structured JSON output contract — no
+/// tools, no iteration, no agent identity. The right primitive is
+/// [`Provider::chat_with_system`] directly. We route through the
+/// `"agentic"` workload factory so the user's configured drafting
+/// model (typically the same one the orchestrator uses for chat
+/// reasoning) is picked up automatically.
 async fn run_agent_for_text(
     config: &crate::openhuman::config::Config,
     system_prompt: &str,
     description: &str,
     kind: &str,
 ) -> Result<String, RunFailure> {
-    let mut agent = crate::openhuman::agent::Agent::from_config(config)
-        .map_err(|e| RunFailure::new(format!("Agent::from_config failed: {e:#}")))?;
-    agent.set_event_context(format!("workflows-proposer:{kind}"), "workflows-proposer");
-    // Pack the drafter-specific instructions + the user's description
-    // into one `run_single` message — same pattern the cron domain
-    // uses (`prefixed_prompt = "[cron:<id> <name>] <prompt>"`). The
-    // agent harness's prefix-cache picks up the prelude on retries.
-    let composed = format!(
-        "# Drafting sub-agent instructions\n\n{system_prompt}\n\n# User request\n\n{description}\n"
+    let (provider, model) =
+        crate::openhuman::inference::provider::create_chat_provider("agentic", config).map_err(
+            |e| RunFailure::new(format!("create_chat_provider(agentic) failed: {e:#}")),
+        )?;
+    tracing::info!(
+        target: "workflows-proposer",
+        kind = %kind,
+        model = %model,
+        system_prompt_chars = system_prompt.len(),
+        description_chars = description.len(),
+        "[workflows-proposer] dispatching one-shot drafter LLM call"
     );
-    agent
-        .run_single(&composed)
+    provider
+        .chat_with_system(Some(system_prompt), description, &model, 0.2)
         .await
-        .map_err(|e| RunFailure::new(format!("agent.run_single failed: {e:#}")))
+        .map_err(|e| RunFailure::new(format!("provider.chat_with_system failed: {e:#}")))
 }
 
 /// Extract a [`WorkflowProposal`] from the LLM's text response.
