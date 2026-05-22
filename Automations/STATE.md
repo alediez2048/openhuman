@@ -13,9 +13,13 @@ A fresh session should read this file first to know where the initiative stands.
 
 **Phase 1 (Workflows Foundation) is SHIPPED** to `alediez2048/main`, including the Phase 1.5 polish that locked the chat-driven create flow end-to-end (real agent invocation in the drafter, `<workflow-preview>` tag parsing in `AgentMessageBubble`, orchestrator allowlist, channel/webview send stubs).
 
-**Phase 2 + Phase 3 ticket sets are DRAFTED** under `Automations/Tickets/phase-2-execution/` (16 tickets) and `Automations/Tickets/phase-3-canvas/` (10 tickets). Neither started. Phase 2 is the next concrete work; Phase 3 is gated on user demand per `prd.md §5.3`.
+**Implementation order (decided 2026-05-22, Option B):** Phase 2 → Phase 3 (Browser Agent) → maybe Phase 4 (Canvas, demand-gated). The prior numbering had Browser Agent as Phase 4 and Canvas as Phase 3; they were swapped on 2026-05-22 to reflect the actual implementation priority. Canvas is gated on user demand per `prd.md §5.3` and may never ship.
 
-**Phase 4 (Browser Agent) ticket set DRAFTED** under `Automations/Tickets/phase-4-browser-agent/` — `F4-overview.md` + 7 sub-tickets (`F4-1` through `F4-7`). Phase 4 is explicitly deferred: do NOT start until Phase 2 and Phase 3 are on `main`. The thesis is a CEF-native CDP-driven browser agent (Stagehand-style `act`/`extract`/`observe` API) that drives the user's already-authenticated webview sessions. Additive to Composio, not a replacement. Read `phase-4-browser-agent/F4-overview.md` for the full architecture + capability gap analysis + reference-repo notes.
+**Phase 2 (Execution Depth) ticket set DRAFTED** under `Automations/Tickets/phase-2-execution/` (16 tickets). The next concrete work after F-16's Phase 1.5 polish landed.
+
+**Phase 3 (Browser Agent) ticket set DRAFTED** under `Automations/Tickets/phase-3-browser-agent/` — `F3-overview.md` + 7 sub-tickets (`F3-1` through `F3-7`). Do NOT start until Phase 2 is on `main`; Phase 4 (canvas) is **NOT a prerequisite**. The thesis is a CEF-native CDP-driven browser agent (Stagehand-style `act`/`extract`/`observe` API) that drives the user's already-authenticated webview sessions. Additive to Composio, not a replacement. Read `phase-3-browser-agent/F3-overview.md` for the full architecture + capability gap analysis + reference-repo notes.
+
+**Phase 4 (Canvas Editor) ticket set DRAFTED** under `Automations/Tickets/phase-4-canvas/` (10 tickets). **Gated on explicit user demand** — do not start unless a user asks for canvas editing in a way the existing chat + Linear-row list view can't satisfy. Per `prd.md §5.3`. The current chat-driven creation flow + the expanded inline workflow card UI may already cover the need.
 
 ---
 
@@ -65,7 +69,7 @@ A fresh session should read this file first to know where the initiative stands.
 - **Hero E2E spec** — `workflows-agent-creation.spec.ts` per F-15's original deliverable. The components + agent invocation are all wired today; the E2E spec authoring is the missing piece.
 - **30-day soft-delete + retention sweep** — F-2 hard-deletes today; FR-1.3.4 retention sweep deferred to F2-14.
 - **`active_hours` enforcement on cron** — F-7 ignored the field; F2-15.
-- **Visual canvas + transform/await/fan_out** — Phase 3.
+- **Visual canvas + transform/await/fan_out** — Phase 4.
 
 ---
 
@@ -92,7 +96,7 @@ These were surfaced by a debugging session the user kicked off after testing rev
 
 ---
 
-## Phase 2 + Phase 3 ticket sets
+## Phase 2 + Phase 4 ticket sets
 
 Drafted in commit `90e4b7d6`.
 
@@ -107,25 +111,25 @@ Drafted in commit `90e4b7d6`.
 - F2-15: active_hours enforcement
 - F2-16: Hero + catalog E2E + closure
 
-**Phase 3 — `Automations/Tickets/phase-3-canvas/`** — 10 tickets, ~60h:
-- F3-1: @xyflow/react integration + read-only render
-- F3-2..F3-3: Palette + per-node config drawer
-- F3-4..F3-5: Edge wiring/DAG + live run highlighting
-- F3-6..F3-8: transform/await_human_approval/fan_out node kinds
-- F3-9: Canvas-driven create flow
-- F3-10: Hero E2E + closure
+**Phase 3 — `Automations/Tickets/phase-3-browser-agent/`** — overview + 7 sub-tickets, ~23–33 working days for Phase 3.1. The next priority after Phase 2:
+- F3-overview: thesis + 5 architectural forks + capability gap analysis + reference-repo notes
+- F3-1: CDP automation primitives (Rust) — 3–5 days
+- F3-2: Page perception (DOM + a11y tree grounding) — 3–4 days
+- F3-3: LLM-facing tools (browser_observe / browser_act / browser_extract) — 4–6 days
+- F3-4: Workflow node integration (`NodeKind::BrowserAction`) — 2–3 days
+- F3-5: Live-preview UI surface — 4–5 days
+- F3-6: Safety preamble + dry-run + cost caps + audit log — 3–4 days
+- F3-7: Vision-grounded fallback (Anthropic computer-use style, opt-in) — 4–6 days
 
-**Phase 4 — `Automations/Tickets/phase-4-browser-agent/`** — overview + 7 sub-tickets, ~23–33 working days for Phase 4.1:
-- F4-overview: thesis + 5 architectural forks + capability gap analysis + reference-repo notes
-- F4-1: CDP automation primitives (Rust) — 3–5 days
-- F4-2: Page perception (DOM + a11y tree grounding) — 3–4 days
-- F4-3: LLM-facing tools (browser_observe / browser_act / browser_extract) — 4–6 days
-- F4-4: Workflow node integration (`NodeKind::BrowserAction`) — 2–3 days
-- F4-5: Live-preview UI surface — 4–5 days
-- F4-6: Safety preamble + dry-run + cost caps + audit log — 3–4 days
-- F4-7: Vision-grounded fallback (Anthropic computer-use style, opt-in) — 4–6 days
+Phase 3.2 (cloud Chromium / Playwright sidecar) is captured in F3-overview's "explicitly deferred" section. Do not start Phase 3.2 until Phase 3.1 is on `main`.
 
-Phase 4.2 (cloud Chromium / Playwright sidecar) is captured in F4-overview's "explicitly deferred" section. Do not start P4 until P2 and P3 are on `main`.
+**Phase 4 — `Automations/Tickets/phase-4-canvas/`** — 10 tickets, ~60h. **Demand-gated** per `prd.md §5.3`; the current chat-driven creation + expanded list-row workflow card may already cover the need:
+- F4-1: @xyflow/react integration + read-only render
+- F4-2..F4-3: Palette + per-node config drawer
+- F4-4..F4-5: Edge wiring/DAG + live run highlighting
+- F4-6..F4-8: transform/await_human_approval/fan_out node kinds
+- F4-9: Canvas-driven create flow
+- F4-10: Hero E2E + closure
 
 Each phase ships a README index listing open OQs to resolve in the pre-phase brainstorm before starting ticket #1.
 

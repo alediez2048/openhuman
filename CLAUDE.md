@@ -6,9 +6,11 @@ Narrative architecture: [`gitbooks/developing/architecture.md`](gitbooks/develop
 
 > **Active initiative — Workflows & Automations.** Read [`Automations/STATE.md`](Automations/STATE.md) first.
 > - **Phase 0** (Connections Hub at `/connections`) — shipped to `main`.
-> - **Phase 1** (Workflows Foundation, F-1 → F-15) + **Phase 1.5** polish — landed on `main`. End-to-end chat-driven create / run / history works for Composio-routed workflows; Channel / Webview sender nodes are deliberate Phase 2 stubs. Tickets: `Automations/Tickets/phase-1-foundation/`.
-> - **Phase 2** (Execution Depth — multi-node chains, real channel/webview send, retries, scheduler) — 16 tickets drafted at `Automations/Tickets/phase-2-execution/`, not started.
-> - **Phase 3** (Canvas Editor) — 10 tickets drafted at `Automations/Tickets/phase-3-canvas/`, not started.
+> - **Phase 1** (Workflows Foundation, F-1 → F-16) + **Phase 1.5** polish — landed on `main`. End-to-end chat-driven create / run / history works for Composio-routed workflows; F-16 closed the executor-side ADR-016 allowlist enforcement gap. Tickets: `Automations/Tickets/phase-1-foundation/`.
+> - **Phase 2** (Execution Depth — multi-node chains, real channel/webview send, retries, scheduler) — 16 tickets drafted at `Automations/Tickets/phase-2-execution/`, not started. **Next priority.**
+> - **Phase 3** (Browser Agent — CEF-native CDP-driven UI automation, Stagehand-style act/extract/observe API) — overview + 7 sub-tickets drafted at `Automations/Tickets/phase-3-browser-agent/`, not started. Depends on Phase 2; **NOT** dependent on Phase 4.
+> - **Phase 4** (Canvas Editor) — 10 tickets drafted at `Automations/Tickets/phase-4-canvas/`, **demand-gated** per `prd.md §5.3` — may never ship.
+> - **Phase ordering decision (2026-05-22, Option B):** P2 → P3 → maybe-P4. Browser Agent and Canvas were swapped (P3↔P4) to reflect actual implementation priority. Canvas is gated on explicit user demand.
 > - ADRs + proposal-preview design: `Automations/ADRs/` and `Automations/Artifacts/designs/`.
 > - **Critical gotcha** — every new agent tool needs to be registered globally **and** added to the orchestrator's `[tools].named` allowlist in `src/openhuman/agent/agents/orchestrator/agent.toml`. The allowlist is an explicit whitelist, not a fallback — missing entries cause the agent to act as if the tool doesn't exist (commit `4c54e649`).
 

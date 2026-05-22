@@ -84,7 +84,7 @@ workflows:
 | `e6ae9ecc` | label Delete as "Move to starter workflows" for Seed-origin rows |
 | `f0a2288c` | wildcard match for empty account_id/channel_id in `is_connected` + boot-time recompute sweep |
 | `eea486f5` | real agent invocation in drafters + chat-runtime `<workflow-preview>` tag rendering |
-| `90e4b7d6` | draft Phase 2 + Phase 3 ticket sets |
+| `90e4b7d6` | draft Phase 2 + Phase 4 ticket sets |
 | `23645a25` | teach chat agent about the Workflows feature (orchestrator prompt) |
 | `4c54e649` | expose workflow tools in the orchestrator `[tools].named` allowlist |
 | `b0e3b73c` | register `channel_send` + `webview_account_send` stub tools |
@@ -176,6 +176,6 @@ notes drift between design intent and as-shipped code.
 - Multi-node chains — Phase 1 ships single-`agent_prompt`-node
   workflows. Phase 2 adds `tool_call`, `http_request`,
   `channel_message`, `condition`, `delay` node kinds.
-- Visual-canvas surface — Phase 3, per ADR-002.
+- Visual-canvas surface — Phase 4, per ADR-002.
 - New triggers (`webhook` / `composio_event` / `channel_message`),
   RU-5..RU-9 templates — Phase 2.

@@ -394,7 +394,7 @@ aggregator snapshot.
   so a future template can't ship a 5-field cron that breaks the
   validator.
 - **Phase 1 degradation of RU-2** — the "true" RU-2 uses
-  `await_human_approval` (Phase 3 node kind). The Phase 1 template
+  `await_human_approval` (Phase 4 node kind). The Phase 1 template
   queues drafts to Telegram for manual copy-paste; documented in
   the template's `rationale_at_seed` so the user understands the
   difference.
@@ -1071,7 +1071,7 @@ mirrors F-10's negative allowlist test for that surface.
     `nodes`.
   - `UnsupportedNodeKind { node_kind, phase }` via
     `allowed_node_kinds(phase)` (Phase 1 = `[AgentPrompt]`; Phase 2
-    adds 7 kinds; Phase 3 adds `FanOut`).
+    adds 7 kinds; Phase 4 adds `FanOut`).
   - `InvalidCron { expr, parse_error }` — routes through
     `cron::normalize_expression` (5-field → 6-field) so
     `*/15 * * * *` parses without the caller knowing about the
@@ -1759,10 +1759,10 @@ Walked every ADR in `Automations/ADRs/`. As-shipped status:
 | ADR | Title | Status | Notes |
 |---|---|---|---|
 | 001 | Nav placement (bottom-tab) | ✓ As spec'd | F-4 added `nav.workflows` to `BottomTabBar.tsx`. |
-| 002 | Phase 1 scope = foundation + execution | ✓ As spec'd | F-1..F-15 cover the spec'd scope; visual canvas deferred to Phase 3 per ADR. |
+| 002 | Phase 1 scope = foundation + execution | ✓ As spec'd | F-1..F-15 cover the spec'd scope; visual canvas deferred to Phase 4 per ADR. |
 | 003 | Separate SQLite databases | ✓ As spec'd | `workflows.db` separate from `connections.db` per F-1 (`store.rs` opens its own connection). |
 | 004 | Templates shipped as in-repo JSON | ✓ As spec'd | F-5 bundles 4 RU-* templates via `include_str!`. |
-| 005 | Positioning: hybrid external platforms | ✓ Documented | n8n / Zapier / IFTTT / Make are Phase 4 + indefinitely deferred. README's "Deferred follow-ups" captures this. |
+| 005 | Positioning: hybrid external platforms | ✓ Documented | n8n / Zapier / IFTTT / Make are Phase 3 + indefinitely deferred. README's "Deferred follow-ups" captures this. |
 | 006 | Connections Hub as Phase 0 | ✓ As spec'd | Phase 0 shipped before Phase 1; F-3 reads its honest-connection truth table via `ConnectionsSnapshot::is_connected`. |
 | 007 | Chat as primary creation path | ⚠ Partial | F-12 ships the propose tools; F-15 documents the chat-runtime protocol extension as Phase 1.5. Components + tools + drafter all live; integration ticket pending. |
 | 008 | Starter templates as read-only catalog | ✓ As spec'd | F-5 ops never mutate; F-6 [Add] flow calls `workflows_create` separately. |
@@ -1804,7 +1804,7 @@ end-to-end functional today for Composio-routed workflows.
 | `23645a25` | teach chat agent about the Workflows feature (orchestrator prompt) | Added a Workflows section to `agent/agents/orchestrator/prompt.md` plus a workflow-keyword detection step in the decision tree. Explains the `<workflow-preview>` verbatim-echo contract. |
 | `4c54e649` | expose workflow tools in the orchestrator `[tools].named` allowlist | Discovered via live test: orchestrator's `[tools].named` is an explicit whitelist, not a fallback. Added the 4 read tools + 6 propose tools. The single most impactful bug fix in this Phase 1.5 batch. |
 | `b0e3b73c` | register `channel_send` + `webview_account_send` stub tools | F-8's `build_node_agent_definition` named these by string but no Tool impl existed. Stubs return clear Phase 2 deferral errors instead of silent "tool not found" failures. |
-| `90e4b7d6` | draft Phase 2 + Phase 3 ticket sets | 16 Phase 2 tickets (multi-node + real send + retries + scheduler) + 10 Phase 3 tickets (visual canvas), drafted at the user's request before live testing. |
+| `90e4b7d6` | draft Phase 2 + Phase 4 ticket sets | 16 Phase 2 tickets (multi-node + real send + retries + scheduler) + 10 Phase 4 tickets (visual canvas), drafted at the user's request before live testing. |
 | `1445afb5` | refresh proposer module doc | The module docstring still described the placeholder body; replaced with the as-shipped contract. |
 
 ### Lessons (captured in `.claude/memory.md`)
@@ -1836,7 +1836,7 @@ end-to-end functional today for Composio-routed workflows.
 
 ### What's still genuinely deferred (post-Phase-1.5)
 
-These are Phase 2 / Phase 3 work, not Phase 1.5 follow-ups:
+These are Phase 2 / Phase 4 work, not Phase 1.5 follow-ups:
 
 - Hero E2E spec file in `app/test/e2e/specs/` (the loop works
   manually today; no dedicated WDIO spec yet).
@@ -1846,7 +1846,7 @@ These are Phase 2 / Phase 3 work, not Phase 1.5 follow-ups:
 - 30-day soft-delete retention sweep (FR-1.3.4).
 - `active_hours` enforcement on cron triggers.
 - Dedicated run-history detail view UI.
-- Visual-canvas surface (Phase 3).
+- Visual-canvas surface (Phase 4).
 - New triggers (`webhook` / `composio_event` / `channel_message`)
   + RU-5..RU-9 templates.
 
@@ -1944,4 +1944,4 @@ trapdoor for the next refactorer.
   chat ("Send a Slack message to X" from regular chat).
 - **`model_tier` override on workflow_node**: F-16 logs but does not
   apply per-node model_tier. Phase 2.
-- Remaining Phase 2 / Phase 3 items unchanged.
+- Remaining Phase 2 / Phase 4 items unchanged.
