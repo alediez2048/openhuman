@@ -42,7 +42,15 @@ If you don't already know the exact slug for the action you need, **call `compos
 
 The pattern is always: **`composio_list_tools(toolkit) → composio_execute(tool=<slug>, arguments=<...>)`**. Don't skip the discovery step unless you've already discovered the slug earlier in this same run.
 
-If you're unsure which toolkit is connected, call `composio_list_toolkits` (no arguments) to see the user's currently-enabled list.
+### Discovery scope — DO NOT explore every connected toolkit
+
+Your iteration budget is finite. **Only discover the toolkits the user's prompt actually mentions.** If the prompt says "scan Gmail and notify via Slack", call `composio_list_tools` for `gmail` and `slack` only — NOT for `notion`, `linear`, `googlecalendar`, etc. Parallel-dispatching `composio_list_tools` against every available toolkit will burn your entire iteration budget on discovery and leave nothing for the actual execute calls. The run will terminate as "Succeeded" because every list call succeeded, but no real action will fire and the user will see nothing happen.
+
+If you're genuinely unsure which toolkit is connected for what the user described, call `composio_list_toolkits` (no arguments) ONCE to see the enabled list, then make a minimal-set decision before drilling into specific toolkits.
+
+### Execute the writes, don't just plan them
+
+After discovery, **actually call `composio_execute` for every write the user's prompt requires.** The workflow's purpose is to DO things, not to describe what could be done. If the prompt says "send a Slack DM with the summary", a run that only fetched Gmail and never called the Slack send action is a failed run, regardless of how nice the summary text reads. Save the prose for the final summary line; the meat of the work is in the tool calls.
 
 ## When in doubt
 

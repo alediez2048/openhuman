@@ -3,7 +3,15 @@ display_name = "Workflow Node"
 when_to_use = "Internal-only sub-agent for executing a single `agent_prompt` node inside a workflow run. Never invoked from chat or via `delegate_*`. The workflows executor spawns this agent through `Agent::from_config_for_agent_with_tool_override`, replacing the empty TOML `[tools].named` allowlist with the per-run `NodeAgentDefinition.allowed_tools` (built per ADR-016 from baseline + connection-resolved + read-only workflow tools). This indirection is what gives the executor a stable agent identity to attach to while keeping the actual tool surface dynamic per workflow."
 agent_tier = "worker"
 temperature = 0.3
-max_iterations = 10
+# Default ceiling; the workflow executor overrides this per-run with
+# the workflow's `agent_prompt.iteration_cap` (default 12) via
+# `config.agent.max_tool_iterations` so different workflows can opt
+# into a higher budget when they legitimately need multiple
+# discovery + execute hops. 20 is the floor — Composio workflows
+# typically need ≥4 iterations (list_toolkits + list_tools per
+# toolkit + execute per action + summary). Live testing showed 10
+# was too tight when the LLM dispatches parallel discovery.
+max_iterations = 20
 sandbox_mode = "none"
 
 # This agent is not delegated to from anywhere — the executor builds

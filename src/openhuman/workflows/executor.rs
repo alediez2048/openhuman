@@ -951,8 +951,22 @@ async fn run_agent_prompt(
 
 /// The real (non-test-override) body of [`run_agent_prompt`].
 /// Spawns the `workflow_node` sub-agent against the project config
-/// with the per-run `allowed_tools` override, sets the event
-/// context, calls `run_single`, returns the agent's text response.
+/// with the per-run `allowed_tools` AND `iteration_cap` overrides,
+/// sets the event context, calls `run_single`, returns the agent's
+/// text response.
+///
+/// F-16 follow-up: applies `def.iteration_cap` to
+/// `config.agent.max_tool_iterations` via the same clone-and-mutate
+/// pattern `cron::scheduler::handle_scheduled_job` uses. Without
+/// this override, the agent ran with the workflow_node TOML's
+/// `max_iterations` default — which capped discovery+execute runs
+/// too tightly: live testing 2026-05-22 10:05 showed the LLM
+/// burning 9 iterations on parallel `composio_list_tools` discovery
+/// across 8 toolkits, then hitting iteration 10 ("emit final
+/// summary") before reaching any execute step. The agent reported
+/// `success=true` for all the list calls and the run terminated
+/// `Succeeded` — but no Slack DM or Calendar event was ever
+/// produced because the actual action calls never fired.
 async fn run_workflow_node_agent(
     config: &Config,
     session_id: &str,
@@ -976,8 +990,23 @@ async fn run_workflow_node_agent(
             def.model_tier
         );
     }
+
+    // Clone the config so we can apply the per-workflow iteration
+    // cap without mutating the caller's value. Pattern mirrors
+    // `cron::scheduler::handle_scheduled_job`.
+    let mut effective = config.clone();
+    effective.agent.max_tool_iterations = def.iteration_cap as usize;
+    tracing::info!(
+        target: "workflows-run",
+        "[workflows-run] applying per-workflow max_tool_iterations override: {} \
+         (was {}; default from workflow_node TOML is the workflow_node \
+         max_iterations field)",
+        effective.agent.max_tool_iterations,
+        config.agent.max_tool_iterations,
+    );
+
     let mut agent = crate::openhuman::agent::Agent::from_config_for_agent_with_tool_override(
-        config,
+        &effective,
         "workflow_node",
         def.allowed_tools.clone(),
     )?;
