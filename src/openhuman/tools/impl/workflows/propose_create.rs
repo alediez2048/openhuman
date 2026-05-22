@@ -22,6 +22,7 @@ use crate::openhuman::workflows::health::ConnectionsSnapshot;
 use crate::openhuman::workflows::proposer::{self, AgentDrafter, Drafter, DEFAULT_MAX_ATTEMPTS};
 use crate::openhuman::workflows::types::DraftFailure;
 use async_trait::async_trait;
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use serde_json::{json, Value};
 use std::sync::Arc;
 
@@ -133,8 +134,17 @@ impl Tool for WorkflowProposeCreateTool {
         {
             Ok(proposal) => {
                 let json_str = serde_json::to_string(&proposal)?;
+                // Base64-encode the JSON before embedding in the `data=`
+                // attribute so single quotes / double quotes / newlines /
+                // backslashes in the proposal's prompt text can't break
+                // out of the HTML attribute. (Previously single-quoted
+                // `data='{...}'` collided with literal `'` in prompts
+                // like "user's inbox" / "'other' bucket", breaking the
+                // chat-runtime parser.) Frontend base64-decodes before
+                // JSON.parse — see `parseBubbleSegments`.
+                let data_b64 = BASE64.encode(json_str.as_bytes());
                 let preview_tag = format!(
-                    "<workflow-preview kind=\"proposal\" data='{json_str}'></workflow-preview>"
+                    "<workflow-preview kind=\"proposal\" data=\"{data_b64}\"></workflow-preview>"
                 );
                 // The agent harness only forwards `markdown_formatted`
                 // to the LLM when `prefer_markdown_tool_output=true`

@@ -97,8 +97,12 @@ impl Tool for WorkflowProposeEnableTool {
             enabled: !workflow.enabled,
         };
         let json_str = serde_json::to_string(&preview)?;
+        let data_b64 = base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            json_str.as_bytes(),
+        );
         let preview_tag =
-            format!("<workflow-preview kind=\"state\" data='{json_str}'></workflow-preview>");
+            format!("<workflow-preview kind=\"state\" data=\"{data_b64}\"></workflow-preview>");
         let payload = json!({
             "status": "state_preview_ready",
             "render_instructions": "Include the `preview_tag` value verbatim in your user-facing reply. Do not call workflow_propose_enable again — the user clicks Apply on the rendered card.",

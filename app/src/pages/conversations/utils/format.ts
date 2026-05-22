@@ -95,12 +95,16 @@ export interface OpenhumanLinkSegment {
  * (or `<WorkflowEditPreview>` / `<WorkflowDeletePreview>` /
  * `<WorkflowStatePreview>`) inside the chat bubble:
  *
- *     <workflow-preview kind="proposal" data='{...json...}'></workflow-preview>
+ *     <workflow-preview kind="proposal" data="<base64-json>"></workflow-preview>
  *
  * `kind` discriminates the renderer ('proposal' | 'edit' | 'delete'
- * | 'state'); `data` is the JSON-serialised payload the
- * matching component expects. Single quotes around `data` keep the
- * inner JSON's double quotes from clashing with the attribute.
+ * | 'state'); `data` is the **base64-encoded** JSON payload. Base64
+ * is used (instead of inlining the JSON) so single quotes / double
+ * quotes / newlines / backslashes in the proposal's `prompt` text
+ * can't break out of the HTML attribute. The earlier `data='{...}'`
+ * scheme collided with literal `'` in prompts like "user's inbox" or
+ * "'other' bucket" — the regex stopped at the first inner `'` and
+ * the tag rendered as raw text.
  */
 export interface WorkflowPreviewSegment {
   kind: 'workflow_preview';
@@ -118,12 +122,12 @@ export type BubbleSegment = TextSegment | OpenhumanLinkSegment | WorkflowPreview
 const OPENHUMAN_LINK_RE =
   /<openhuman-link\s+path=(?:"([^"]+)"|'([^']+)')\s*>([\s\S]*?)<\/openhuman-link>/gi;
 
-// Match `<workflow-preview kind="proposal" data='{...}'></workflow-preview>`.
-// `data` accepts either single or double quotes for the outer wrapper;
-// the agent prompt instructs the LLM to use single quotes so the JSON's
-// double quotes nest cleanly.
+// Match `<workflow-preview kind="proposal" data="<base64>"></workflow-preview>`.
+// `data` is base64-encoded JSON; the propose tools always emit double-
+// quoted attributes. Single-quoted variant kept for backwards-compat
+// with any in-flight bubbles drafted by an older binary.
 const WORKFLOW_PREVIEW_RE =
-  /<workflow-preview\s+kind=(?:"([^"]+)"|'([^']+)')\s+data=(?:"([\s\S]*?)"|'([\s\S]*?)')\s*>\s*<\/workflow-preview>/gi;
+  /<workflow-preview\s+kind=(?:"([^"]+)"|'([^']+)')\s+data=(?:"([A-Za-z0-9+/=]+)"|'([A-Za-z0-9+/=]+)')\s*>\s*<\/workflow-preview>/gi;
 
 /**
  * Combined tag-extraction pass: walks the content and splits it
@@ -164,18 +168,32 @@ export function parseBubbleSegments(content: string): BubbleSegment[] {
   WORKFLOW_PREVIEW_RE.lastIndex = 0;
   while ((m = WORKFLOW_PREVIEW_RE.exec(content)) !== null) {
     const kindStr = (m[1] ?? m[2] ?? '').trim();
-    const dataStr = (m[3] ?? m[4] ?? '').trim();
+    const dataB64 = (m[3] ?? m[4] ?? '').trim();
     if (
       (kindStr === 'proposal' ||
         kindStr === 'edit' ||
         kindStr === 'delete' ||
         kindStr === 'state') &&
-      dataStr
+      dataB64
     ) {
+      let decoded = '';
+      try {
+        // atob → bytes → UTF-8 string. The Rust side encodes the
+        // JSON's raw bytes, so a TextDecoder round-trip is the
+        // right inverse (atob alone returns Latin-1 chars).
+        const binary = atob(dataB64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        decoded = new TextDecoder('utf-8').decode(bytes);
+      } catch {
+        // Malformed base64 — skip the segment so the text falls
+        // through to the raw renderer rather than crashing.
+        continue;
+      }
       hits.push({
         start: m.index,
         end: m.index + m[0].length,
-        segment: { kind: 'workflow_preview', previewKind: kindStr, data: dataStr },
+        segment: { kind: 'workflow_preview', previewKind: kindStr, data: decoded },
       });
     }
   }
