@@ -21,17 +21,19 @@
 //! F-12's `workflow_propose_*` tools share the validator with the
 //! UI-side `workflows_create` path.
 //!
-//! ## Phase 1 invocation placeholder
+//! ## F-15 / Phase 1.5 agent invocation
 //!
-//! Same constraint F-8 documents: invoking the agent from a
-//! non-Turn context (a propose-tool call inside a chat turn is fine,
-//! but the F-11 standalone path used by tests / future RPCs is not)
-//! requires the `Agent::from_config(...).run_single(prompt)`
-//! invocation that F-15's hero E2E will land. Until then,
-//! [`AgentDrafter`] is a clearly-labelled placeholder that
-//! intentionally returns a `RunFailure` — F-12 + F-14 ship the rest
-//! of the wiring against this surface, and F-15 swaps the body
-//! without changing the [`Drafter`] trait.
+//! Both [`AgentDrafter::draft`] and [`AgentUpdateDrafter::draft_update`]
+//! call `Agent::from_config(config).run_single(composed_prompt)` —
+//! the cron-domain pattern. The composed prompt packs the
+//! drafter-specific system instructions + the user's description
+//! into one `run_single` message; the OUTPUT FORMAT
+//! (CRITICAL OVERRIDE) section appended by [`build_system_prompt`]
+//! tells the LLM to emit the proposal as a fenced ```json``` block,
+//! which [`parse_proposal_from_response`] /
+//! [`extract_fenced_json`] pulls out and validates.
+//!
+//! The placeholder bodies F-11/F-12 originally shipped are gone.
 //!
 //! [`workflow_builder.md`]: ../../agent/prompts/workflow_builder.md
 
