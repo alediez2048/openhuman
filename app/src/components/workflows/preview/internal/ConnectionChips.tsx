@@ -1,7 +1,13 @@
 /**
  * Pill-shaped chips listing the proposal's required connections.
  * Missing ones (per the parallel `missing` list) render with an
- * amber `⚠` prefix + amber border.
+ * amber `⚠` prefix + amber border. Healthy ones render plain.
+ *
+ * Type-led "Connections · …" label rather than a leading emoji
+ * (`🔌` previously). The pills themselves carry the semantic;
+ * a decorative icon ahead of them read as kitsch on the saved-
+ * workflow admin surface. The `⚠` on missing pills stays — it's
+ * a load-bearing signal, not decoration.
  */
 import type { ConnectionRef } from '../../../../types/connections';
 import { useConnectionMeta } from '../hooks/useConnectionMeta';
@@ -21,9 +27,12 @@ export function ConnectionChips({ required, missing }: Props) {
     return null;
   }
   return (
-    <div className="flex items-center gap-1.5 mt-1.5 flex-wrap" aria-label="Required connections">
-      <span aria-hidden className="text-xs text-stone-500 dark:text-neutral-500 select-none">
-        🔌
+    <div
+      className="flex items-baseline gap-1.5 mt-1.5 flex-wrap"
+      aria-label="Required connections">
+      <span className="text-xs font-medium text-stone-500 dark:text-neutral-500">Connections</span>
+      <span className="text-xs text-stone-300 dark:text-neutral-600" aria-hidden>
+        ·
       </span>
       {metas.map((m, i) => {
         const ref = required[i]!;

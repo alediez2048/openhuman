@@ -470,6 +470,16 @@ const es5: TranslationMap = {
   'workflows.card.never_run': 'Never run',
   'workflows.list_error': 'Couldn’t load your workflows.',
   'workflows.list_retry': 'Retry',
+  'workflows.search_placeholder': 'Search workflows…',
+  'workflows.filter_label': 'Filter by status',
+  'workflows.filter_all': 'All',
+  'workflows.filter_ready': 'Ready',
+  'workflows.filter_attention': 'Needs attention',
+  'workflows.sort_label': 'Sort',
+  'workflows.sort_last_run': 'Last run',
+  'workflows.sort_name': 'Name',
+  'workflows.sort_created': 'Created',
+  'workflows.no_results': 'No workflows match your filters.',
 
   // Starter catalog (F-6). translate later
   'workflows.starter_subtitle':

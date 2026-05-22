@@ -56,13 +56,29 @@ function summarizeSteps(stepCount: number, t: (key: string) => string): string {
   return t(key).replace('{count}', String(stepCount));
 }
 
-function summarizeLastRun(
-  lastRunAt: string | null | undefined,
-  t: (key: string) => string
-): string {
+/**
+ * Linear-style relative timestamp: "just now", "5m ago", "3h ago",
+ * "2d ago", and full month-day for anything older than a week.
+ * Used in the dense row layout where the full locale-formatted
+ * date is too long to fit.
+ */
+function relativeTime(lastRunAt: string | null | undefined, t: (key: string) => string): string {
   if (!lastRunAt) return t('workflows.card.never_run');
-  const date = new Date(lastRunAt);
-  return `${t('workflows.card.last_run')}: ${date.toLocaleString()}`;
+  const then = new Date(lastRunAt).getTime();
+  const now = Date.now();
+  const diffMs = now - then;
+  if (diffMs < 60_000) return 'just now';
+  const diffMin = Math.floor(diffMs / 60_000);
+  if (diffMin < 60) return `${diffMin}m ago`;
+  const diffHr = Math.floor(diffMin / 60);
+  if (diffHr < 24) return `${diffHr}h ago`;
+  const diffDay = Math.floor(diffHr / 24);
+  if (diffDay < 7) return `${diffDay}d ago`;
+  // > 1 week: explicit date, locale-aware short form (e.g. "May 14").
+  return new Date(lastRunAt).toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+  });
 }
 
 interface Props {
@@ -270,33 +286,48 @@ export default function WorkflowCard({ workflow }: Props) {
   return (
     <div
       data-testid={`workflow-card-${workflow.id}`}
-      className="bg-white dark:bg-neutral-900 rounded-2xl shadow-subtle border border-stone-200 dark:border-neutral-700 p-4">
-      {/* Compact top row — name, health, trigger summary, toggle, overflow. */}
-      <div className="flex items-center gap-4">
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <h3
-              className="text-sm font-semibold text-stone-900 dark:text-neutral-100 truncate"
-              title={workflow.name}>
-              {workflow.name}
-            </h3>
-            <WorkflowHealthBadge health={workflow.health} />
-          </div>
-          <div className="text-xs text-stone-500 dark:text-neutral-400 mt-1 truncate">
-            {summarizeTrigger(workflow.trigger, t)} · {summarizeSteps(workflow.nodes.length, t)}
-          </div>
-          <div className="text-[11px] text-stone-400 dark:text-neutral-500 mt-0.5 truncate">
-            {summarizeLastRun(workflow.last_run_at ?? null, t)}
-          </div>
-          {actionMessage && (
-            <div
-              role="status"
-              aria-live="polite"
-              className="text-[11px] text-primary-700 dark:text-primary-300 mt-1 truncate">
-              {actionMessage}
-            </div>
-          )}
-        </div>
+      className="bg-white dark:bg-neutral-900 rounded-xl border border-stone-200 dark:border-neutral-700 hover:border-stone-300 dark:hover:border-neutral-600 transition-colors">
+      {/* Linear-style single-line row. Click anywhere except the
+          toggle / kebab toggles the expanded view. */}
+      <div className="flex items-center gap-3 px-3 py-2.5">
+        <button
+          type="button"
+          onClick={() => setExpanded(v => !v)}
+          aria-expanded={expanded}
+          aria-controls={`workflow-card-details-${workflow.id}`}
+          data-testid={`workflow-card-toggle-details-${workflow.id}`}
+          className="flex-1 min-w-0 flex items-center gap-3 text-left focus:outline-none focus:ring-2 focus:ring-primary-500 rounded-md py-0.5 -my-0.5">
+          {/* Status dot — green for ready, amber for any other
+              health state. Keeps a single load-bearing glyph; the
+              text label sits in the WorkflowHealthBadge if the
+              user expands. */}
+          <span
+            aria-hidden
+            className={`flex-shrink-0 w-2 h-2 rounded-full ${
+              workflow.health.type === 'ready'
+                ? 'bg-sage-500'
+                : workflow.health.type === 'last_run_failed'
+                  ? 'bg-coral-500'
+                  : 'bg-amber-500'
+            }`}
+            title={workflow.health.type}
+          />
+          <h3
+            className="text-sm font-medium text-stone-900 dark:text-neutral-100 truncate"
+            title={workflow.name}>
+            {workflow.name}
+          </h3>
+          <span className="text-xs text-stone-400 dark:text-neutral-500 truncate hidden sm:inline">
+            {summarizeTrigger(workflow.trigger, t)}
+          </span>
+          <span
+            className="ml-auto text-xs text-stone-400 dark:text-neutral-500 whitespace-nowrap"
+            title={
+              workflow.last_run_at ? new Date(workflow.last_run_at).toLocaleString() : undefined
+            }>
+            {relativeTime(workflow.last_run_at, t)}
+          </span>
+        </button>
 
         <WorkflowEnableToggle
           workflowId={workflow.id}
@@ -312,7 +343,7 @@ export default function WorkflowCard({ workflow }: Props) {
             aria-expanded={menuOpen}
             onClick={() => setMenuOpen(v => !v)}
             data-testid={`workflow-card-overflow-${workflow.id}`}
-            className="p-1.5 text-stone-500 dark:text-neutral-400 hover:bg-stone-100 dark:hover:bg-neutral-800 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500">
+            className="p-1 text-stone-400 hover:text-stone-700 dark:text-neutral-500 dark:hover:text-neutral-200 hover:bg-stone-100 dark:hover:bg-neutral-800 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500">
             <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
               <path d="M10 6a2 2 0 110-4 2 2 0 010 4zM10 12a2 2 0 110-4 2 2 0 010 4zM10 18a2 2 0 110-4 2 2 0 010 4z" />
             </svg>
@@ -363,25 +394,25 @@ export default function WorkflowCard({ workflow }: Props) {
         </div>
       </div>
 
-      {/* Show / Hide details — drives an inline expansion that mirrors
-          the proposal-preview detail panel (description + trigger
-          line + connection chips + collapsible sections for agent
-          prompt / required connections / settings). */}
-      <button
-        type="button"
-        onClick={() => setExpanded(v => !v)}
-        aria-expanded={expanded}
-        aria-controls={`workflow-card-details-${workflow.id}`}
-        data-testid={`workflow-card-toggle-details-${workflow.id}`}
-        className="mt-3 text-xs text-primary-600 hover:text-primary-700 hover:underline flex items-center gap-1">
-        <span aria-hidden>{expanded ? '⌃' : '⌄'}</span>
-        {expanded ? t('workflows.preview.hide_details') : t('workflows.preview.show_details')}
-      </button>
+      {actionMessage && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="px-3 pb-2 text-[11px] text-primary-700 dark:text-primary-300 truncate -mt-1">
+          {actionMessage}
+        </div>
+      )}
 
       {expanded && (
         <div
           id={`workflow-card-details-${workflow.id}`}
-          className="mt-2 border-t border-stone-100 dark:border-neutral-700 pt-3">
+          className="border-t border-stone-100 dark:border-neutral-700 px-3 py-3">
+          <div className="flex items-center gap-2 mb-2">
+            <WorkflowHealthBadge health={workflow.health} />
+            <span className="text-[11px] text-stone-400 dark:text-neutral-500">
+              {summarizeSteps(workflow.nodes.length, t)}
+            </span>
+          </div>
           {workflow.description && (
             <p className="text-xs text-stone-600 dark:text-neutral-300 mb-2">
               {workflow.description}

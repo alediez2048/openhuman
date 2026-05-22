@@ -64,12 +64,24 @@ describe('<WorkflowCard>', () => {
     vi.clearAllMocks();
   });
 
-  it('renders name + health badge + trigger summary + step count', () => {
+  it('compact row shows name + trigger summary; expanded shows health badge + step count', () => {
+    // Post-Linear-layout: the compact row carries name + trigger
+    // summary inline. Health badge + step count moved into the
+    // expanded body so the dense single-line view stays scannable
+    // for users with 20+ workflows. Asserting both states pins
+    // that contract.
     const wf = buildWorkflow();
     renderCard(wf);
+    // Compact: name is the primary affordance; trigger summary
+    // sits beside it (hidden on very small viewports via Tailwind's
+    // `hidden sm:inline`, but jsdom doesn't apply media queries
+    // so it's present in the DOM here).
     expect(screen.getByText('Morning brief')).toBeInTheDocument();
-    expect(screen.getByTestId('workflow-health-badge-ready')).toBeInTheDocument();
     expect(screen.getByText(/0 8 \* \* 1-5/)).toBeInTheDocument();
+
+    // Expand → health badge + step count visible.
+    fireEvent.click(screen.getByTestId(`workflow-card-toggle-details-${wf.id}`));
+    expect(screen.getByTestId('workflow-health-badge-ready')).toBeInTheDocument();
     expect(screen.getByText(/1 step/i)).toBeInTheDocument();
   });
 
