@@ -151,4 +151,22 @@ named = [
     # `src/openhuman/update/` end-to-end — no parallel release logic.
     "update_check",
     "update_apply",
+    # Workflows (F-10 + F-12). Four read-only tools so the agent can
+    # answer "what workflows do I have / when did X run / what did Y
+    # output". Six propose-only tools that return a markdown body
+    # with a `<workflow-preview>` tag the chat-runtime
+    # (`AgentMessageBubble`) parses + dispatches to the matching
+    # preview component. ADR-012: there are no mutating workflow
+    # tools — every Save / Apply / Delete is a user click on the
+    # rendered preview card.
+    "workflow_list",
+    "workflow_get",
+    "workflows_list_runs",
+    "workflows_get_run",
+    "workflow_propose_create",
+    "workflow_propose_update",
+    "workflow_propose_delete",
+    "workflow_propose_enable",
+    "workflow_propose_disable",
+    "workflow_propose_run_now",
 ]
