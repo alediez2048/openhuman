@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Phase 2 (Execution Depth) — mockup</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+      /* OpenHuman token approximations */
+      .text-primary-600 { color: #2563eb; }
+      .text-primary-700 { color: #1d4ed8; }
+      .bg-primary-500 { background-color: #2F6EF4; }
+      .bg-primary-50 { background-color: #eff6ff; }
+      .border-primary-200 { border-color: #bfdbfe; }
+      .text-sage-600 { color: #16a34a; }
+      .text-sage-700 { color: #15803d; }
+      .bg-sage-50 { background-color: #f0fdf4; }
+      .border-sage-300 { border-color: #86efac; }
+      .text-amber-700 { color: #b45309; }
+      .bg-amber-50 { background-color: #fffbeb; }
+      .border-amber-300 { border-color: #fcd34d; }
+      .text-coral-700 { color: #b91c1c; }
+      .bg-coral-50 { background-color: #fef2f2; }
+      .text-stone-900 { color: #1c1917; }
+      .text-stone-700 { color: #44403c; }
+      .text-stone-500 { color: #78716c; }
+      .text-stone-400 { color: #a8a29e; }
+      .bg-stone-50 { background-color: #fafaf9; }
+      .bg-stone-100 { background-color: #f5f5f4; }
+      .border-stone-200 { border-color: #e7e5e4; }
+      body { font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; background: #fafaf9; }
+      .node-edge { stroke: #94a3b8; stroke-width: 1.5; fill: none; }
+      .node-edge-active { stroke: #2F6EF4; stroke-width: 2; fill: none; }
+      .annotation { color: #b45309; font-size: 11px; font-style: italic; }
+    </style>
+  </head>
+  <body class="p-8">
+    <header class="max-w-5xl mx-auto mb-8">
+      <h1 class="text-3xl font-bold text-stone-900 mb-2">Phase 2 — Execution Depth</h1>
+      <p class="text-stone-700">
+        What you'd be missing if you defer P2 to do P4 first. Each section is one of the
+        capabilities P2 ships that doesn't exist in Phase 1 today.
+      </p>
+      <p class="text-amber-700 text-sm mt-3 italic">
+        Note: P2 is also the hard prerequisite for P4's `BrowserAction` workflow node
+        (multi-node infrastructure lives in F2-1). Skipping P2 isn't really an option;
+        the choice is P2-then-P3-then-P4 vs P2-then-P4-then-skip-P3.
+      </p>
+    </header>
+
+    <!-- ───────────────────────────────────────────────────────── -->
+    <section class="max-w-5xl mx-auto mb-12">
+      <h2 class="text-xl font-semibold text-stone-900 mb-1">1. Multi-node workflows</h2>
+      <p class="text-stone-500 text-sm mb-4">
+        Phase 1 today: exactly ONE `agent_prompt` node per workflow. Phase 2 adds chains.
+      </p>
+
+      <div class="bg-white rounded-2xl border border-primary-200 p-5 max-w-[640px]">
+        <div class="flex items-start gap-3 mb-4">
+          <div class="flex-shrink-0 w-10 h-10 rounded-lg bg-primary-50 flex items-center justify-center text-2xl">⚡</div>
+          <div class="flex-1">
+            <div class="flex items-center gap-2 flex-wrap">
+              <h3 class="font-semibold text-stone-900">New Stripe payment → Notion + Slack</h3>
+              <span class="text-xs text-sage-700">• high</span>
+            </div>
+            <p class="text-sm text-stone-500 mt-0.5">
+              When a Stripe webhook fires, create a Notion page, wait 5 minutes, then notify
+              Slack — unless the payment is below $10 (then just log it).
+            </p>
+          </div>
+        </div>
+        <div class="text-xs">
+          <div class="font-medium text-stone-500">Trigger</div>
+          <div class="text-stone-700 mt-0.5">Webhook · POST /workflows/stripe-payments</div>
+        </div>
+
+        <div class="mt-4 border-t border-stone-200 pt-4">
+          <div class="font-medium text-stone-500 text-xs mb-3">Steps (4)</div>
+          <div class="space-y-2">
+            <div class="flex items-center gap-3 px-3 py-2 bg-stone-50 rounded-lg">
+              <span class="text-xs font-mono text-stone-500">1</span>
+              <span class="text-xs font-medium px-2 py-0.5 rounded-full bg-primary-50 text-primary-700 border border-primary-200">condition</span>
+              <span class="text-xs text-stone-700">amount &gt;= $10 ?</span>
+            </div>
+            <div class="ml-6 flex items-center gap-3 px-3 py-2 bg-stone-50 rounded-lg">
+              <span class="text-xs font-mono text-stone-500">2a</span>
+              <span class="text-xs font-medium px-2 py-0.5 rounded-full bg-primary-50 text-primary-700 border border-primary-200">tool_call</span>
+              <span class="text-xs text-stone-700">composio_execute · NOTION_CREATE_PAGE</span>
+            </div>
+            <div class="ml-6 flex items-center gap-3 px-3 py-2 bg-stone-50 rounded-lg">
+              <span class="text-xs font-mono text-stone-500">2b</span>
+              <span class="text-xs font-medium px-2 py-0.5 rounded-full bg-primary-50 text-primary-700 border border-primary-200">delay</span>
+              <span class="text-xs text-stone-700">wait 5 minutes</span>
+            </div>
+            <div class="ml-6 flex items-center gap-3 px-3 py-2 bg-stone-50 rounded-lg">
+              <span class="text-xs font-mono text-stone-500">2c</span>
+              <span class="text-xs font-medium px-2 py-0.5 rounded-full bg-primary-50 text-primary-700 border border-primary-200">channel_message</span>
+              <span class="text-xs text-stone-700">Slack · #payments</span>
+            </div>
+            <div class="ml-6 flex items-center gap-3 px-3 py-2 bg-stone-50 rounded-lg">
+              <span class="text-xs font-mono text-stone-500">3</span>
+              <span class="text-xs font-medium px-2 py-0.5 rounded-full bg-stone-100 text-stone-700 border border-stone-200">http_request</span>
+              <span class="text-xs text-stone-700">POST internal logs endpoint (else-branch)</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="mt-5 flex items-center justify-end gap-2">
+          <button class="px-3 py-1.5 text-xs text-stone-600 hover:bg-stone-50 rounded-lg">Discard</button>
+          <button class="px-3 py-1.5 text-xs text-primary-700 border border-primary-200 hover:bg-primary-50 rounded-lg">Save (paused)</button>
+          <button class="px-3 py-1.5 text-xs text-white bg-primary-500 hover:opacity-90 rounded-lg font-medium">Save &amp; Enable</button>
+        </div>
+      </div>
+
+      <p class="annotation mt-3 ml-2">
+        ↑ New: 4 node kinds (condition, tool_call, delay, channel_message, http_request),
+        if/else branching, webhook trigger. Today's Phase 1 collapses all of this into one
+        big prompt the agent has to interpret.
+      </p>
+    </section>
+
+    <!-- ───────────────────────────────────────────────────────── -->
+    <section class="max-w-5xl mx-auto mb-12">
+      <h2 class="text-xl font-semibold text-stone-900 mb-1">2. New node kinds catalog</h2>
+      <p class="text-stone-500 text-sm mb-4">
+        Phase 2 ships 5 new node kinds beyond `agent_prompt`. The drafter learns each one
+        + the canvas editor (P3) can drop them into workflows.
+      </p>
+
+      <div class="grid grid-cols-2 lg:grid-cols-3 gap-3">
+        <div class="bg-white rounded-xl border border-stone-200 p-3">
+          <div class="text-xs font-mono text-primary-700 mb-1">tool_call</div>
+          <div class="text-xs text-stone-700">Invoke any registered tool directly (composio_execute, memory_*, http_request) without an LLM step. Cheaper + deterministic.</div>
+        </div>
+        <div class="bg-white rounded-xl border border-stone-200 p-3">
+          <div class="text-xs font-mono text-primary-700 mb-1">http_request</div>
+          <div class="text-xs text-stone-700">First-class HTTP step with URL templating, secrets, JSON-path response extraction.</div>
+        </div>
+        <div class="bg-white rounded-xl border border-stone-200 p-3">
+          <div class="text-xs font-mono text-primary-700 mb-1">channel_message</div>
+          <div class="text-xs text-stone-700">Send to Slack / Telegram / Discord / WhatsApp via the F2-5 outbound layer. Replaces today's "Phase 2 deferred" stub.</div>
+        </div>
+        <div class="bg-white rounded-xl border border-stone-200 p-3">
+          <div class="text-xs font-mono text-primary-700 mb-1">condition</div>
+          <div class="text-xs text-stone-700">If/else branching on a jq-style expression over the previous step's output.</div>
+        </div>
+        <div class="bg-white rounded-xl border border-stone-200 p-3">
+          <div class="text-xs font-mono text-primary-700 mb-1">delay</div>
+          <div class="text-xs text-stone-700">Pause N seconds/minutes/hours between steps (e.g. wait an hour before follow-up).</div>
+        </div>
+        <div class="bg-white rounded-xl border border-stone-200 p-3 border-dashed">
+          <div class="text-xs font-mono text-stone-500 mb-1">await_human_approval</div>
+          <div class="text-xs text-stone-700">Pause the run + push a confirm prompt to the user. (Also in P3.)</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ───────────────────────────────────────────────────────── -->
+    <section class="max-w-5xl mx-auto mb-12">
+      <h2 class="text-xl font-semibold text-stone-900 mb-1">3. await_human_approval — mid-run intervention</h2>
+      <p class="text-stone-500 text-sm mb-4">
+        Workflows can pause and ask. Today Phase 1 runs are all-or-nothing.
+      </p>
+
+      <div class="bg-white rounded-2xl border border-amber-300 p-5 max-w-[520px]">
+        <div class="flex items-center gap-2 mb-3">
+          <span class="w-2 h-2 rounded-full bg-amber-500"></span>
+          <span class="text-xs font-medium text-amber-700">Workflow paused — waiting for your approval</span>
+        </div>
+        <h3 class="font-semibold text-stone-900 text-sm mb-2">Stripe payment → refund follow-up</h3>
+        <p class="text-xs text-stone-600 mb-4">
+          Step 3 wants to <span class="font-semibold">issue a $1,250 refund</span> via Composio Stripe. The workflow was configured to pause for human approval on refunds &gt; $500.
+        </p>
+
+        <div class="bg-stone-50 rounded-lg p-3 mb-4 text-xs space-y-1">
+          <div><span class="text-stone-500">Customer:</span> <span class="text-stone-900">alex@example.com</span></div>
+          <div><span class="text-stone-500">Original charge:</span> <span class="text-stone-900">$1,250.00 on 2026-05-19</span></div>
+          <div><span class="text-stone-500">Reason:</span> <span class="text-stone-900">"product defect" (extracted from support ticket)</span></div>
+        </div>
+
+        <div class="flex items-center justify-end gap-2">
+          <button class="px-3 py-1.5 text-xs text-coral-700 hover:bg-coral-50 rounded-lg border border-stone-200">Reject (cancel run)</button>
+          <button class="px-3 py-1.5 text-xs text-stone-700 hover:bg-stone-50 rounded-lg border border-stone-200">Skip step</button>
+          <button class="px-3 py-1.5 text-xs text-white bg-primary-500 hover:opacity-90 rounded-lg font-medium">Approve &amp; continue</button>
+        </div>
+      </div>
+
+      <p class="annotation mt-3 ml-2">
+        ↑ Today this whole flow has to happen via separate human-in-the-loop chat sessions.
+        With await_human_approval it's a first-class workflow primitive.
+      </p>
+    </section>
+
+    <!-- ───────────────────────────────────────────────────────── -->
+    <section class="max-w-5xl mx-auto mb-12">
+      <h2 class="text-xl font-semibold text-stone-900 mb-1">4. Real Channel + Webview outbound send</h2>
+      <p class="text-stone-500 text-sm mb-4">
+        Today these tools are stubs returning a "Phase 2 deferred" error. F2-5 makes them real.
+      </p>
+
+      <div class="grid grid-cols-2 gap-4">
+        <div class="bg-coral-50 border border-stone-200 rounded-xl p-4">
+          <div class="text-xs font-medium text-coral-700 mb-2">TODAY (Phase 1)</div>
+          <div class="font-mono text-[11px] text-stone-700 bg-white rounded p-2 mb-2 border border-stone-200">
+            tool: channel_send<br>
+            args: { provider: "telegram", body: "..." }<br>
+            <span class="text-coral-700">→ Error: tool is a Phase 2 (F2-5) deliverable<br>and isn't wired yet.</span>
+          </div>
+          <div class="text-xs text-stone-700">
+            Workflows touching Channel or Webview outbound fail loud with this stub. Composio-routed channels work (Slack, Discord), but Telegram Bot API, Webview-based send (LinkedIn, WhatsApp-web, etc.) all dead-end here.
+          </div>
+        </div>
+
+        <div class="bg-sage-50 border border-sage-300 rounded-xl p-4">
+          <div class="text-xs font-medium text-sage-700 mb-2">AFTER F2-5</div>
+          <div class="font-mono text-[11px] text-stone-700 bg-white rounded p-2 mb-2 border border-stone-200">
+            tool: channel_send<br>
+            args: { provider: "telegram", body: "..." }<br>
+            <span class="text-sage-700">→ { status: "sent", message_id: "msg_1234" }</span>
+          </div>
+          <div class="text-xs text-stone-700">
+            Workflows targeting Channel + Webview accounts deliver actual messages. The whole webview-accounts ecosystem (LinkedIn DMs, Telegram-web messages, WhatsApp-web replies) becomes writable.
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ───────────────────────────────────────────────────────── -->
+    <section class="max-w-5xl mx-auto mb-12">
+      <h2 class="text-xl font-semibold text-stone-900 mb-1">5. New triggers</h2>
+      <p class="text-stone-500 text-sm mb-4">
+        Phase 1 supports only cron + manual. Phase 2 adds three event-driven triggers.
+      </p>
+
+      <div class="space-y-3">
+        <div class="bg-white rounded-xl border border-stone-200 p-4">
+          <div class="flex items-center gap-2 mb-1">
+            <span class="text-xs font-mono text-primary-700">webhook</span>
+            <span class="text-xs text-stone-500">F2-9</span>
+          </div>
+          <div class="text-sm text-stone-700">"When my Stripe sends a payment.succeeded webhook, do X." Workflows fire on inbound HTTP. Built-in URL + auth + replay protection.</div>
+        </div>
+        <div class="bg-white rounded-xl border border-stone-200 p-4">
+          <div class="flex items-center gap-2 mb-1">
+            <span class="text-xs font-mono text-primary-700">composio_event</span>
+            <span class="text-xs text-stone-500">F2-10</span>
+          </div>
+          <div class="text-sm text-stone-700">"When a new Gmail arrives matching label X, do Y." Native Composio trigger subscriptions — no polling.</div>
+        </div>
+        <div class="bg-white rounded-xl border border-stone-200 p-4">
+          <div class="flex items-center gap-2 mb-1">
+            <span class="text-xs font-mono text-primary-700">channel_message</span>
+            <span class="text-xs text-stone-500">F2-11</span>
+          </div>
+          <div class="text-sm text-stone-700">"When I get a Telegram DM with 'help', escalate." Inbound from any connected channel becomes a trigger.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ───────────────────────────────────────────────────────── -->
+    <section class="max-w-5xl mx-auto mb-12">
+      <h2 class="text-xl font-semibold text-stone-900 mb-1">What you'd still have without P2</h2>
+      <div class="bg-stone-50 rounded-xl p-4 border border-stone-200">
+        <ul class="text-sm text-stone-700 space-y-1 list-disc list-inside">
+          <li>Single-step (`agent_prompt` only) cron + manual workflows. Today's capability.</li>
+          <li>Chat-driven create flow (F-16 fix is in).</li>
+          <li>Composio-routed everything (Slack, Gmail, Calendar, etc.).</li>
+        </ul>
+      </div>
+      <h2 class="text-xl font-semibold text-stone-900 mt-6 mb-1">What you'd genuinely miss</h2>
+      <div class="bg-amber-50 rounded-xl p-4 border border-amber-300">
+        <ul class="text-sm text-stone-700 space-y-1 list-disc list-inside">
+          <li>Workflows that chain &gt; 1 step deterministically (today's agent has to "reason" through chains, which is slow + flaky).</li>
+          <li>Real outbound for Telegram-Bot / WhatsApp / LinkedIn / etc. (today stubs out).</li>
+          <li>If/else branching, delays, await_human_approval — all of which the user research said matters.</li>
+          <li>Event-driven workflows (webhook / composio_event / channel_message triggers).</li>
+          <li>Retries with backoff on flaky 3rd-party API calls.</li>
+        </ul>
+      </div>
+    </section>
+  </body>
+</html>

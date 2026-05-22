@@ -1,0 +1,349 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Phase 3 (Canvas Editor) — mockup</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+      .text-primary-600 { color: #2563eb; }
+      .text-primary-700 { color: #1d4ed8; }
+      .bg-primary-500 { background-color: #2F6EF4; }
+      .bg-primary-50 { background-color: #eff6ff; }
+      .border-primary-200 { border-color: #bfdbfe; }
+      .border-primary-500 { border-color: #2F6EF4; }
+      .text-sage-700 { color: #15803d; }
+      .bg-sage-50 { background-color: #f0fdf4; }
+      .border-sage-300 { border-color: #86efac; }
+      .text-amber-700 { color: #b45309; }
+      .bg-amber-50 { background-color: #fffbeb; }
+      .border-amber-300 { border-color: #fcd34d; }
+      .text-coral-700 { color: #b91c1c; }
+      .bg-coral-50 { background-color: #fef2f2; }
+      .text-stone-900 { color: #1c1917; }
+      .text-stone-700 { color: #44403c; }
+      .text-stone-500 { color: #78716c; }
+      .text-stone-400 { color: #a8a29e; }
+      .bg-stone-50 { background-color: #fafaf9; }
+      .bg-stone-100 { background-color: #f5f5f4; }
+      .border-stone-200 { border-color: #e7e5e4; }
+      body { font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; background: #fafaf9; }
+      .canvas-bg {
+        background-color: #fafaf9;
+        background-image: radial-gradient(circle, #e7e5e4 1px, transparent 1px);
+        background-size: 20px 20px;
+      }
+      .annotation { color: #b45309; font-size: 11px; font-style: italic; }
+      .edge { stroke: #94a3b8; stroke-width: 2; fill: none; }
+      .edge-active { stroke: #2F6EF4; stroke-width: 2.5; fill: none; stroke-dasharray: 4 3; }
+      .node-card {
+        background: white;
+        border: 1.5px solid #e7e5e4;
+        border-radius: 12px;
+        padding: 10px 14px;
+        min-width: 180px;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+      }
+      .node-card.selected { border-color: #2F6EF4; box-shadow: 0 0 0 2px rgba(47, 110, 244, 0.15); }
+      .node-card.running { border-color: #2F6EF4; background: #eff6ff; }
+      .node-card.completed { border-color: #86efac; background: #f0fdf4; }
+      .pulse-ring {
+        animation: pulse 1.5s ease-in-out infinite;
+      }
+      @keyframes pulse {
+        0%, 100% { opacity: 0.4; transform: scale(1); }
+        50% { opacity: 0.8; transform: scale(1.05); }
+      }
+    </style>
+  </head>
+  <body class="p-8">
+    <header class="max-w-6xl mx-auto mb-8">
+      <h1 class="text-3xl font-bold text-stone-900 mb-2">Phase 3 — Canvas Editor</h1>
+      <p class="text-stone-700">
+        Visual workflow builder on top of P2's multi-node engine. P3 is gated on user demand
+        per PRD §5.3 — meaning if no one explicitly asks for canvas editing, it might never
+        ship. This mockup is the answer to "but what if we skip it?"
+      </p>
+    </header>
+
+    <!-- ───────────────────────────────────────────────────────── -->
+    <section class="max-w-6xl mx-auto mb-12">
+      <h2 class="text-xl font-semibold text-stone-900 mb-1">1. The empty canvas (F3-1, F3-2)</h2>
+      <p class="text-stone-500 text-sm mb-4">
+        New "Open in canvas" entry point from the workflow card → `/workflows/:id/canvas`.
+        Palette on the left; canvas in the middle.
+      </p>
+
+      <div class="bg-white rounded-2xl border border-stone-200 overflow-hidden flex" style="height: 460px;">
+        <!-- Left palette -->
+        <aside class="w-56 border-r border-stone-200 p-3 bg-stone-50">
+          <div class="text-[11px] font-medium text-stone-500 mb-2 uppercase tracking-wide">Triggers</div>
+          <div class="space-y-1.5 mb-4">
+            <div class="px-2.5 py-1.5 bg-white rounded-md border border-stone-200 text-xs text-stone-700 cursor-grab">⏰ Cron</div>
+            <div class="px-2.5 py-1.5 bg-white rounded-md border border-stone-200 text-xs text-stone-700 cursor-grab">👆 Manual</div>
+            <div class="px-2.5 py-1.5 bg-white rounded-md border border-stone-200 text-xs text-stone-700 cursor-grab">🌐 Webhook</div>
+            <div class="px-2.5 py-1.5 bg-white rounded-md border border-stone-200 text-xs text-stone-700 cursor-grab">📩 Channel msg</div>
+          </div>
+          <div class="text-[11px] font-medium text-stone-500 mb-2 uppercase tracking-wide">Steps</div>
+          <div class="space-y-1.5">
+            <div class="px-2.5 py-1.5 bg-white rounded-md border border-stone-200 text-xs text-stone-700 cursor-grab">🤖 agent_prompt</div>
+            <div class="px-2.5 py-1.5 bg-white rounded-md border border-stone-200 text-xs text-stone-700 cursor-grab">🔧 tool_call</div>
+            <div class="px-2.5 py-1.5 bg-white rounded-md border border-stone-200 text-xs text-stone-700 cursor-grab">🔀 condition</div>
+            <div class="px-2.5 py-1.5 bg-white rounded-md border border-stone-200 text-xs text-stone-700 cursor-grab">⏱️ delay</div>
+            <div class="px-2.5 py-1.5 bg-white rounded-md border border-stone-200 text-xs text-stone-700 cursor-grab">🌐 http_request</div>
+            <div class="px-2.5 py-1.5 bg-white rounded-md border border-stone-200 text-xs text-stone-700 cursor-grab">📨 channel_message</div>
+            <div class="px-2.5 py-1.5 bg-white rounded-md border border-stone-200 text-xs text-stone-700 cursor-grab">✋ await_approval</div>
+          </div>
+        </aside>
+
+        <!-- Canvas -->
+        <div class="flex-1 canvas-bg relative">
+          <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-center">
+            <div class="text-stone-400 text-sm">Drag a trigger from the palette to start</div>
+            <div class="text-stone-400 text-xs mt-1">Or open an existing workflow with multi-node config to edit visually</div>
+          </div>
+        </div>
+      </div>
+
+      <p class="annotation mt-3 ml-2">
+        ↑ The palette is grouped by Trigger / Step. Same node-kind taxonomy as P2's drafter prompt.
+        Drag-drop wiring uses `@xyflow/react` (F3-1).
+      </p>
+    </section>
+
+    <!-- ───────────────────────────────────────────────────────── -->
+    <section class="max-w-6xl mx-auto mb-12">
+      <h2 class="text-xl font-semibold text-stone-900 mb-1">2. A populated workflow on the canvas (F3-3, F3-4)</h2>
+      <p class="text-stone-500 text-sm mb-4">
+        Same "Stripe payment → Notion + Slack" workflow from the P2 mockup, but here you
+        see + edit the graph visually. Right panel shows the selected node's config.
+      </p>
+
+      <div class="bg-white rounded-2xl border border-stone-200 overflow-hidden flex" style="height: 560px;">
+        <!-- Palette -->
+        <aside class="w-56 border-r border-stone-200 p-3 bg-stone-50">
+          <div class="text-[11px] font-medium text-stone-500 mb-2 uppercase tracking-wide">Steps</div>
+          <div class="space-y-1.5">
+            <div class="px-2.5 py-1.5 bg-white rounded-md border border-stone-200 text-xs text-stone-700 cursor-grab">🤖 agent_prompt</div>
+            <div class="px-2.5 py-1.5 bg-white rounded-md border border-stone-200 text-xs text-stone-700 cursor-grab">🔧 tool_call</div>
+            <div class="px-2.5 py-1.5 bg-white rounded-md border border-stone-200 text-xs text-stone-700 cursor-grab">🔀 condition</div>
+            <div class="px-2.5 py-1.5 bg-white rounded-md border border-stone-200 text-xs text-stone-700 cursor-grab">⏱️ delay</div>
+            <div class="px-2.5 py-1.5 bg-white rounded-md border border-stone-200 text-xs text-stone-700 cursor-grab">📨 channel_message</div>
+          </div>
+        </aside>
+
+        <!-- Canvas with graph -->
+        <div class="flex-1 canvas-bg relative">
+          <svg width="100%" height="100%" class="absolute inset-0" viewBox="0 0 720 560">
+            <!-- edges -->
+            <path class="edge" d="M 130 80 Q 210 80, 210 180 T 290 280" />
+            <path class="edge" d="M 410 280 L 540 180" />
+            <path class="edge" d="M 410 280 L 540 380" />
+            <path class="edge" d="M 660 180 L 660 360" />
+          </svg>
+
+          <!-- Trigger node -->
+          <div class="absolute" style="top: 60px; left: 50px;">
+            <div class="node-card" style="border-color: #fcd34d; background: #fffbeb;">
+              <div class="text-[10px] font-medium text-amber-700 uppercase tracking-wide mb-0.5">Trigger · Webhook</div>
+              <div class="text-xs font-semibold text-stone-900">POST /stripe-payments</div>
+              <div class="text-[11px] text-stone-500 mt-0.5">$10.00 minimum</div>
+            </div>
+          </div>
+
+          <!-- Condition node -->
+          <div class="absolute" style="top: 260px; left: 200px;">
+            <div class="node-card selected">
+              <div class="text-[10px] font-medium text-primary-700 uppercase tracking-wide mb-0.5">condition</div>
+              <div class="text-xs font-semibold text-stone-900">amount &gt;= 10</div>
+              <div class="text-[11px] text-stone-500 mt-0.5">jq · .amount &gt;= 1000</div>
+            </div>
+          </div>
+
+          <!-- Notion node -->
+          <div class="absolute" style="top: 160px; left: 480px;">
+            <div class="node-card">
+              <div class="text-[10px] font-medium text-primary-700 uppercase tracking-wide mb-0.5">tool_call</div>
+              <div class="text-xs font-semibold text-stone-900">NOTION_CREATE_PAGE</div>
+              <div class="text-[11px] text-stone-500 mt-0.5">Composio · Notion</div>
+            </div>
+          </div>
+
+          <!-- Slack node -->
+          <div class="absolute" style="top: 360px; left: 480px;">
+            <div class="node-card">
+              <div class="text-[10px] font-medium text-primary-700 uppercase tracking-wide mb-0.5">channel_message</div>
+              <div class="text-xs font-semibold text-stone-900">Slack · #payments</div>
+              <div class="text-[11px] text-stone-500 mt-0.5">delay 5m before send</div>
+            </div>
+          </div>
+
+          <!-- Toolbar -->
+          <div class="absolute top-3 right-3 flex items-center gap-2 bg-white rounded-lg border border-stone-200 p-1 shadow-sm">
+            <button class="px-2 py-1 text-xs text-stone-600 hover:bg-stone-50 rounded">−</button>
+            <span class="text-xs text-stone-500 px-1">100%</span>
+            <button class="px-2 py-1 text-xs text-stone-600 hover:bg-stone-50 rounded">+</button>
+            <div class="w-px h-4 bg-stone-200 mx-1"></div>
+            <button class="px-2 py-1 text-xs text-stone-600 hover:bg-stone-50 rounded">Fit</button>
+          </div>
+
+          <!-- Validation toast -->
+          <div class="absolute bottom-3 left-3 bg-sage-50 border border-sage-300 rounded-lg px-3 py-2 text-xs text-sage-700">
+            ✓ Valid graph · 4 nodes · 4 edges · health Ready
+          </div>
+        </div>
+
+        <!-- Right config drawer -->
+        <aside class="w-72 border-l border-stone-200 p-4">
+          <div class="text-[10px] font-medium text-primary-700 uppercase tracking-wide mb-1">Selected node · condition</div>
+          <input value="amount >= 10" class="w-full px-2 py-1.5 text-sm bg-stone-50 border border-stone-200 rounded-md font-mono" />
+          <label class="text-[11px] text-stone-500 mt-3 block">Expression (jq)</label>
+          <input value=".amount &gt;= 1000" class="w-full px-2 py-1.5 text-xs bg-stone-50 border border-stone-200 rounded-md font-mono mt-1" />
+          <label class="text-[11px] text-stone-500 mt-3 block">If-true branch</label>
+          <select class="w-full px-2 py-1.5 text-xs bg-white border border-stone-200 rounded-md mt-1">
+            <option>2a · NOTION_CREATE_PAGE</option>
+          </select>
+          <label class="text-[11px] text-stone-500 mt-3 block">If-false branch</label>
+          <select class="w-full px-2 py-1.5 text-xs bg-white border border-stone-200 rounded-md mt-1">
+            <option>3 · http_request (log only)</option>
+          </select>
+
+          <div class="mt-5 border-t border-stone-100 pt-3">
+            <button class="w-full text-xs text-coral-700 hover:bg-coral-50 rounded-md py-1.5">Delete node</button>
+          </div>
+        </aside>
+      </div>
+
+      <p class="annotation mt-3 ml-2">
+        ↑ Click a node → right drawer (F3-3). Edit jq, change branch targets, etc. Edge wiring
+        + DAG validation (F3-4) means you can't create cycles.
+      </p>
+    </section>
+
+    <!-- ───────────────────────────────────────────────────────── -->
+    <section class="max-w-6xl mx-auto mb-12">
+      <h2 class="text-xl font-semibold text-stone-900 mb-1">3. Live run highlighting (F3-5)</h2>
+      <p class="text-stone-500 text-sm mb-4">
+        Watch a workflow execute on the canvas in real time. Each node lights up as it runs.
+      </p>
+
+      <div class="bg-white rounded-2xl border border-stone-200 overflow-hidden flex" style="height: 460px;">
+        <!-- Canvas with live status -->
+        <div class="flex-1 canvas-bg relative">
+          <svg width="100%" height="100%" class="absolute inset-0" viewBox="0 0 720 460">
+            <path class="edge" d="M 130 80 Q 210 80, 210 180 T 290 230" />
+            <path class="edge-active" d="M 410 230 L 540 130" />
+            <path class="edge" d="M 410 230 L 540 330" stroke-dasharray="3 4" opacity="0.5" />
+          </svg>
+
+          <div class="absolute" style="top: 60px; left: 50px;">
+            <div class="node-card completed">
+              <div class="flex items-center gap-1.5 mb-0.5">
+                <span class="w-1.5 h-1.5 rounded-full" style="background: #16a34a;"></span>
+                <span class="text-[10px] font-medium text-sage-700 uppercase tracking-wide">Trigger · fired</span>
+              </div>
+              <div class="text-xs font-semibold text-stone-900">POST /stripe-payments</div>
+              <div class="text-[11px] text-stone-500 mt-0.5">Completed · 12ms</div>
+            </div>
+          </div>
+
+          <div class="absolute" style="top: 210px; left: 200px;">
+            <div class="node-card completed">
+              <div class="flex items-center gap-1.5 mb-0.5">
+                <span class="w-1.5 h-1.5 rounded-full" style="background: #16a34a;"></span>
+                <span class="text-[10px] font-medium text-sage-700 uppercase tracking-wide">condition · true</span>
+              </div>
+              <div class="text-xs font-semibold text-stone-900">amount &gt;= 10</div>
+              <div class="text-[11px] text-stone-500 mt-0.5">$1,250 ≥ $10 · branch A</div>
+            </div>
+          </div>
+
+          <div class="absolute" style="top: 110px; left: 480px;">
+            <div class="node-card running">
+              <div class="flex items-center gap-1.5 mb-0.5">
+                <span class="w-1.5 h-1.5 rounded-full bg-primary-500 pulse-ring"></span>
+                <span class="text-[10px] font-medium text-primary-700 uppercase tracking-wide">tool_call · running</span>
+              </div>
+              <div class="text-xs font-semibold text-stone-900">NOTION_CREATE_PAGE</div>
+              <div class="text-[11px] text-stone-500 mt-0.5">2.3s elapsed…</div>
+            </div>
+          </div>
+
+          <div class="absolute" style="top: 310px; left: 480px;">
+            <div class="node-card" style="opacity: 0.5;">
+              <div class="text-[10px] font-medium text-stone-500 uppercase tracking-wide mb-0.5">channel_message · queued</div>
+              <div class="text-xs font-semibold text-stone-900">Slack · #payments</div>
+              <div class="text-[11px] text-stone-400 mt-0.5">Waiting on previous step + 5m delay</div>
+            </div>
+          </div>
+
+          <div class="absolute top-3 right-3 bg-primary-50 border border-primary-200 rounded-lg px-3 py-1.5 text-xs text-primary-700 font-medium flex items-center gap-2">
+            <span class="w-1.5 h-1.5 rounded-full bg-primary-500 pulse-ring"></span>
+            Run in progress · 2 of 4 steps complete
+          </div>
+        </div>
+
+        <aside class="w-72 border-l border-stone-200 p-4">
+          <div class="text-xs font-medium text-stone-500 mb-2">Run log</div>
+          <div class="space-y-2 text-xs font-mono">
+            <div class="text-stone-700"><span class="text-stone-400">10:22:01</span> webhook received · $1,250</div>
+            <div class="text-stone-700"><span class="text-stone-400">10:22:01</span> condition true · branch A</div>
+            <div class="text-primary-700"><span class="text-stone-400">10:22:02</span> NOTION_CREATE_PAGE start…</div>
+            <div class="text-stone-400"><span>10:22:??</span> · queued</div>
+          </div>
+          <button class="w-full mt-4 px-3 py-1.5 text-xs text-coral-700 border border-stone-200 hover:bg-coral-50 rounded-md">Cancel run</button>
+        </aside>
+      </div>
+
+      <p class="annotation mt-3 ml-2">
+        ↑ Status streamed via the existing event-bus (the same `WorkflowRunStepStarted` /
+        `WorkflowRunStepCompleted` events that today only update the run-history list).
+      </p>
+    </section>
+
+    <!-- ───────────────────────────────────────────────────────── -->
+    <section class="max-w-6xl mx-auto mb-12">
+      <h2 class="text-xl font-semibold text-stone-900 mb-1">4. Canvas-driven create (F3-9)</h2>
+      <p class="text-stone-500 text-sm mb-4">
+        Today the only way to create a workflow is chat. Canvas-driven create lets the user
+        drag nodes onto a blank canvas and save — useful for visual-first thinkers who
+        struggle to articulate the workflow in prose.
+      </p>
+
+      <div class="bg-stone-50 rounded-xl p-5 border border-stone-200">
+        <ul class="text-sm text-stone-700 space-y-2 list-disc list-inside">
+          <li>Start on `/workflows/new/canvas`. Empty canvas + palette.</li>
+          <li>Drag a trigger → drop on canvas. Right drawer fills in defaults.</li>
+          <li>Drag steps → drop, wire edges between them.</li>
+          <li>"Save" button validates the DAG, hits `workflows_create` with the constructed payload.</li>
+          <li>The same `WorkflowProposal` shape — just authored visually instead of via drafter LLM.</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ───────────────────────────────────────────────────────── -->
+    <section class="max-w-6xl mx-auto mb-12">
+      <h2 class="text-xl font-semibold text-stone-900 mb-1">What you'd still have without P3</h2>
+      <div class="bg-stone-50 rounded-xl p-4 border border-stone-200">
+        <ul class="text-sm text-stone-700 space-y-1 list-disc list-inside">
+          <li>Chat-driven workflow creation (the F-16 path — already polished).</li>
+          <li>The expanded WorkflowCard detail view we just shipped (description, agent prompt, connections, settings).</li>
+          <li>All of P2's multi-node engine + new node kinds, just edited via chat or hand-rolled JSON.</li>
+        </ul>
+      </div>
+      <h2 class="text-xl font-semibold text-stone-900 mt-6 mb-1">What you'd miss</h2>
+      <div class="bg-amber-50 rounded-xl p-4 border border-amber-300">
+        <ul class="text-sm text-stone-700 space-y-1 list-disc list-inside">
+          <li>Visual editing — for users who think in graphs, not prose.</li>
+          <li>Live-run highlighting — watching a workflow execute step-by-step on the canvas.</li>
+          <li>Drag-drop creation — alternative entry point for "I don't know what I want, let me build it visually."</li>
+          <li>Three additional node kinds (transform / await_human_approval / fan_out) — though some of these could ship in P2 if needed.</li>
+        </ul>
+      </div>
+      <p class="text-sm text-stone-700 mt-4">
+        Per the PRD's §5.3, P3 is meant to be gated on user demand precisely because chat-driven
+        creation might already be enough. The mockup above is what you GAIN if you commit to it;
+        skipping it costs you the visual surface but keeps the rest of the system intact.
+      </p>
+    </section>
+  </body>
+</html>
