@@ -15,7 +15,7 @@ A fresh session should read this file first to know where the initiative stands.
 
 **Implementation order (decided 2026-05-22, Option B):** Phase 2 → Phase 3 (Browser Agent) → maybe Phase 4 (Canvas, demand-gated). The prior numbering had Browser Agent as Phase 4 and Canvas as Phase 3; they were swapped on 2026-05-22 to reflect the actual implementation priority. Canvas is gated on user demand per `prd.md §5.3` and may never ship.
 
-**Phase 2 (Execution Depth) ticket set DRAFTED** under `Automations/Tickets/phase-2-execution/` (16 tickets). The next concrete work after F-16's Phase 1.5 polish landed.
+**Phase 2 (Execution Depth) ticket set DRAFTED** under `Automations/Tickets/phase-2-execution/` (16 tickets). Starts AFTER F-17 lands — the 2026-05-22 grill established that F-17's memory loop should land before Phase 2's multi-node chains compound the cost of NOT having memory.
 
 **Phase 3 (Browser Agent) ticket set DRAFTED** under `Automations/Tickets/phase-3-browser-agent/` — `F3-overview.md` + 7 sub-tickets (`F3-1` through `F3-7`). Do NOT start until Phase 2 is on `main`; Phase 4 (canvas) is **NOT a prerequisite**. The thesis is a CEF-native CDP-driven browser agent (Stagehand-style `act`/`extract`/`observe` API) that drives the user's already-authenticated webview sessions. Additive to Composio, not a replacement. Read `phase-3-browser-agent/F3-overview.md` for the full architecture + capability gap analysis + reference-repo notes.
 
@@ -29,7 +29,7 @@ A fresh session should read this file first to know where the initiative stands.
 
 ## What's live on `main` today
 
-### Phase 1 deliverables (F-1 through F-15 + Phase 1.5 polish)
+### Phase 1 deliverables (F-1 through F-16 + Phase 1.5 polish; F-17 drafted, not landed)
 
 | Surface | Status | Where |
 |---|---|---|
@@ -66,7 +66,7 @@ A fresh session should read this file first to know where the initiative stands.
 ### What's a known Phase 1.5 / Phase 2 deferral
 
 - **✅ F-16 (LANDED `3b572f71`, 2026-05-22) — workflow executor enforces ADR-016 allowlist + honest step status.** Closed the executor-side placeholder F-15 left behind: workflow runs now spawn a constrained `workflow_node` sub-agent (no orchestrator persona, no `delegate_*`) with the per-run `def.allowed_tools` allowlist as the override. `composio_execute` is now the obvious LLM choice for the Composio-routed Gmail / Slack / etc. surface — the orchestrator-identity leak that caused 2026-05-21 22:13's silent Slack failure is closed. Step status is honest: a `ToolExecutionCompleted{success:false}` observed during the run forces `RunStatus::Failed` with a clear summary, even when the agent itself returned text. Composio-routed workflows now actually run end-to-end.
-- **🟡 F-17 (DRAFTED 2026-05-22, not started) — wire workflows into the Memory Tree.** Surfaced by the 2026-05-22 status grill: Phase 1 shipped the **doer** half of OpenHuman's "memory and doer" thesis but skipped the memory loop. Workflows are stateless across runs — they don't remember what they sent yesterday, don't accumulate user preferences, don't compound intelligence. F-17 adds runtime-injected pre-run memory recall (3 most-recent prior-run summaries prepended to the agent prompt) + automatic post-run memory store (structured `WorkflowRunMemory` chunk under `workflow:{workflow_id}`). Per-workflow only in Phase 1.5; cross-workflow learning stays agent-opt-in. Spec at `Automations/Tickets/phase-1-foundation/F-17.md`. ~1–2 days. **Worth landing before Phase 2 starts** — Phase 2's multi-node chains compound the cost of NOT having memory (every node in a chain forgets the prior node's run history).
+- **🟡 F-17 (DRAFTED 2026-05-22, NEXT to implement) — wire workflows into the Memory Tree.** Surfaced by the 2026-05-22 status grill: Phase 1 shipped the **doer** half of OpenHuman's "memory and doer" thesis but skipped the memory loop. Workflows are stateless across runs — they don't remember what they sent yesterday, don't accumulate user preferences, don't compound intelligence. F-17 adds runtime-injected pre-run memory recall (3 most-recent prior-run summaries prepended to the agent prompt) + automatic post-run memory store (structured `WorkflowRunMemory` chunk under `workflow:{workflow_id}`). Ground-truth-first write model: `actual` is built from the F-16 event-bus tap (source of truth), `narrative` is the agent's text (cross-checked for drift). Forward-compat `entity_tags: Vec<String>` field auto-tagged from connections (`entity:source:stripe`) + agent-extensible via the `## Entities touched` prompt convention — sets up Phase 5's structured-entity layer. Per-workflow memory only in Phase 1.5; cross-workflow learning stays agent-opt-in. Spec at `Automations/Tickets/phase-1-foundation/F-17.md`. **~2–2.5 days. The next implementation work. Phase 2 starts after F-17 lands.**
 - **Channel send + Webview send** — `channel_send` and `webview_account_send` tools are stubs returning "Phase 2 (F2-5) deferral" errors. Workflows touching Channel or Webview connections in their `allowed_connections` won't actually send messages; they'll fail loud with a clear reason (and now also flip the run to `Failed` honestly per F-16 D, instead of lying as `Succeeded` like before). **Composio-routed channels work** (Slack, Discord, Telegram, etc. via Composio's `composio_execute`). Land F2-5 to unify Channel/Webview send.
 - **Multi-node chains** — executor rejects `nodes.len() != 1` for Phase 1. F2-2 lands it.
 - **Phase 2 trigger types** — webhook, composio_event, channel_message. F2-9/F2-10/F2-11.
@@ -101,7 +101,7 @@ These were surfaced by a debugging session the user kicked off after testing rev
 
 ---
 
-## Phase 2 + Phase 4 ticket sets
+## Drafted phase ticket sets (Phase 2 / 3 / 4 / 5 / 6)
 
 Drafted in commit `90e4b7d6`.
 
@@ -175,11 +175,21 @@ These fail under `pnpm test:rust` and predate the branch:
 
 ## What a fresh session should do first
 
+**Default next action: implement F-17.** Phase 2 does not start until F-17 lands.
+
 1. Read this file (`Automations/STATE.md`) to know where the initiative stands.
 2. Read `CLAUDE.md` for the repo-level commands + conventions.
-3. Read the Phase 1 closure section at the bottom of `Automations/Tickets/phase-1-foundation/DEVLOG.md` for the per-ticket commit table + ADR drift audit.
-4. If starting Phase 2: read `Automations/Tickets/phase-2-execution/README.md` and pick a brainstorm OQ to resolve first. Then go through `F2-1.md`.
-5. If reporting a Phase 1 bug: re-check this file's "Phase 1.5 polish" + "What's a known deferral" sections before assuming a regression — many "missing" features are documented deferrals.
+3. **Read `Automations/Tickets/phase-1-foundation/F-17.md` end-to-end.** It's the primer for the next implementation work. ~2–2.5 days, 7 deliverables (A schema → B pre-run recall → C0 entity-tags → C post-run store → D workflow_node prompt → E drafter prompt → F tests → G docs).
+4. Read F-16's closure section (in `Automations/Tickets/phase-1-foundation/DEVLOG.md`) — F-17 extends F-16's event-bus tap to capture per-call detail, and F-17's ground-truth model depends on F-16's honest-status gate. You need to understand F-16's wire before changing it.
+5. Verify F-16 is healthy on `main`: `cargo test --lib workflows::executor` should pass green (22 tests). If not, fix that BEFORE starting F-17 — F-17 builds on a healthy F-16.
+6. Read the "Phase 1.5 polish" + "What's a known deferral" sections in this file to understand what's intentionally NOT yet in scope. F-17 is the only outstanding Phase 1.5 work.
+7. If a USER tasks you with a Phase 1 bug instead of F-17: re-check this file's deferral sections before assuming regression — many "missing" features are documented deferrals.
+
+After F-17 lands (DEVLOG entry written, STATE.md updated, tests green):
+
+8. Phase 2 starts — read `Automations/Tickets/phase-2-execution/README.md` and resolve the brainstorm OQs first. Then F2-1.
+
+**Do NOT start Phase 3 (browser agent), Phase 4 (canvas — demand-gated), Phase 5 (entity tables — placeholder), or Phase 6 (proactive agent — placeholder) without explicit user direction.** Their tickets exist as planning artifacts, not implementation targets.
 
 ---
 
@@ -196,5 +206,7 @@ These fail under `pnpm test:rust` and predate the branch:
 | `app/src/pages/Workflows/WorkflowsList.tsx` | `/workflows` route |
 | `app/src/pages/conversations/components/AgentMessageBubble.tsx` | Parses `<workflow-preview>` tags |
 | `app/src/pages/conversations/utils/format.ts` | `parseBubbleSegments` includes the tag matcher |
-| `Automations/Tickets/phase-{1-foundation,2-execution,3-canvas}/` | Per-phase ticket sets |
+| `Automations/Tickets/phase-1-foundation/F-17.md` | **The next implementation primer — read first when starting work** |
+| `Automations/Tickets/phase-1-foundation/F-16.md` | Closure context F-17 depends on (event-bus tap + workflow_node) |
+| `Automations/Tickets/phase-{1-foundation,2-execution,3-browser-agent,4-canvas,5-business-entities,6-proactive-agent}/` | Per-phase ticket sets (Phase 5/6 are placeholders only) |
 | `Automations/ADRs/` | 20 ADRs locked across the initiative |
