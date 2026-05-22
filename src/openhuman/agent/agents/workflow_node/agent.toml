@@ -1,0 +1,30 @@
+id = "workflow_node"
+display_name = "Workflow Node"
+when_to_use = "Internal-only sub-agent for executing a single `agent_prompt` node inside a workflow run. Never invoked from chat or via `delegate_*`. The workflows executor spawns this agent through `Agent::from_config_for_agent_with_tool_override`, replacing the empty TOML `[tools].named` allowlist with the per-run `NodeAgentDefinition.allowed_tools` (built per ADR-016 from baseline + connection-resolved + read-only workflow tools). This indirection is what gives the executor a stable agent identity to attach to while keeping the actual tool surface dynamic per workflow."
+agent_tier = "worker"
+temperature = 0.3
+max_iterations = 10
+sandbox_mode = "none"
+
+# This agent is not delegated to from anywhere — the executor builds
+# it directly. `omit_*` flags strip every chat-tier persona section
+# so the prompt body is JUST the workflow_node instructions + the
+# tool catalog.
+omit_identity = true
+omit_memory_context = true
+omit_safety_preamble = false
+omit_skills_catalog = true
+omit_profile = true
+omit_memory_md = true
+
+[model]
+hint = "agentic"
+
+[tools]
+# Empty base allowlist by design — the workflow executor calls
+# `from_config_for_agent_with_tool_override` which REPLACES this
+# `named` list with the per-run `NodeAgentDefinition.allowed_tools`
+# (baseline + connection-resolved + read-only workflow tools per
+# ADR-016). If you ever see this agent spawned with the base empty
+# allowlist, that's the bug — the executor's override path is broken.
+named = []

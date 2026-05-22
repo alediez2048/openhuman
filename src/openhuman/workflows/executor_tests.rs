@@ -608,3 +608,229 @@ async fn orphan_recovery_sweep_on_clean_db_returns_zero() {
     let n = executor::orphan_recovery_sweep(&config).await.unwrap();
     assert_eq!(n, 0);
 }
+
+// ─────────────────────────────────────────────────────────────
+// F-16: honest step status via tool-failure event-bus tap
+// ─────────────────────────────────────────────────────────────
+
+/// Helper to publish a synthetic `ToolExecutionCompleted` event that
+/// the F-16 tap inside `run_agent_prompt` will count toward
+/// `tool_failure_count`. Used by tests that need to assert the
+/// "step Failed because the agent called a denied tool" branch
+/// without bringing up a real LLM provider.
+fn publish_synthetic_tool_failure(run_id: &str) {
+    use crate::core::event_bus::{publish_global, DomainEvent};
+    publish_global(DomainEvent::ToolExecutionCompleted {
+        tool_name: "composio_execute".into(),
+        session_id: format!("workflow:{run_id}"),
+        success: false,
+        elapsed_ms: 42,
+    });
+}
+
+/// F-16: ensure the executor's bus is initialised so the F-16 tap
+/// can subscribe. The bus is a singleton; init_global is a no-op
+/// when already initialised, so it's safe to call from every test.
+fn ensure_event_bus_initialised() {
+    use crate::core::event_bus::init_global;
+    let _ = init_global(128);
+}
+
+/// F-16 — happy path with zero observed tool failures keeps the
+/// existing `Succeeded` semantics. Existing 18 executor tests
+/// already cover this implicitly (the test stub fires no events,
+/// so `tool_failure_count` stays at 0); this test pins the
+/// contract explicitly so an accidental change to "default Failed"
+/// would surface here.
+#[tokio::test]
+async fn run_step_succeeded_when_zero_tool_failure_events_observed() {
+    ensure_event_bus_initialised();
+    let (_dir, config) = config_with_temp_workspace();
+    let created = ops::create(&config, create_request("zero-failure path"))
+        .await
+        .unwrap()
+        .value;
+
+    executor::dispatch_run(
+        &config,
+        created.id.clone(),
+        TriggerSource::Manual {
+            initiator: "user".into(),
+        },
+    )
+    .await
+    .unwrap();
+
+    let terminal = wait_for_terminal_run(&config, &created.id).await;
+    assert!(
+        matches!(terminal.status, RunStatus::Succeeded),
+        "no tool failures should yield Succeeded; got {:?}",
+        terminal.status
+    );
+    let (_run, steps) = store::get_run(&config, &terminal.id)
+        .unwrap()
+        .expect("run row");
+    assert!(matches!(steps[0].status, RunStatus::Succeeded));
+    assert!(
+        steps[0].error.is_none(),
+        "Succeeded step must have no error summary"
+    );
+}
+
+/// F-16 — when the harness reports any tool-call as `success=false`
+/// during the run (denial or executed-with-error), the step status
+/// is overridden to `Failed` with an honest summary, even though
+/// the agent itself returned non-empty text.
+///
+/// We simulate the failure by publishing a synthetic
+/// `ToolExecutionCompleted { success: false, session_id =
+/// "workflow:<run_id>" }` from inside the test stub. The F-16
+/// subscriber inside `run_agent_prompt` is bound to the same
+/// `session_id`, so the counter increments and the caller forces
+/// `RunStatus::Failed`.
+///
+/// This test pins the whole F-16 contract: "Succeeded means tools
+/// fired; Failed means at least one didn't." It's the regression
+/// guard that prevents the pre-F-16 lie ("the agent returned text,
+/// therefore the workflow succeeded") from creeping back.
+#[tokio::test]
+async fn run_step_failed_when_tool_failure_event_observed_during_run() {
+    ensure_event_bus_initialised();
+    // Re-install the override locally so we can fire the synthetic
+    // event between "agent invoked" and "run_single returns". The
+    // module-level INIT helper installs an override that ignores
+    // the run id — for this test we need access to the prompt to
+    // extract the run id, so we replace it here. Using
+    // `set_test_agent_prompt_override` directly is fine: the slot
+    // is a Mutex<Option<...>> and last-writer-wins.
+    use std::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
+    static REPLACED: AtomicU32 = AtomicU32::new(0);
+    if REPLACED.swap(1, AtomicOrdering::Relaxed) == 0 {
+        // First-call replacement is permanent for the suite — that's
+        // fine because the synthetic-failure publish is keyed by the
+        // run id embedded in the prompt below, so other tests that
+        // don't include that marker simply don't trigger a publish.
+        executor::set_test_agent_prompt_override(|prompt, def| {
+            // Stub still echoes the prompt so the existing
+            // assertions on `[test-stub]` text keep passing.
+            let body = format!(
+                "[test-stub] prompt={} ({} chars), allowed_tools={}",
+                prompt,
+                prompt.chars().count(),
+                def.allowed_tools.len()
+            );
+            if let Some(rest) = prompt.strip_prefix("F-16-FAIL-RUN:") {
+                publish_synthetic_tool_failure(rest.trim());
+            }
+            Ok(body)
+        });
+    }
+
+    let (_dir, config) = config_with_temp_workspace();
+    // Two-stage: create the workflow → dispatch → re-fetch the
+    // run id → publish through the stub on next dispatch. Since
+    // the executor materialises the run id BEFORE invoking the
+    // agent, we can't predict it inside the prompt. Instead we
+    // bake a sentinel into the prompt; the stub publishes against
+    // the *current* run id by reading it back via the session_id
+    // tag from the harness. But we don't have access to the
+    // session_id inside the stub. So plan B: publish against
+    // ALL `workflow:*` session ids — the bus tap inside
+    // run_agent_prompt filters by exact match anyway. We hack
+    // this by publishing using the wildcard signal "workflow:*"
+    // which won't match; instead, dispatch the workflow first to
+    // get the run_id, then publish AFTER the agent has started
+    // but BEFORE it returns. Simpler: publish from a spawned
+    // task tied to the dispatch.
+    let created = ops::create(&config, create_request("F-16: failure-path workflow"))
+        .await
+        .unwrap()
+        .value;
+    let run_id = executor::dispatch_run(
+        &config,
+        created.id.clone(),
+        TriggerSource::Manual {
+            initiator: "user".into(),
+        },
+    )
+    .await
+    .unwrap();
+
+    // Race the agent's `run_single`: publish the synthetic failure
+    // tied to this exact run_id. The executor's tap holds a
+    // SubscriptionHandle that was registered before the agent
+    // started — broadcast::Receiver buffers everything from
+    // subscription onward, so even if we publish slightly later
+    // than the stub returns, the counter still observes it on the
+    // next yield_now poll inside run_agent_prompt.
+    //
+    // To make this race deterministic, publish in a loop for up to
+    // 500ms, terminating as soon as the run reaches a terminal
+    // status — that way we cover the window even if the agent's
+    // sync stub returns "instantly".
+    let publish_run_id = run_id.clone();
+    let publish_handle = tokio::spawn(async move {
+        for _ in 0..50 {
+            publish_synthetic_tool_failure(&publish_run_id);
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    });
+
+    let terminal = wait_for_terminal_run(&config, &created.id).await;
+    publish_handle.abort();
+
+    assert!(
+        matches!(terminal.status, RunStatus::Failed),
+        "F-16: a workflow run that observed a tool failure must end Failed; got {:?}",
+        terminal.status
+    );
+    let (_run, steps) = store::get_run(&config, &terminal.id)
+        .unwrap()
+        .expect("run row");
+    assert_eq!(steps.len(), 1);
+    let step = &steps[0];
+    assert!(matches!(step.status, RunStatus::Failed));
+    let err = step
+        .error
+        .as_deref()
+        .expect("F-16-failed step must carry an error summary");
+    assert!(
+        err.contains("tool call") && err.contains("reported as failed"),
+        "error summary should reference tool failures; got: {err}"
+    );
+    // The agent's text is still persisted (so debugging the failed
+    // run can see what the agent tried to say) — the status alone
+    // changed.
+    assert!(
+        step.output_json.is_some(),
+        "F-16: step text payload must be persisted even when status flips to Failed"
+    );
+}
+
+/// F-16 — `build_node_agent_definition`'s output is the exact wire
+/// the executor passes into `from_config_for_agent_with_tool_override`.
+/// This is the contract test for the C deliverable.
+#[test]
+fn build_node_agent_definition_output_drives_workflow_node_allowlist() {
+    // No connections: just baseline + read-only workflow tools. The
+    // executor passes this entire list as the override into the
+    // workflow_node archetype. If a future change accidentally adds
+    // a `delegate_*` name here, the LLM would gain delegation
+    // capability and the pre-F-16 bug would resurface — pin the
+    // shape so it can't drift silently.
+    let def = build_node_agent_definition(&[], 12, None);
+    for name in &def.allowed_tools {
+        assert!(
+            !name.starts_with("delegate_"),
+            "workflow_node allowlist must never contain a delegate_* tool name; found {name}"
+        );
+    }
+    // Sanity: baseline tools are present at the head, read-only
+    // workflow tools at the tail.
+    assert_eq!(&def.allowed_tools[..BASELINE_TOOL_NAMES.len()], BASELINE_TOOL_NAMES);
+    let tail_start = def.allowed_tools.len() - READ_ONLY_WORKFLOW_TOOL_NAMES.len();
+    assert_eq!(
+        &def.allowed_tools[tail_start..],
+        READ_ONLY_WORKFLOW_TOOL_NAMES
+    );
+}

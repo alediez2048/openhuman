@@ -26,14 +26,32 @@
 //!     resolved tools + the four read-only workflow tools (F-10
 //!     registers those four; F-8 references them by stable name).
 //!
-//! ## Agent invocation (F-15)
+//! ## Agent invocation (F-15 → F-16)
 //!
-//! [`run_agent_prompt`] calls `Agent::from_config(config).run_single(prompt)`
-//! — the same pattern `cron::scheduler::handle_scheduled_job` uses for
-//! its session-target=Main/Isolated runs. The event channel is set to
-//! `"workflow"` and the session id is `"workflow:<run_id>"` so
-//! downstream subscribers (token-usage accounting, telemetry,
-//! Sentry) can filter workflow-driven turns from CLI / cron / chat.
+//! [`run_agent_prompt`] uses
+//! [`crate::openhuman::agent::Agent::from_config_for_agent_with_tool_override`]
+//! to spawn a `workflow_node` archetype with the per-run
+//! `NodeAgentDefinition.allowed_tools` allowlist. The TOML's empty
+//! `[tools].named = []` is REPLACED with the dynamic list — so the
+//! LLM sees only baseline + connection-resolved + read-only workflow
+//! tools, and ADR-016's allowlist is enforced at runtime (not just
+//! computed and discarded as it was before F-16).
+//!
+//! Event channel = `"workflow"`, session id = `"workflow:<run_id>"`
+//! so downstream subscribers (token-usage accounting, telemetry,
+//! Sentry, and F-16 D's tool-failure counter) can filter
+//! workflow-driven turns from CLI / cron / chat.
+//!
+//! **Honest step status (F-16 D):** the executor subscribes to
+//! [`DomainEvent::ToolExecutionCompleted`] events scoped to the
+//! current run's session id before spawning the agent. Any tool
+//! call the harness emitted with `success = false` (either denied
+//! by `visible_tool_names` per `turn.rs:1035` or executed-with-error
+//! per `turn.rs:1109`) increments the run's `tool_failure_count`.
+//! If the count is > 0 when the agent finishes, the step is marked
+//! `Failed` even if the agent itself returned text — closing the
+//! pre-F-16 lie where a workflow's `Succeeded` status meant
+//! "the agent emitted prose", not "all the actions actually fired".
 //!
 //! Tests inject a deterministic stub via
 //! [`set_test_agent_prompt_override`] so the persistence pipeline
@@ -73,7 +91,8 @@ use anyhow::Result;
 use chrono::Utc;
 use parking_lot::Mutex;
 use std::collections::HashMap;
-use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use thiserror::Error;
 use uuid::Uuid;
@@ -108,11 +127,17 @@ pub const READ_ONLY_WORKFLOW_TOOL_NAMES: &[&str] = &[
     "workflows_get_run",
 ];
 
-/// Skeletal agent definition the executor builds for an
-/// `agent_prompt` node. Phase 1 keeps this as a plain struct (no
-/// dependency on the harness's `AgentDefinition` type) — F-15 maps it
-/// into `crate::openhuman::agent::harness::definition::AgentDefinition`
-/// when the placeholder is swapped for the real call.
+/// Per-node tool surface the executor passes into the
+/// `workflow_node` sub-agent at spawn time (F-16).
+///
+/// `allowed_tools` is the wire passed to
+/// [`crate::openhuman::agent::Agent::from_config_for_agent_with_tool_override`]
+/// — whatever names appear in this list are exactly what the LLM can
+/// call from inside the workflow run; nothing else is reachable. This
+/// is the runtime enforcement of ADR-016 (the F-15 placeholder swap
+/// landed in F-16; the executor used to call `Agent::from_config`
+/// without applying this list at all, which is how the orchestrator
+/// identity leaked in and broke the Slack-send path).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NodeAgentDefinition {
     /// Exact `allowed_tools` set the sub-agent runs with. Order is
@@ -123,7 +148,12 @@ pub struct NodeAgentDefinition {
     /// to 12 if the template / proposal omitted it.
     pub iteration_cap: u32,
     /// Model tier from the node config; `None` lets the executor pick
-    /// the project default.
+    /// the project default. F-16 does not yet wire a per-tier override
+    /// into the workflow_node agent definition (the TOML carries
+    /// `model.hint = "agentic"` and the override builder doesn't
+    /// touch the model field). When `model_tier` is Some, the
+    /// executor logs the value at `info!` and proceeds with the
+    /// definition's default model. Phase 2 follow-up.
     pub model_tier: Option<String>,
 }
 
@@ -686,7 +716,22 @@ async fn execute_agent_prompt(config: &Config, run: &Run, node: &Node) -> Result
                 let truncated = store::truncate_output_to_64kib(output.text);
                 let payload = serde_json::to_string(&serde_json::json!({ "text": truncated }))
                     .unwrap_or_else(|_| "{}".into());
-                (RunStatus::Succeeded, Some(payload), None)
+                if output.tool_failure_count > 0 {
+                    // F-16 D: tool denials / executed-with-error count
+                    // overrides the "agent returned text" success
+                    // signal. The text payload is still persisted (so
+                    // the run-history view can show what the agent
+                    // tried to say), but the status reads honest.
+                    let summary = format!(
+                        "agent run completed with {} tool call(s) reported as failed by the harness \
+                         (denied by allowlist or returned is_error=true). \
+                         Check workflows-run + agent_loop logs for details.",
+                        output.tool_failure_count
+                    );
+                    (RunStatus::Failed, Some(payload), Some(summary))
+                } else {
+                    (RunStatus::Succeeded, Some(payload), None)
+                }
             }
             Err(err) => (RunStatus::Failed, None, Some(format!("{err:#}"))),
         };
@@ -724,12 +769,28 @@ async fn execute_agent_prompt(config: &Config, run: &Run, node: &Node) -> Result
     Ok(())
 }
 
-/// Node-execution output. Currently just a text body; a future
-/// ticket will extend this to carry the agent's tool-call history
-/// if the run-detail view needs it.
+/// Node-execution output. Carries the agent's final text response
+/// AND a count of tool calls that the harness reported as
+/// `success = false` (per the
+/// [`crate::core::event_bus::DomainEvent::ToolExecutionCompleted`]
+/// tap installed in [`run_agent_prompt`]).
+///
+/// F-16 D: the caller in [`execute_agent_prompt_node`] uses
+/// `tool_failure_count > 0` to override the step status to `Failed`
+/// even when the agent itself returned text — so a workflow that
+/// "completed" by emitting an apology after every tool call got
+/// denied no longer lies in run history.
 #[derive(Debug, Clone)]
 pub struct NodeOutput {
     pub text: String,
+    /// Number of `ToolExecutionCompleted { success: false }` events
+    /// observed during this run, scoped to `event_context =
+    /// "workflow:<run_id>"`. Counts BOTH:
+    ///   - tool calls blocked by `visible_tool_names` (turn.rs:1035)
+    ///   - tool calls that executed and returned `is_error = true`
+    /// Both are surfaced via the same `DomainEvent` with
+    /// `success: false`, so the counter doesn't need to distinguish.
+    pub tool_failure_count: u32,
 }
 
 /// Test-only override for [`run_agent_prompt`]. Production code
@@ -771,48 +832,195 @@ fn current_test_override() -> Option<TestAgentOverride> {
         .and_then(|m| m.lock().ok().and_then(|g| g.clone()))
 }
 
-/// Execute the `agent_prompt` node's body via the real agent
-/// harness. Mirrors the cron domain's pattern from
-/// `cron/scheduler.rs::handle_scheduled_job`:
+/// Execute the `agent_prompt` node's body via the constrained
+/// `workflow_node` sub-agent (F-16).
 ///
-///   1. `Agent::from_config(config)` builds the harness with the
-///      project's configured provider + tools + memory.
+/// Behavior:
+///
+///   1. [`Agent::from_config_for_agent_with_tool_override`] builds
+///      the harness against the `workflow_node` archetype, REPLACING
+///      its empty base allowlist with `def.allowed_tools` (built per
+///      ADR-016 from baseline + connection-resolved + read-only
+///      workflow tools). The orchestrator persona, profile, memory,
+///      and delegation tree are stripped — the LLM sees only the
+///      `workflow_node` system prompt + the user-authored
+///      `agent_prompt.prompt` + the explicit tool surface.
 ///   2. `agent.set_event_context("workflow:<run_id>", "workflow")`
-///      tags downstream telemetry so subscribers can filter
-///      workflow-driven turns from CLI / cron / chat.
+///      tags downstream telemetry so subscribers (and F-16 D's
+///      step-status event-bus tap) can filter on this run.
 ///   3. `agent.run_single(prompt)` returns the agent's final text
 ///      response, which becomes the persisted
 ///      `workflow_run_steps.output_json.text` after truncation.
 ///
+/// F-16 motivated this rewrite: the previous body called
+/// `Agent::from_config(config)` (the **orchestrator** by default),
+/// IGNORED `def.allowed_tools`, and let the LLM pick
+/// `delegate_to_integrations_agent` instead of the
+/// `composio_execute` tool the workflow had granted — which then
+/// died silently inside integrations_agent due to a Composio-action-
+/// name issue, while step status still recorded `Succeeded`. Live
+/// repro on 2026-05-21 22:13; full diagnosis in F-16.md.
+///
 /// Tests inject a deterministic stub via
 /// [`set_test_agent_prompt_override`]; the override is only
 /// honoured under `#[cfg(test)]`. In production the override slot
-/// never exists.
+/// never exists, and the constrained agent path above is what runs.
 async fn run_agent_prompt(
     config: &Config,
     run_id: &RunId,
     agent_prompt_config: &AgentPromptConfig,
     def: &NodeAgentDefinition,
 ) -> Result<NodeOutput> {
-    #[cfg(test)]
-    if let Some(stub) = current_test_override() {
-        let text = stub(&agent_prompt_config.prompt, def)?;
-        tracing::debug!(
-            target: "workflows-run",
-            "[workflows-run] run_agent_prompt via test override (text_len={})",
-            text.len()
-        );
-        return Ok(NodeOutput { text });
-    }
+    // F-16 D: subscribe to ToolExecutionCompleted events scoped to
+    // this run BEFORE the agent runs. The handle drops at the end
+    // of this function, cancelling the subscriber. Any
+    // `success: false` event with a matching `session_id`
+    // increments the shared counter, which the caller checks to
+    // decide whether to override the step status to Failed.
+    //
+    // Subscriber install happens BEFORE the test-override check so
+    // tests that exercise the honest-status path can publish
+    // synthetic ToolExecutionCompleted events from inside the stub
+    // and observe them increment the counter (otherwise the test
+    // override would short-circuit past the entire F-16 logic).
+    let session_id = format!("workflow:{run_id}");
+    let failure_counter = Arc::new(AtomicU32::new(0));
+    let _sub_handle = subscribe_tool_failure_counter(session_id.clone(), failure_counter.clone());
 
+    let text = {
+        #[cfg(test)]
+        if let Some(stub) = current_test_override() {
+            let stubbed = stub(&agent_prompt_config.prompt, def)?;
+            tracing::debug!(
+                target: "workflows-run",
+                "[workflows-run] run_agent_prompt via test override (text_len={})",
+                stubbed.len()
+            );
+            stubbed
+        } else {
+            run_workflow_node_agent(config, &session_id, agent_prompt_config, def).await?
+        }
+        #[cfg(not(test))]
+        {
+            run_workflow_node_agent(config, &session_id, agent_prompt_config, def).await?
+        }
+    };
+
+    // Subscriber drains lazily; give it one tokio tick to consume
+    // any in-flight events that arrived after the agent returned.
+    // (broadcast::Receiver dispatch is sub-microsecond; one yield is
+    // overkill but cheap insurance against the agent loop publishing
+    // ToolExecutionCompleted on its way out.)
+    tokio::task::yield_now().await;
+    let tool_failure_count = failure_counter.load(Ordering::Relaxed);
+    if tool_failure_count > 0 {
+        tracing::warn!(
+            target: "workflows-run",
+            run_id = %run_id,
+            tool_failure_count,
+            "[workflows-run] observed tool failures during run — step will be marked Failed"
+        );
+    }
+    Ok(NodeOutput {
+        text,
+        tool_failure_count,
+    })
+}
+
+/// The real (non-test-override) body of [`run_agent_prompt`].
+/// Spawns the `workflow_node` sub-agent against the project config
+/// with the per-run `allowed_tools` override, sets the event
+/// context, calls `run_single`, returns the agent's text response.
+async fn run_workflow_node_agent(
+    config: &Config,
+    session_id: &str,
+    agent_prompt_config: &AgentPromptConfig,
+    def: &NodeAgentDefinition,
+) -> Result<String> {
     tracing::info!(
         target: "workflows-run",
-        "[workflows-run] run_agent_prompt invoking agent run={run_id} iteration_cap={} allowed_tools={}",
+        "[workflows-run] run_agent_prompt spawning workflow_node sub-agent \
+         session={session_id} iteration_cap={} allowed_tools={} model_tier={:?}",
         def.iteration_cap,
-        def.allowed_tools.len()
+        def.allowed_tools.len(),
+        def.model_tier,
     );
-    let mut agent = crate::openhuman::agent::Agent::from_config(config)?;
-    agent.set_event_context(format!("workflow:{run_id}"), "workflow");
-    let text = agent.run_single(&agent_prompt_config.prompt).await?;
-    Ok(NodeOutput { text })
+    if def.model_tier.is_some() {
+        tracing::info!(
+            target: "workflows-run",
+            "[workflows-run] model_tier override requested ({:?}) but not yet \
+             wired through workflow_node's agent definition — using the \
+             archetype's default model. Phase 2 follow-up.",
+            def.model_tier
+        );
+    }
+    let mut agent = crate::openhuman::agent::Agent::from_config_for_agent_with_tool_override(
+        config,
+        "workflow_node",
+        def.allowed_tools.clone(),
+    )?;
+    agent.set_event_context(session_id.to_string(), "workflow");
+    agent.run_single(&agent_prompt_config.prompt).await
+}
+
+/// Subscribe to the global event bus for the duration of a workflow
+/// run and increment `counter` every time the harness publishes a
+/// [`DomainEvent::ToolExecutionCompleted`] with the matching
+/// `session_id` and `success = false`.
+///
+/// Returning the `SubscriptionHandle` is load-bearing — dropping it
+/// would abort the subscriber task immediately, before any events
+/// reach it. The caller binds it to `let _sub_handle = ...` so the
+/// handle lives until the enclosing scope ends.
+///
+/// When the global event bus isn't initialised (which is the case in
+/// some unit-test workspaces that don't go through the full RPC
+/// bootstrap), this returns `None`. The counter never increments,
+/// `tool_failure_count` stays 0, and the step status reverts to its
+/// pre-F-16 behaviour (Succeeded if the agent returned text). This
+/// is the safe failure mode: under-detection is preferred over
+/// over-detection of phantom failures.
+fn subscribe_tool_failure_counter(
+    target_session_id: String,
+    counter: Arc<AtomicU32>,
+) -> Option<crate::core::event_bus::SubscriptionHandle> {
+    use crate::core::event_bus::{subscribe_global, DomainEvent, EventHandler};
+    use async_trait::async_trait;
+
+    struct ToolFailureCounter {
+        target_session_id: String,
+        counter: Arc<AtomicU32>,
+    }
+
+    #[async_trait]
+    impl EventHandler for ToolFailureCounter {
+        fn name(&self) -> &str {
+            "workflows-run::tool_failure_counter"
+        }
+
+        fn domains(&self) -> Option<&[&str]> {
+            // ToolExecutionCompleted lives in the "tool" domain; the
+            // filter saves us from waking on every memory / channel
+            // event during the run.
+            Some(&["tool"])
+        }
+
+        async fn handle(&self, event: &DomainEvent) {
+            if let DomainEvent::ToolExecutionCompleted {
+                session_id,
+                success,
+                ..
+            } = event
+            {
+                if !*success && session_id == &self.target_session_id {
+                    self.counter.fetch_add(1, Ordering::Relaxed);
+                }
+            }
+        }
+    }
+
+    subscribe_global(Arc::new(ToolFailureCounter {
+        target_session_id,
+        counter,
+    }))
 }

@@ -143,6 +143,15 @@ pub const BUILTINS: &[BuiltinAgent] = &[
         toml: include_str!("help/agent.toml"),
         prompt_fn: super::help::prompt::build,
     },
+    BuiltinAgent {
+        // F-16: constrained sub-agent the workflows executor spawns
+        // for each agent_prompt node. Per-instance allowlist override
+        // (built per ADR-016) is applied by
+        // `Agent::from_config_for_agent_with_tool_override`.
+        id: "workflow_node",
+        toml: include_str!("workflow_node/agent.toml"),
+        prompt_fn: super::workflow_node::prompt::build,
+    },
 ];
 
 /// Parse every entry in [`BUILTINS`] into an [`AgentDefinition`].
@@ -273,7 +282,53 @@ mod tests {
     fn all_builtins_parse() {
         let defs = load_builtins().expect("built-in TOML must parse");
         assert_eq!(defs.len(), BUILTINS.len());
-        assert_eq!(defs.len(), 17, "expected 17 built-in agents");
+        assert_eq!(defs.len(), 18, "expected 18 built-in agents");
+    }
+
+    #[test]
+    fn workflow_node_is_registered_and_constrained() {
+        // F-16: workflow_node ships with an EMPTY base allowlist by
+        // design — the workflows executor calls
+        // `from_config_for_agent_with_tool_override` to replace it
+        // with the per-run NodeAgentDefinition.allowed_tools list.
+        // If you see the base allowlist grow, the indirection is
+        // broken — either revert that change or update F-16's design.
+        let def = find("workflow_node");
+        assert!(def.omit_identity, "workflow_node must omit_identity");
+        assert!(
+            def.omit_memory_context,
+            "workflow_node must omit memory context — no chat history"
+        );
+        assert!(
+            def.omit_skills_catalog,
+            "workflow_node must omit skills catalog"
+        );
+        match &def.tools {
+            ToolScope::Named(tools) => {
+                assert!(
+                    tools.is_empty(),
+                    "workflow_node base allowlist must be EMPTY by design — \
+                     the executor's per-instance override is what supplies \
+                     the real tools (see F-16). Found: {tools:?}"
+                );
+            }
+            other => panic!(
+                "workflow_node must use ToolScope::Named (so the override \
+                 path can replace it deterministically); found {other:?}"
+            ),
+        }
+        // Worker tier — the executor spawns this directly, not via a
+        // chat/reasoning delegate_*. Worker tier means it MUST NOT
+        // declare further subagents (loader enforces this).
+        use crate::openhuman::agent::harness::definition::AgentTier;
+        assert!(
+            matches!(def.agent_tier, AgentTier::Worker),
+            "workflow_node must be agent_tier=worker"
+        );
+        assert!(
+            def.subagents.is_empty(),
+            "workflow_node must have NO subagents — it is a leaf executor"
+        );
     }
 
     #[test]

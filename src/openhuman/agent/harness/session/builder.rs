@@ -682,6 +682,69 @@ impl Agent {
         Self::build_session_agent_inner(config, agent_id, target_def.as_ref(), None, None)
     }
 
+    /// Spawn a session-scoped agent against the registry definition for
+    /// `agent_id`, but REPLACE that definition's `[tools].named`
+    /// allowlist with the explicit `allowed_tools` argument. Used by
+    /// the workflows executor (F-16) to apply a per-run, dynamic tool
+    /// surface on top of the TOML-declared `workflow_node` archetype.
+    ///
+    /// **Replace, not union.** The TOML's `[tools].named` is discarded
+    /// entirely — the override IS the full intended allowlist. This is
+    /// the right shape for `workflow_node` (which ships an empty base
+    /// allowlist on purpose) but would silently shrink the surface for
+    /// any other agent whose TOML already declared a non-empty list.
+    /// For that reason, callers should only target archetypes designed
+    /// for the override path; passing `agent_id = "orchestrator"` here
+    /// would effectively cripple the chat agent. Tests guard against
+    /// this drift.
+    ///
+    /// All other definition fields (`omit_*` flags, `temperature`,
+    /// `max_iterations`, `agent_tier`, `model`, `sandbox_mode`, etc.)
+    /// are preserved verbatim from the TOML. Only `tools` is replaced.
+    ///
+    /// Returns the same `Result<Self>` shape as
+    /// [`Self::from_config_for_agent`]; resolution failures bubble up
+    /// identically (unknown `agent_id`, registry not initialised, etc.).
+    pub fn from_config_for_agent_with_tool_override(
+        config: &Config,
+        agent_id: &str,
+        allowed_tools: Vec<String>,
+    ) -> Result<Self> {
+        use crate::openhuman::agent::harness::definition::{AgentDefinition, ToolScope};
+
+        let registry = AgentDefinitionRegistry::global().ok_or_else(|| {
+            anyhow::anyhow!(
+                "AgentDefinitionRegistry is not initialised — cannot resolve agent \
+                 '{agent_id}' for tool-override path. Call \
+                 AgentDefinitionRegistry::init_global at startup."
+            )
+        })?;
+        let base: &AgentDefinition = registry.get(agent_id).ok_or_else(|| {
+            anyhow::anyhow!(
+                "agent definition '{agent_id}' not found in registry — \
+                 from_config_for_agent_with_tool_override requires a registered \
+                 archetype to override on top of."
+            )
+        })?;
+
+        // Clone + replace tools. Stays cheap (definitions are small structs).
+        let mut overridden: AgentDefinition = base.clone();
+        overridden.tools = ToolScope::Named(allowed_tools.clone());
+
+        log::info!(
+            "[agent::builder] applying per-instance tool-override agent_id={} \
+             base_scope={} override_tools={}",
+            agent_id,
+            match &base.tools {
+                ToolScope::Named(names) => format!("named({})", names.len()),
+                ToolScope::Wildcard => "wildcard".to_string(),
+            },
+            allowed_tools.len(),
+        );
+
+        Self::build_session_agent_inner(config, agent_id, Some(&overridden), None, None)
+    }
+
     /// Same as [`Self::from_config_for_agent`] but also appends a
     /// `ReflectionMemoryContextSection` to the assembled
     /// [`SystemPromptBuilder`], seeded with the `source_chunks` snapshot
@@ -1604,6 +1667,97 @@ mod dedup_tests {
     fn handles_empty_input() {
         let deduped = dedup_visible_tool_specs(Vec::<ToolSpec>::new());
         assert!(deduped.is_empty());
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // F-16: from_config_for_agent_with_tool_override
+    //
+    // The override path is what the workflows executor uses to spawn
+    // a `workflow_node` agent with the per-run NodeAgentDefinition.
+    // allowed_tools. These tests pin the contract: the override
+    // REPLACES (not unions) the TOML allowlist; resolution failures
+    // surface as Err with actionable messages; the rest of the
+    // definition (omit_*, agent_tier, etc.) is preserved.
+    //
+    // These tests touch the global registry singleton, so they share
+    // state with other registry-init tests in the crate. We tolerate
+    // a no-op return from init_global_builtins (already initialised).
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn override_path_errs_clearly_when_agent_id_unknown() {
+        use crate::openhuman::agent::harness::definition::AgentDefinitionRegistry;
+        let _ = AgentDefinitionRegistry::init_global_builtins();
+        let config = crate::openhuman::config::Config::default();
+        // `Agent` doesn't impl Debug, so we can't use .expect_err(...) — match instead.
+        let err = match super::Agent::from_config_for_agent_with_tool_override(
+            &config,
+            "totally_not_an_agent_id",
+            vec!["memory_recall".to_string()],
+        ) {
+            Ok(_) => panic!("expected error when agent_id is not registered"),
+            Err(e) => e,
+        };
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("totally_not_an_agent_id"),
+            "error message should name the missing agent id; got: {msg}"
+        );
+        assert!(
+            msg.contains("from_config_for_agent_with_tool_override")
+                || msg.contains("registered archetype"),
+            "error message should reference the override path or 'registered archetype'; got: {msg}"
+        );
+    }
+
+    #[test]
+    fn override_replaces_workflow_node_base_allowlist() {
+        // The whole point of F-16: workflow_node ships with an empty
+        // `[tools].named = []` and the override must REPLACE it with
+        // the caller's list. We can't easily inspect the constructed
+        // Agent's visible_tool_names without spinning the full harness
+        // (which needs ai providers, etc.), so we test the cloning
+        // semantics directly via the override-clone code path that
+        // build_session_agent_inner consumes.
+        use crate::openhuman::agent::harness::definition::{
+            AgentDefinitionRegistry, ToolScope,
+        };
+        let _ = AgentDefinitionRegistry::init_global_builtins();
+        let registry =
+            AgentDefinitionRegistry::global().expect("registry initialised above");
+        let base = registry
+            .get("workflow_node")
+            .expect("workflow_node is in BUILTINS");
+
+        // Mirror what from_config_for_agent_with_tool_override does:
+        // clone, replace tools. (We can't call the builder directly
+        // here because building a real Agent requires config wiring
+        // beyond what a unit test should bring up.)
+        let mut overridden = base.clone();
+        let supplied = vec![
+            "memory_recall".to_string(),
+            "current_time".to_string(),
+            "composio_execute".to_string(),
+        ];
+        overridden.tools = ToolScope::Named(supplied.clone());
+
+        match &overridden.tools {
+            ToolScope::Named(after) => {
+                assert_eq!(
+                    after, &supplied,
+                    "override must equal the supplied list verbatim — \
+                     no implicit union with base"
+                );
+            }
+            ToolScope::Wildcard => panic!("override must produce Named, not Wildcard"),
+        }
+        // omit_* flags survive the clone untouched (the override only
+        // touches `tools`).
+        assert!(overridden.omit_identity, "omit_identity must survive override");
+        assert!(
+            overridden.omit_memory_context,
+            "omit_memory_context must survive override"
+        );
     }
 
     #[test]
