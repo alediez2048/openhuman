@@ -69,6 +69,7 @@ The four bundled starter templates (`Automations/Templates/`):
 | F-13 | `8acf266b` | lock `workflow_builder.md` as canonical + smoke tests |
 | F-14 | `8f8a2d91` | `WorkflowProposalPreview` + companion components |
 | F-15 | `152e6717` | hero + catalog E2E + Phase 1 capability + DEVLOG closure |
+| F-16 | `3b572f71` | enforce ADR-016 allowlist + workflow_node agent + honest step status |
 
 ### Phase 1.5 polish (post-F-15)
 
@@ -91,31 +92,46 @@ workflows:
 | `b8716f90` | base64-encode `<workflow-preview>` data to survive quotes in prompt text |
 | `b8fbf865` | correct `ManualInitiator` wire shape so Run now succeeds |
 
-### F-16 — outstanding (not started)
+### F-16 — landed `3b572f71` (2026-05-22)
 
-Live testing on 2026-05-21 revealed the F-15 placeholder swap was only
-done on the **drafter** side. The **executor** side
-(`run_agent_prompt`) still uses `Agent::from_config(config)` — the
-orchestrator — and ignores the `NodeAgentDefinition.allowed_tools`
-allowlist it computes per ADR-016. Symptom: a workflow run dispatches
-correctly, the agent fires, but the LLM picks
-`delegate_to_integrations_agent` (orchestrator default) instead of
-`composio_execute` (the deliberate per-connection tool). The Slack
-send then dies inside integrations_agent due to an unrelated
-Composio-action-name-hallucination bug, and `RunStep.status` records
+Closed the placeholder F-15 left behind on the executor side. Live
+testing on 2026-05-21 revealed the previous swap was only done on
+the **drafter** side. The **executor** side (`run_agent_prompt`)
+still used `Agent::from_config(config)` — the orchestrator — and
+ignored the `NodeAgentDefinition.allowed_tools` allowlist it
+computed per ADR-016. Symptom (2026-05-21 22:13): a workflow run
+dispatched correctly, the agent fired, but the LLM picked
+`delegate_to_integrations_agent` instead of `composio_execute`,
+the Slack send died inside integrations_agent due to an unrelated
+Composio-action-name issue, and `RunStep.status` recorded
 `Succeeded` because the agent returned text — even though no
 external action happened.
 
-F-16 closes this:
+What F-16 actually ships:
 
-- new `workflow_node` agent definition (honest identity, no
-  delegation, constrained tool surface)
-- per-instance `allowed_tools` override on the builder
-- `run_agent_prompt` rewritten to actually use `def`
-- honest `RunStep.status` based on tool-denial / tool-error events
-  during the run, not just "agent returned non-empty text"
+- **A.** New `workflow_node` agent definition
+  (`src/openhuman/agent/agents/workflow_node/`): honest identity
+  (no orchestrator persona, no chat-tier delegation), empty base
+  allowlist by design.
+- **B.** `Agent::from_config_for_agent_with_tool_override` builder
+  method: clones the registered definition, REPLACES (not unions)
+  `ToolScope` with `Named(allowed_tools)`.
+- **C.** `executor::run_agent_prompt` rewritten to use the new
+  builder with `agent_id="workflow_node"` and
+  `allowed_tools = def.allowed_tools.clone()`. The
+  `Agent::from_config(config)` call is gone.
+- **D.** Honest `RunStep.status` via event-bus tap. Subscribes to
+  `DomainEvent::ToolExecutionCompleted` scoped to
+  `session_id = "workflow:<run_id>"` before the agent starts.
+  Any `success: false` (denied or executed-with-error) increments
+  `NodeOutput.tool_failure_count`. Caller forces `RunStatus::Failed`
+  when count > 0 with an honest error summary, even if the agent
+  itself returned text.
 
-Spec lives at `F-16.md`; estimate ~7 hours.
+Tests: 6 new unit tests across loader, builder, executor — 215
+workflow + agent lib tests pass green.
+
+Spec lives at `F-16.md`.
 
 ---
 

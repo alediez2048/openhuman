@@ -1853,3 +1853,95 @@ These are Phase 2 / Phase 3 work, not Phase 1.5 follow-ups:
 ADR-007 (chat as primary creation path) is now ✓ As spec'd. The
 drift audit above is updated implicitly by this closure — if you
 re-walk the table, treat ADR-007 as fully landed.
+
+---
+
+## F-16 Closure (2026-05-22)
+
+Closed the executor-side placeholder F-15 left behind. The original
+F-15 swap was only applied on the drafter side (`proposer.rs`); the
+executor's `run_agent_prompt` continued to call
+`Agent::from_config(config)` — the **orchestrator** — and ignored
+the `NodeAgentDefinition.allowed_tools` it built per ADR-016.
+ADR-016's allowlist was therefore fiction at runtime, and the
+orchestrator's "delegate to integrations_agent for external
+services" instinct steered workflow runs away from the
+`composio_execute` tool we'd specifically granted.
+
+### Commit
+
+| Commit | Subject |
+|---|---|
+| `3b572f71` | feat(workflows): F-16 — enforce ADR-016 allowlist + honest step status |
+
+### What F-16 changed
+
+| Layer | Pre-F-16 | F-16 |
+|---|---|---|
+| Workflow agent identity | orchestrator (chat tier, full delegation tree) | `workflow_node` (worker tier, honest "unattended automated step" persona, no `delegate_*`) |
+| Tool surface | full orchestrator allowlist; `def.allowed_tools` discarded | `def.allowed_tools` passed verbatim via `from_config_for_agent_with_tool_override`, replaces `workflow_node`'s empty base `[tools].named` |
+| Step status | `Succeeded` iff `agent.run_single` returned text | `Failed` if any `ToolExecutionCompleted{success:false}` observed during the run (regardless of agent text); `Succeeded` otherwise |
+| `NodeOutput` | `{ text }` | `{ text, tool_failure_count }` |
+
+### Diagnostic that led to F-16
+
+The user clicked Run now on a Gmail → Slack workflow at 2026-05-21
+22:13. Logs showed:
+
+```
+22:13:11 workflows-run dispatch_run wf=... run=ff63e3eb...
+22:13:11 workflows-run run_agent_prompt invoking agent ... allowed_tools=11
+22:13:18 [agent] delegating to integrations_agent (skill_filter=gmail)
+22:13:35 [subagent_runner] tool not in allowlist ... tool=slack_slack_chat_postMessage
+22:13:44 workflows-run step terminal ... status=Succeeded     ← the lie
+```
+
+`allowed_tools=11` was logged but `delegate_to_integrations_agent`
+(not in the 11) was called. That tool wasn't blocked. The
+orchestrator's tool surface is what was actually visible. ADR-016
+wasn't enforced. The Slack send died inside integrations_agent due
+to a Composio-Slack-action-name hallucination (unrelated bug;
+deferred to its own future ticket), but the run-history view
+recorded `Succeeded` regardless.
+
+The F-16 diagnostic step that pinned this was simple: read
+`executor.rs:814`. The `def` parameter was named, used in one log
+line, and otherwise unreferenced.
+
+### Architecture decisions
+
+- **Dedicated `workflow_node` archetype** (not reusing `code_executor`
+  or `tools_agent`): a workflow node is conceptually neither of
+  those — it's "constrained, unattended, single-prompt-following".
+  Honest identity makes future tooling (telemetry filters, prompt
+  audits, allowlist-drift checks) able to pattern-match cleanly.
+- **REPLACE, not union** on the override (`ToolScope::Named = supplied`):
+  the workflow_node ships with `[tools].named = []` precisely so
+  the override can be the entire intended set, with no chance of
+  the TOML allowlist quietly leaking surface area.
+- **Event-bus tap, not return-value contract**: the harness already
+  publishes `DomainEvent::ToolExecutionCompleted` with `session_id`
+  + `success`. F-16 D subscribes filtered on
+  `session_id == "workflow:<run_id>"` and counts. No `run_single`
+  signature change, no fanout in the harness, minimal blast radius.
+
+### Architectural pattern saved to `.claude/memory.md`
+
+The "build a `def`, then ignore it" anti-pattern can resurface
+anywhere. When adding a new executor-style function that takes a
+constrained-config struct, make the struct load-bearing by design
+(or remove it). A struct that's only used for log formatting is a
+trapdoor for the next refactorer.
+
+### What's still genuinely deferred (post-F-16)
+
+- **Hero E2E spec file** in `app/test/e2e/specs/` — still missing.
+  The loop works manually today.
+- **Composio-Slack-action-name resolution** inside integrations_agent
+  (`slack_slack_chat_postMessage` hallucination). Out of F-16 scope:
+  workflow_node now bypasses integrations_agent entirely by calling
+  `composio_execute` directly. This bug still affects non-workflow
+  chat ("Send a Slack message to X" from regular chat).
+- **`model_tier` override on workflow_node**: F-16 logs but does not
+  apply per-node model_tier. Phase 2.
+- Remaining Phase 2 / Phase 3 items unchanged.
