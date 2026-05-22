@@ -154,8 +154,10 @@ impl Tool for WorkflowProposeUpdateTool {
                     rationale,
                 };
                 let json_str = serde_json::to_string(&preview)?;
-                let data_b64 =
-                    base64::Engine::encode(&base64::engine::general_purpose::STANDARD, json_str.as_bytes());
+                let data_b64 = base64::Engine::encode(
+                    &base64::engine::general_purpose::STANDARD,
+                    json_str.as_bytes(),
+                );
                 let preview_tag = format!(
                     "<workflow-preview kind=\"edit\" data=\"{data_b64}\"></workflow-preview>"
                 );
