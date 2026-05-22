@@ -15,6 +15,8 @@ A fresh session should read this file first to know where the initiative stands.
 
 **Phase 2 + Phase 3 ticket sets are DRAFTED** under `Automations/Tickets/phase-2-execution/` (16 tickets) and `Automations/Tickets/phase-3-canvas/` (10 tickets). Neither started. Phase 2 is the next concrete work; Phase 3 is gated on user demand per `prd.md §5.3`.
 
+**Phase 4 (Browser Agent) ticket set DRAFTED** under `Automations/Tickets/phase-4-browser-agent/` — `F4-overview.md` + 7 sub-tickets (`F4-1` through `F4-7`). Phase 4 is explicitly deferred: do NOT start until Phase 2 and Phase 3 are on `main`. The thesis is a CEF-native CDP-driven browser agent (Stagehand-style `act`/`extract`/`observe` API) that drives the user's already-authenticated webview sessions. Additive to Composio, not a replacement. Read `phase-4-browser-agent/F4-overview.md` for the full architecture + capability gap analysis + reference-repo notes.
+
 ---
 
 ## What's live on `main` today
@@ -112,6 +114,18 @@ Drafted in commit `90e4b7d6`.
 - F3-6..F3-8: transform/await_human_approval/fan_out node kinds
 - F3-9: Canvas-driven create flow
 - F3-10: Hero E2E + closure
+
+**Phase 4 — `Automations/Tickets/phase-4-browser-agent/`** — overview + 7 sub-tickets, ~23–33 working days for Phase 4.1:
+- F4-overview: thesis + 5 architectural forks + capability gap analysis + reference-repo notes
+- F4-1: CDP automation primitives (Rust) — 3–5 days
+- F4-2: Page perception (DOM + a11y tree grounding) — 3–4 days
+- F4-3: LLM-facing tools (browser_observe / browser_act / browser_extract) — 4–6 days
+- F4-4: Workflow node integration (`NodeKind::BrowserAction`) — 2–3 days
+- F4-5: Live-preview UI surface — 4–5 days
+- F4-6: Safety preamble + dry-run + cost caps + audit log — 3–4 days
+- F4-7: Vision-grounded fallback (Anthropic computer-use style, opt-in) — 4–6 days
+
+Phase 4.2 (cloud Chromium / Playwright sidecar) is captured in F4-overview's "explicitly deferred" section. Do not start P4 until P2 and P3 are on `main`.
 
 Each phase ships a README index listing open OQs to resolve in the pre-phase brainstorm before starting ticket #1.
 
