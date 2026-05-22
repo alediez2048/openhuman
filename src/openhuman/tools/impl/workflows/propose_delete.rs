@@ -104,9 +104,8 @@ impl Tool for WorkflowProposeDeleteTool {
             retention_days: RETENTION_DAYS,
         };
         let json_str = serde_json::to_string(&preview)?;
-        let preview_tag = format!(
-            "<workflow-preview kind=\"delete\" data='{json_str}'></workflow-preview>"
-        );
+        let preview_tag =
+            format!("<workflow-preview kind=\"delete\" data='{json_str}'></workflow-preview>");
         let payload = json!({
             "status": "delete_preview_ready",
             "render_instructions": "Include the `preview_tag` value verbatim in your user-facing reply. Do not call workflow_propose_delete again — the user clicks Confirm on the rendered card.",
