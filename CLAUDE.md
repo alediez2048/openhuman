@@ -6,7 +6,7 @@ Narrative architecture: [`gitbooks/developing/architecture.md`](gitbooks/develop
 
 > **Active initiative — Workflows & Automations.** Read [`Automations/STATE.md`](Automations/STATE.md) first.
 > - **Phase 0** (Connections Hub at `/connections`) — shipped to `main`.
-> - **Phase 1** (Workflows Foundation, F-1 → F-16) + **Phase 1.5** polish — landed on `main`. End-to-end chat-driven create / run / history works for Composio-routed workflows; F-16 closed the executor-side ADR-016 allowlist enforcement gap. Tickets: `Automations/Tickets/phase-1-foundation/`.
+> - **Phase 1** (Workflows Foundation, F-1 → F-16 shipped; F-17 drafted) + **Phase 1.5** polish — landed on `main`. End-to-end chat-driven create / run / history works for Composio-routed workflows; F-16 closed the executor-side ADR-016 allowlist enforcement gap. **F-17 (drafted 2026-05-22) is the next Phase 1.5 deliverable: wires workflows into the Memory Tree so doer-runs compound via the memory loop. Should land before Phase 2 starts.** Tickets: `Automations/Tickets/phase-1-foundation/`.
 > - **Phase 2** (Execution Depth — multi-node chains, real channel/webview send, retries, scheduler) — 16 tickets drafted at `Automations/Tickets/phase-2-execution/`, not started. **Next priority.**
 > - **Phase 3** (Browser Agent — CEF-native CDP-driven UI automation, Stagehand-style act/extract/observe API) — overview + 7 sub-tickets drafted at `Automations/Tickets/phase-3-browser-agent/`, not started. Depends on Phase 2; **NOT** dependent on Phase 4.
 > - **Phase 4** (Canvas Editor) — 10 tickets drafted at `Automations/Tickets/phase-4-canvas/`, **demand-gated** per `prd.md §5.3` — may never ship.

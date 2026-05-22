@@ -70,6 +70,7 @@ The four bundled starter templates (`Automations/Templates/`):
 | F-14 | `8f8a2d91` | `WorkflowProposalPreview` + companion components |
 | F-15 | `152e6717` | hero + catalog E2E + Phase 1 capability + DEVLOG closure |
 | F-16 | `3b572f71` | enforce ADR-016 allowlist + workflow_node agent + honest step status |
+| F-17 | _drafted_ | wire workflows into the Memory Tree (pre-run recall + post-run store) |
 
 ### Phase 1.5 polish (post-F-15)
 
@@ -133,9 +134,20 @@ workflow + agent lib tests pass green.
 
 Spec lives at `F-16.md`.
 
----
+### F-17 — drafted, not started (2026-05-22)
 
-## E2E surfaces
+Closes the **memory↔doer loop** gap surfaced during the 2026-05-22
+status grill. Phase 1 shipped the doer half of OpenHuman's
+"memory and doer" thesis; F-17 wires the doer back into the
+Memory Tree so workflows actually compound — pre-run recall
+prepends prior-run summaries into the agent's prompt, post-run
+store persists a structured outcome chunk under
+`workflow:{workflow_id}` so the next run starts informed.
+
+Per-workflow memory only in Phase 1.5; cross-workflow learning
+remains agent-opt-in via explicit `memory_store` for now.
+
+Spec lives at `F-17.md`; estimate 1–2 days.
 
 - **Catalog flow** (`workflows-seeded.spec.ts`, F-15) — NFR-2.6.4.
   Open `/workflows` → 4 starter cards → click [Add] on RU-1 →
