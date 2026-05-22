@@ -1783,3 +1783,73 @@ Walked every ADR in `Automations/ADRs/`. As-shipped status:
 the Phase 1.5 wire-up (chat-runtime protocol extension + agent
 prompt update + F-11/F-12 drafter swaps). Components and tools
 all live; integration is its own ticket.
+
+---
+
+## Phase 1.5 Closure (post-F-15, same session)
+
+The "Phase 1.5" follow-up items ALL landed in this same session,
+which closes the ADR-007 partial drift above. The hero loop is
+end-to-end functional today for Composio-routed workflows.
+
+### Commits
+
+| Commit | Subject | Why it shipped now |
+|---|---|---|
+| `ca7accba` | wire overflow menu Run / Edit / Delete actions | F-4 left these as `console.debug` placeholders; live testing exposed them. |
+| `7a10562c` | persistent "Build a workflow" CTA + Show starter toggle | Header CTA visible even with workflows present; toggle to re-show the catalog when hidden. |
+| `e6ae9ecc` | label Delete as "Move to starter workflows" for Seed-origin rows | F-5's dedup auto-restores the template anyway; "Move" matches the user's mental model. |
+| `f0a2288c` | wildcard match for empty `account_id`/`channel_id` in `is_connected` + boot-time recompute sweep | Templates ship with empty refs (≈ "any account of this provider"). Strict equality made every template show "Missing connectors". `recompute_all_workflows(config)` boot sweep refreshes stale health on startup. |
+| `eea486f5` | real agent invocation in drafters + chat-runtime `<workflow-preview>` tag rendering | Swapped F-11/F-12 placeholder drafters for `Agent::from_config(config).run_single(prompt)` (cron-style). Added `<workflow-preview kind="..." data='{json}'>` tag pattern parsed by `parseBubbleSegments` and rendered by `AgentMessageBubble`. |
+| `23645a25` | teach chat agent about the Workflows feature (orchestrator prompt) | Added a Workflows section to `agent/agents/orchestrator/prompt.md` plus a workflow-keyword detection step in the decision tree. Explains the `<workflow-preview>` verbatim-echo contract. |
+| `4c54e649` | expose workflow tools in the orchestrator `[tools].named` allowlist | Discovered via live test: orchestrator's `[tools].named` is an explicit whitelist, not a fallback. Added the 4 read tools + 6 propose tools. The single most impactful bug fix in this Phase 1.5 batch. |
+| `b0e3b73c` | register `channel_send` + `webview_account_send` stub tools | F-8's `build_node_agent_definition` named these by string but no Tool impl existed. Stubs return clear Phase 2 deferral errors instead of silent "tool not found" failures. |
+| `90e4b7d6` | draft Phase 2 + Phase 3 ticket sets | 16 Phase 2 tickets (multi-node + real send + retries + scheduler) + 10 Phase 3 tickets (visual canvas), drafted at the user's request before live testing. |
+| `1445afb5` | refresh proposer module doc | The module docstring still described the placeholder body; replaced with the as-shipped contract. |
+
+### Lessons (captured in `.claude/memory.md`)
+
+- **Orchestrator allowlist is a whitelist, not a fallback** —
+  every new agent tool needs both global registration AND an
+  entry in `agent.toml`'s `[tools].named`.
+- **`build_node_agent_definition` names tools by string** — audit
+  `connection_tool_name` for unregistered names before shipping
+  the executor.
+- **Drafter agent invocation pattern from non-Turn contexts** —
+  `Agent::from_config(&config).run_single(composed_prompt)` is the
+  cron-domain reference pattern; reuse it for any new "ask an LLM
+  one question and get text back" call site.
+- **Forcing fenced JSON output without a synthetic tool** —
+  append a structural instruction to the system prompt; parse the
+  ```json``` fence with the `extract_fenced_json` helper.
+- **`<workflow-preview>` inline tag** — propose tools return
+  `ToolResult::success_with_markdown(json, markdown_body)` with
+  `supports_markdown=true`; chat-runtime extends `parseBubbleSegments`
+  alongside the existing `<openhuman-link>` regex.
+- **Wildcard semantics for template refs** — empty `account_id`,
+  `channel_id`, and `tool_name` on the request side are wildcards
+  against the snapshot. See `health.rs::matches_ref`.
+- **Don't unilaterally scope-cut** — F-15 initially deferred this
+  whole batch as "Phase 1.5 follow-up". The user pushed back hard:
+  if a ticket's deliverables list says X, ship X. Ask before
+  deferring, don't relabel.
+
+### What's still genuinely deferred (post-Phase-1.5)
+
+These are Phase 2 / Phase 3 work, not Phase 1.5 follow-ups:
+
+- Hero E2E spec file in `app/test/e2e/specs/` (the loop works
+  manually today; no dedicated WDIO spec yet).
+- Real Channel + Webview outbound send (F2-5).
+- Multi-node chains (`tool_call`, `http_request`,
+  `channel_message`, `condition`, `delay` node kinds).
+- 30-day soft-delete retention sweep (FR-1.3.4).
+- `active_hours` enforcement on cron triggers.
+- Dedicated run-history detail view UI.
+- Visual-canvas surface (Phase 3).
+- New triggers (`webhook` / `composio_event` / `channel_message`)
+  + RU-5..RU-9 templates.
+
+ADR-007 (chat as primary creation path) is now ✓ As spec'd. The
+drift audit above is updated implicitly by this closure — if you
+re-walk the table, treat ADR-007 as fully landed.

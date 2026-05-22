@@ -1,7 +1,7 @@
 # Workflows & Automations — Current State
 
-**Last updated:** 2026-05-20
-**Branch:** `main` on `alediez2048/openhuman` (the user's fork). Upstream `tinyhumansai/openhuman` not pushed to yet — this is private dev so far.
+**Last updated:** 2026-05-21
+**Branch:** `main` on `alediez2048/openhuman` (the user's fork). Upstream `tinyhumansai/openhuman` not pushed to yet — this is private dev so far. Phase 1 rollup PR is the next upstream push.
 
 A fresh session should read this file first to know where the initiative stands.
 
@@ -9,52 +9,110 @@ A fresh session should read this file first to know where the initiative stands.
 
 ## TL;DR
 
-**Phase 0 (Connections Hub) is SHIPPED to `main`.** All 6 connection mechanisms (Composio, Channels, Browser, Built-in, MCP, Generic HTTP) are unified under `/connections` with a real verification model, inline add/manage modals, and an agent tool that gives the LLM the same view the UI shows.
+**Phase 0 (Connections Hub) is SHIPPED** to `alediez2048/main`. Unified `/connections` with all 6 mechanisms + honest verification.
 
-**Phase 1 (Workflows Foundation) is the next ticket — `Automations/Tickets/phase-1-foundation/F-1.md`.**
+**Phase 1 (Workflows Foundation) is SHIPPED** to `alediez2048/main`, including the Phase 1.5 polish that locked the chat-driven create flow end-to-end (real agent invocation in the drafter, `<workflow-preview>` tag parsing in `AgentMessageBubble`, orchestrator allowlist, channel/webview send stubs).
+
+**Phase 2 + Phase 3 ticket sets are DRAFTED** under `Automations/Tickets/phase-2-execution/` (16 tickets) and `Automations/Tickets/phase-3-canvas/` (10 tickets). Neither started. Phase 2 is the next concrete work; Phase 3 is gated on user demand per `prd.md §5.3`.
 
 ---
 
-## What's on `main` right now
+## What's live on `main` today
 
-### Backend (Rust, `src/openhuman/`)
+### Phase 1 deliverables (F-1 through F-15 + Phase 1.5 polish)
 
-- **`connections/` domain** — `types`, `store`, `ops`, `aggregator`, `rpc`, `schemas`, `bus`, `verification`. SQLite at `${workspace}/connections.db` with the `generic_http_connections` table. ChaCha20-Poly1305 secret storage via `security/secrets`.
-- **Aggregator** — `connections::aggregator::list_all(config)` fans out across 6 collectors in parallel (`composio`, `channels`, `webview`, `builtin`, `mcp`, `generic_http`). Every collector reads through the home domain's public API — no parallel architecture. **Each collector rebuilds its source registry per call** (no Arc snapshots). 3s timeout on Composio (network); others are local.
-- **Verification cache** (`connections/verification.rs`) — process-local `OnceLock<Mutex<HashMap>>` mapping `VerificationKey` → `Verification { last_probed_at, result: Live | Failed }`. Probe RPCs (`connections_test`, `connections_mcp_test`) write to it; aggregator reads from it via `verification::lookup`. **In-memory only** — resets on core restart.
-- **MCP probes** — `ops::test_mcp_server` calls `McpServerRegistry::initialize(server_id)` under a 15s timeout, records into verification cache.
-- **MCP add/remove** — `connections_mcp_add` / `connections_mcp_remove` mutate `config.mcp_client.servers` in TOML + persist via `config.save().await`. Aggregator picks up changes on next call (no restart).
-- **Real HTTP probes (P0-3a done)** — `ops::test_generic_http` does `HEAD → OPTIONS → GET(Range: 0-0)` fallback chain via reqwest. Decrypts secret_ref just-in-time, applies AuthKind (Bearer/Basic/ApiKeyHeader/QueryParam). Records into verification cache.
-- **MCP client compliance** — `mcp_client/client.rs` now sends `Accept: application/json, text/event-stream` on every POST (required by MCP Streamable HTTP spec; Higgsfield + the official `@modelcontextprotocol/sdk` server return 406 without it). Regression test in place.
-- **Webview probes** — `webview_accounts/ops.rs::PROVIDERS` curated to {whatsapp, telegram, slack, discord, linkedin, twitter, instagram, messenger}. Gmail/Google Messages/Zoom removed (anti-automation / native-app redirects make them unusable in CEF). Telegram uses **IndexedDB-folder existence** instead of cookies (Telegram Web stores auth in IndexedDB).
-- **Capability catalog** — `about_app/catalog.rs` has 3 new automation entries (`view_connections_hub`, `manage_generic_http_connection`, `test_connection`) plus repointed `skills.open_connections_hub`.
+| Surface | Status | Where |
+|---|---|---|
+| `/workflows` route + bottom-tab | Shipped | `app/src/pages/Workflows/WorkflowsList.tsx`, `BottomTabBar.tsx` |
+| Starter catalog (RU-1..RU-4) | Shipped | `src/openhuman/workflows/templates/*.json` |
+| All 12 mutating + read RPCs | Shipped | `src/openhuman/workflows/{rpc,schemas,ops}.rs` |
+| Health recompute on connection events | Shipped | `workflows/bus.rs` |
+| Cron + manual scheduler | Shipped | `workflows/scheduler.rs` |
+| Executor + run history | Shipped | `workflows/executor.rs` |
+| Single-flight + soft-cancel + orphan-recovery | Shipped | `workflows/executor.rs` (F-9) |
+| 4 read-only + 6 propose-only agent tools | Shipped | `tools/impl/workflows/*` |
+| Drafting sub-agent + validator + retry | Shipped | `workflows/{proposer,validator}.rs` |
+| `workflow_builder.md` bundled | Shipped | `agent/prompts/workflow_builder.md` + Tauri resources |
+| Preview components (Proposal/Edit/Delete/State) | Shipped | `app/src/components/workflows/preview/*` |
+| Hero-flow chat-runtime extension (Phase 1.5) | Shipped | `<workflow-preview>` tag parsed in `AgentMessageBubble` |
+| Real `Agent::from_config().run_single()` in drafters (Phase 1.5) | Shipped | `workflows/proposer.rs` |
+| Orchestrator allowlist exposes workflow tools (Phase 1.5) | Shipped | `agent/agents/orchestrator/agent.toml` |
+| Wildcard-aware connection matching (Phase 1.5) | Shipped | `workflows/health.rs::matches_ref` |
+| Channel/Webview send stubs (Phase 1.5 deferral) | Stub | `tools/impl/workflows/{channel_send_stub,webview_account_send_stub}.rs` |
+| Catalog flow E2E spec (NFR-2.6.4) | Shipped | `app/test/e2e/specs/workflows-seeded.spec.ts` |
+| Hero flow E2E spec (NFR-2.6.3) | Deferred | Documented in Phase 1 README as the next E2E ticket |
+| Phase 1 capability entries | Shipped | `about_app/catalog.rs` |
+| Phase 1 README + DEVLOG closure + ADR drift audit | Shipped | `Automations/Tickets/phase-1-foundation/{README,DEVLOG}.md` |
 
-### Agent layer
+### What's testable end-to-end TODAY
 
-- **`tools::implementations::network::connections::ConnectionsListTool`** — new agent tool `list_connections` that calls `aggregator::list_all`. Single source of truth across all 6 mechanisms. Markdown grouped by mechanism + machine-readable JSON. **Always registered** (no boot-time gate).
-- **MCP tools rebuild registry per call** — `McpListServersTool`, `McpListToolsTool`, `McpCallTool` all hold `Arc<Config>` (not `Arc<McpServerRegistry>`). Each `execute()` calls `McpServerRegistry::from_config(&config)`. **Always registered** (no `!mcp_registry.is_empty()` gate). New servers added mid-session immediately visible without restart.
-- **Orchestrator + planner prompts updated** — `agent/agents/orchestrator/prompt.md` + `agent.toml` and `agent/agents/planner/agent.toml` direct the agent to call `list_connections` first ("Authoritative source for what's connected"). `composio_list_connections` is documented as the Composio subset.
+1. **Catalog flow** — open `/workflows` → 4 starter cards → click [Add & Enable] on RU-1 → workflow row appears → catalog dedupes the template → delete → catalog re-shows the template. Fully wired.
+2. **Workflow card overflow actions** — Run now (with health gating), Edit (inline message pointing at chat), Delete (with "Move to starter workflows" labeling for Seed-origin rows).
+3. **Chat-driven creation for Composio-routed workflows** — type "build me a workflow that..." in `/chat` → orchestrator calls `workflow_propose_create` → drafting sub-agent invokes the real LLM → fenced ```json``` parsed into a `WorkflowProposal` → tool returns `<workflow-preview>` tag → `AgentMessageBubble` parses + dispatches → `WorkflowProposalPreview` renders → click [Save & Enable] → workflow lives.
+4. **Manual run** of any Phase-1-shape workflow (single `agent_prompt` node, Composio-routed connections) → `Agent::from_config().run_single()` produces real output → run row + step row persisted.
+5. **Run history** — `workflows_list_runs` / `workflows_get_run` RPCs + agent tools.
+6. **Boot-time health recompute** — workflows whose health was computed under old matching rules get refreshed against the live snapshot on next boot (`recompute_all_workflows`).
 
-### Frontend (`app/src/`)
+### What's a known Phase 1.5 / Phase 2 deferral
 
-- **`/connections` page** — `ConnectionsHub.tsx` orchestrates 6 sections in a unified tile grid. Search + filter chips in URL state.
-- **`<ConnectorTile>`** — shared tile component. Status pill logic: verification overrides status; `requireVerification` prop downgrades Connected → "Configured" for mechanisms where the status field is weak evidence (HTTP/MCP/Channels).
-- **Per-section modals**:
-  - `ComposioConnectModal` — reused from the legacy Skills page
-  - `ChannelSetupModal` — per-channel auth mode pickers
-  - `BrowserAccountConnectModal` — hosts the live `<WebviewHost>` inline so the user signs in directly in the Hub (no `/chat` detour). Polls fetchConnections every 4s + 2.5s after close to wait for CEF cookie flush.
-  - `GenericHttpEditModal` — Test + Delete buttons inside the modal footer
-  - `McpAddModal` — HTTP/Stdio tabs with form validation
-  - `McpManageModal` — Test + Remove actions
-  - `BuiltinDetailModal` — read-only info (no per-account toggle until backend surface lands)
-- **Composio section** — full catalog overlay using `KNOWN_COMPOSIO_TOOLKITS` (~118 toolkits). Square tile grid + category filter chips (All / Chat / Productivity / Tools & Automation / Social / Platform).
-- **`connectionsApi.ts`** — unwraps the `RpcOutcome::single_log` `{ result, logs }` envelope automatically. All 9 methods routed through this helper.
+- **Channel send + Webview send** — `channel_send` and `webview_account_send` tools are stubs returning "Phase 2 (F2-5) deferral" errors. Workflows touching Channel or Webview connections in their `allowed_connections` won't actually send messages; they'll fail loud with a clear reason. **Composio-routed channels work** (Slack, Discord, Telegram, etc. via Composio's `composio_execute`). Land F2-5 to unify Channel/Webview send.
+- **Multi-node chains** — executor rejects `nodes.len() != 1` for Phase 1. F2-2 lands it.
+- **Phase 2 trigger types** — webhook, composio_event, channel_message. F2-9/F2-10/F2-11.
+- **Phase 2 node kinds** — tool_call, http_request, channel_message, condition, delay. F2-3..F2-7.
+- **Hero E2E spec** — `workflows-agent-creation.spec.ts` per F-15's original deliverable. The components + agent invocation are all wired today; the E2E spec authoring is the missing piece.
+- **30-day soft-delete + retention sweep** — F-2 hard-deletes today; FR-1.3.4 retention sweep deferred to F2-14.
+- **`active_hours` enforcement on cron** — F-7 ignored the field; F2-15.
+- **Visual canvas + transform/await/fan_out** — Phase 3.
 
-### Tests
+---
 
-- **Rust**: ~45 connections-domain tests, ~10 webview_accounts tests (including the IndexedDB Telegram probe), 16 mcp_client tests (including the Accept-header regression). All green.
-- **Vitest**: 12 connections component tests + envelope-unwrap tests + redirect tests. Full app suite: 2683 passed / 3 skipped.
-- **WDIO E2E**: `app/test/e2e/specs/connections-hub.spec.ts` (not yet run on a live build).
+## Phase 1.5 polish — landed this session (2026-05-21)
+
+Commits that closed the original F-15 deliverables I'd previously marked deferred:
+
+| Commit | Subject |
+|---|---|
+| `eea486f5` | Real agent invocation in drafters + chat-runtime preview rendering |
+| `ca7accba` | Wire WorkflowCard overflow Run / Edit / Delete actions |
+| `e6ae9ecc` | "Move to starter workflows" labeling for Seed-origin delete |
+| `f0a2288c` | Wildcard match for empty `account_id` / `channel_id` in `is_connected` |
+| `7a10562c` | Persistent "Build a workflow" CTA + Show starter toggle |
+| `23645a25` | Orchestrator prompt teaches the chat agent about the Workflows feature |
+| `4c54e649` | Expose workflow tools in the orchestrator's `named` allowlist (root cause for "agent doesn't see my tools") |
+| `b0e3b73c` | Register `channel_send` + `webview_account_send` stub tools (F-8 named them; never registered) |
+| `1445afb5` | Refresh proposer module doc — placeholder body is gone |
+
+These were surfaced by a debugging session the user kicked off after testing revealed the agent couldn't find the workflow feature. Two material gaps were found by parallel investigation agents:
+
+1. **Orchestrator's `named` allowlist filtered out the workflow tools** even though F-10/F-12 registered them globally via `tools::ops::all_tools_with_runtime`. The `[tools].named = [...]` array in `agent.toml` is an explicit whitelist, not a fallback. Fix: add the 10 names + an inline ADR-012 reminder.
+2. **`channel_send` / `webview_account_send`** were named by F-8's `build_node_agent_definition` but never had `Tool` impls. Workflows touching Channel/Webview connections would have failed with "tool not registered" at run time. Fix: register Phase-2-deferral stubs that return a clear error rather than crashing the agent.
+
+---
+
+## Phase 2 + Phase 3 ticket sets
+
+Drafted in commit `90e4b7d6`.
+
+**Phase 2 — `Automations/Tickets/phase-2-execution/`** — 16 tickets, ~75h:
+- F2-1..F2-2: Scaffold + multi-node execution
+- F2-3..F2-7: Per-node-kind impls (tool_call/http_request/channel_message/condition/delay)
+- F2-8: on_error + retry
+- F2-9..F2-11: webhook/composio_event/channel_message triggers
+- F2-12: RU-5..RU-9 templates
+- F2-13: Prompt update
+- F2-14: 30-day soft-delete sweep
+- F2-15: active_hours enforcement
+- F2-16: Hero + catalog E2E + closure
+
+**Phase 3 — `Automations/Tickets/phase-3-canvas/`** — 10 tickets, ~60h:
+- F3-1: @xyflow/react integration + read-only render
+- F3-2..F3-3: Palette + per-node config drawer
+- F3-4..F3-5: Edge wiring/DAG + live run highlighting
+- F3-6..F3-8: transform/await_human_approval/fan_out node kinds
+- F3-9: Canvas-driven create flow
+- F3-10: Hero E2E + closure
+
+Each phase ships a README index listing open OQs to resolve in the pre-phase brainstorm before starting ticket #1.
 
 ---
 
@@ -65,52 +123,54 @@ These fail under `pnpm test:rust` and predate the branch:
 1. **`agent::harness::session::turn::*`** — tests read the developer's real `~/.openhuman/` memory tree instead of an isolated tempdir. Test-isolation bug.
 2. **`tools::network::polymarket::place_order_happy_path`** — mock-server contract drift. Passes under plain `cargo test`, fails under the `test:rust` mock wrapper.
 
-Don't waste time investigating these for Phase 1 work.
+---
+
+## Gotchas learned across Phase 0 + Phase 1
+
+### Phase 0 (pre-existing)
+
+- **Aggregator collectors must rebuild source registries per call** — never hold `Arc<Registry>` snapshots in tools or services.
+- **MCP HTTP clients MUST send `Accept: application/json, text/event-stream`** — spec-strict servers return 406 without it.
+- **Telegram Web stores auth in IndexedDB**, not cookies.
+- **CEF cookies don't flush synchronously.** Modals poll while open + after close.
+- **`RpcOutcome::single_log` wraps responses in `{ result, logs }`** — frontend API clients must unwrap. `connectionsApi.ts` + `workflowsApi.ts` both have helpers.
+
+### Phase 1 + Phase 1.5
+
+- **The orchestrator's `agent.toml` uses an EXPLICIT `named` allowlist for tools.** Registering a tool globally in `tools::ops::all_tools_with_runtime` does NOT expose it to the chat agent. Every new agent-callable tool must also land in the orchestrator's whitelist. Same for planner / integrations_agent / etc. — each agent has its own toolscope.
+- **Agent prompts are captured at thread/session start.** After changing `orchestrator/prompt.md` or `agent.toml`, start a new chat thread (not just reload the page).
+- **F-8's `build_node_agent_definition` names tools by string** (`composio_execute`, `channel_send`, `webview_account_send`, `mcp_call_tool`, `http_request`, `builtin_<integration>`). If a name doesn't have a registered `Tool` impl, the agent_prompt sub-agent will fail with "tool not registered" at run time, not at validation time. Audit the allowlist whenever F-8's `connection_tool_name` function changes.
+- **`ConnectionsSnapshot::is_connected` does wildcard matching** for empty `account_id` / `channel_id` / `tool_name` — starter templates use this convention because they don't know the user's specific id at bundle time. Cross-mechanism mismatches (Channel vs Webview) are NOT wildcarded — they're different integrations.
+- **Agent invocation from non-Turn contexts** = `Agent::from_config(config).run_single(composed_prompt)` (the cron-domain pattern). `subagent_runner::run_subagent` errors with `NoParentContext` outside a harness turn. Compose the system prompt + user message into one string; the agent treats it as user input.
+- **Chat-runtime parses `<workflow-preview kind="..." data='{json}'></workflow-preview>` tags** in `AgentMessageBubble` via `parseBubbleSegments`. Propose tools emit the tag in their `success_with_markdown` body + advertise `supports_markdown=true` so the harness picks it up + the orchestrator echoes the tag verbatim.
+- **Phase 1 starter templates assume Channel-mechanism Telegram (bot API).** Users with Webview Telegram (browser session) won't satisfy the requirement even with wildcard matching, because variant must match.
+- **Don't unilaterally scope-cut tickets and label deferrals as "Phase X.5" without permission.** F-15's hero E2E was a hard deliverable, not a "Phase 1.5". When the budget genuinely doesn't fit, ask before deferring.
+- **The `vendored cargo-tauri` install path** (`.cache/cargo-install/bin/cargo-tauri`) isn't on the default `PATH`. Symlink it into `~/.cargo/bin/cargo-tauri` so `cargo tauri dev` resolves.
 
 ---
 
-## Deferred follow-ups (none blocking)
+## What a fresh session should do first
 
-| Tag | What | Why parked |
-|---|---|---|
-| **P0-2d-channels-probes** | Telegram `getMe`, Discord WS, iMessage AppleScript probes | Verification framework is ready; just need per-provider impls |
-| **P0-5c.flush** | Tauri IPC wrapping `CefCookieManager::FlushStore()` for instant browser-account status updates | Polling works; this would be a UX upgrade |
-| **P0-6a** | Built-in per-account toggle UI | Backend has no per-account integration-enabled surface yet |
-| **P0-6b.edit** | MCP edit (not just add/remove) — needs `connections_mcp_describe` RPC | Today users edit `config.toml` for endpoint/args/env changes |
-| **Verification persistence** | Survive core restart | Currently in-memory only |
-| **Auto-probe on Hub open** | Run probes once when user opens the page | Currently user clicks Test explicitly |
-| **"Delegation Guide — Integrations" prompt block** | Still Composio-only; dynamic `list_connections` tool fixes worst case | Cosmetic — agent has the right tool now |
-| **Generic HTTP "saved connection" agent tool** | Agent has raw `http_request` but no awareness of saved connections by id | Phase 2 work — the workflows engine needs this too |
-| **`connections_test` happy-path test** | Currently smoke-tested against example.com offline | Needs a mock-based test |
-| **WDIO E2E run** | Spec written, never run on a live build | Requires built Tauri bundle |
+1. Read this file (`Automations/STATE.md`) to know where the initiative stands.
+2. Read `CLAUDE.md` for the repo-level commands + conventions.
+3. Read the Phase 1 closure section at the bottom of `Automations/Tickets/phase-1-foundation/DEVLOG.md` for the per-ticket commit table + ADR drift audit.
+4. If starting Phase 2: read `Automations/Tickets/phase-2-execution/README.md` and pick a brainstorm OQ to resolve first. Then go through `F2-1.md`.
+5. If reporting a Phase 1 bug: re-check this file's "Phase 1.5 polish" + "What's a known deferral" sections before assuming a regression — many "missing" features are documented deferrals.
 
 ---
 
-## Gotchas learned this session
+## Critical files to know
 
-- **`pnpm dev:app` reinstalls vendored tauri-cli** when Cargo.lock changes. First build after a Rust change takes 1–3 minutes. Pre-existing warnings in `vendor/tauri-cef/` are all harmless.
-- **Rust changes require `pnpm dev:app` restart**. Vite HMR only handles frontend.
-- **Agent prompts are captured at thread/session start.** After changing `orchestrator/prompt.md` or `agent.toml`, ALSO start a new chat thread, not just reload the page.
-- **`RpcOutcome::single_log` wraps responses in `{ result, logs }`** — frontend api clients must unwrap. `connectionsApi.ts` has a helper; replicate the pattern for any new domain.
-- **Aggregator collectors must rebuild source registries per call** — never hold `Arc<Registry>` snapshots in tools or services. The user-reported "no higgsfield mcp" bug was exactly this anti-pattern. See `connections/aggregator.rs::collect_mcp` and `tools/impl/network/mcp.rs::fresh_registry` as the reference pattern.
-- **MCP HTTP clients MUST send `Accept: application/json, text/event-stream`** — spec-strict servers return 406 without it. Test exists in `mcp_client/client.rs::initialize_sends_required_accept_header`.
-- **Telegram Web stores auth in IndexedDB**, not cookies. Pattern in `webview_accounts/ops.rs::Provider::indexeddb_origin`.
-- **CEF cookies don't flush synchronously.** Inline browser-account modal polls `fetchConnections` every 4s while open + 2.5s after close. A proper Tauri IPC wrapping `FlushStore()` would be cleaner.
-- **`X.com` login needs `arkoselabs.com`, `funcaptcha.com`, `gstatic.com`, `recaptcha.net`, `accounts.google.com`** in the CEF allowed-hosts list, or the page paints blank. Same class of bug for any provider that uses third-party CAPTCHA.
-
----
-
-## What Phase 1 starts with
-
-**File: `Automations/Tickets/phase-1-foundation/F-1.md`** — Workflows Rust domain scaffold (`workflows/` parallel to `connections/`).
-
-Phase 1 builds the workflows model + chat-driven creation. The drafting sub-agent uses `list_connections` (already shipped) for hybrid connection discovery (ADR-009). The proposal preview design is in `Automations/Artifacts/designs/workflow-proposal-preview.md`.
-
-Critical ADRs the next session should read before starting F-1:
-- ADR-002 — Phase 1 scope (foundation + execution split)
-- ADR-007 — chat as the primary creation path
-- ADR-009 — hybrid connection discovery
-- ADR-010 — button confirmation (no text matching)
-- ADR-011 — missing-connections save with health flag
-- ADR-017 — workflow-health computed field
-- ADR-020 — WorkflowProposalPreview design synthesis
+| File | Why |
+|---|---|
+| `src/openhuman/workflows/` | Full Phase 1 backend |
+| `src/openhuman/tools/impl/workflows/` | 10 read + propose tools + 2 send stubs |
+| `src/openhuman/agent/agents/orchestrator/agent.toml` | Orchestrator's tool allowlist (must include workflow tools) |
+| `src/openhuman/agent/agents/orchestrator/prompt.md` | Orchestrator's system prompt (must teach the agent about workflows) |
+| `src/openhuman/agent/prompts/workflow_builder.md` | Drafting sub-agent's system prompt |
+| `app/src/components/workflows/` | UI components |
+| `app/src/pages/Workflows/WorkflowsList.tsx` | `/workflows` route |
+| `app/src/pages/conversations/components/AgentMessageBubble.tsx` | Parses `<workflow-preview>` tags |
+| `app/src/pages/conversations/utils/format.ts` | `parseBubbleSegments` includes the tag matcher |
+| `Automations/Tickets/phase-{1-foundation,2-execution,3-canvas}/` | Per-phase ticket sets |
+| `Automations/ADRs/` | 20 ADRs locked across the initiative |

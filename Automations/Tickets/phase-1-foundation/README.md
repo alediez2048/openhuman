@@ -68,7 +68,26 @@ The four bundled starter templates (`Automations/Templates/`):
 | F-12 | `c18f952d` | propose-only agent tools + `workflow_diff` |
 | F-13 | `8acf266b` | lock `workflow_builder.md` as canonical + smoke tests |
 | F-14 | `8f8a2d91` | `WorkflowProposalPreview` + companion components |
-| F-15 | TBD | hero + catalog E2E + Phase 1 capability + DEVLOG closure |
+| F-15 | `152e6717` | hero + catalog E2E + Phase 1 capability + DEVLOG closure |
+
+### Phase 1.5 polish (post-F-15)
+
+The "Phase 1.5" deferred items from F-15 were ALL landed in the same
+session. The hero E2E loop works end-to-end today for Composio-routed
+workflows:
+
+| Commit | Subject |
+|---|---|
+| `ca7accba` | wire overflow menu Run / Edit / Delete actions |
+| `7a10562c` | persistent "Build a workflow" CTA + Show starter toggle |
+| `e6ae9ecc` | label Delete as "Move to starter workflows" for Seed-origin rows |
+| `f0a2288c` | wildcard match for empty account_id/channel_id in `is_connected` + boot-time recompute sweep |
+| `eea486f5` | real agent invocation in drafters + chat-runtime `<workflow-preview>` tag rendering |
+| `90e4b7d6` | draft Phase 2 + Phase 3 ticket sets |
+| `23645a25` | teach chat agent about the Workflows feature (orchestrator prompt) |
+| `4c54e649` | expose workflow tools in the orchestrator `[tools].named` allowlist |
+| `b0e3b73c` | register `channel_send` + `webview_account_send` stub tools |
+| `1445afb5` | refresh proposer module doc — placeholder body is gone |
 
 ---
 
@@ -100,14 +119,19 @@ notes drift between design intent and as-shipped code.
 
 ## Deferred follow-ups
 
-- Hero E2E (NFR-2.6.3) + chat-runtime protocol extension —
-  Phase 1.5.
+- Hero E2E spec file (NFR-2.6.3) — the loop works end-to-end
+  manually but no dedicated WDIO spec lives in `app/test/e2e/specs/`
+  yet. Tracked in Phase 2.
 - 30-day soft-delete retention sweep (FR-1.3.4) — TODO from F-2.
 - `active_hours` enforcement on cron triggers — TODO from F-7.
 - Dedicated run-history detail view UI — backend (`workflows_get_run`)
   wired today; UI deferred.
+- Real Channel + Webview outbound send — Phase 2 (F2-5).
+  Sender nodes today resolve to stub tools that return a clear
+  deferred-feature error.
+- Multi-node chains — Phase 1 ships single-`agent_prompt`-node
+  workflows. Phase 2 adds `tool_call`, `http_request`,
+  `channel_message`, `condition`, `delay` node kinds.
 - Visual-canvas surface — Phase 3, per ADR-002.
-- Phase 2: new triggers (`webhook` / `composio_event` /
-  `channel_message`), new node kinds (`tool_call` / `http_request`
-  / `channel_message` / `condition` / `delay`), RU-5..RU-9
-  templates.
+- New triggers (`webhook` / `composio_event` / `channel_message`),
+  RU-5..RU-9 templates — Phase 2.

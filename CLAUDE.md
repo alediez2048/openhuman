@@ -4,7 +4,13 @@
 
 Narrative architecture: [`gitbooks/developing/architecture.md`](gitbooks/developing/architecture.md). Frontend: [`gitbooks/developing/architecture/frontend.md`](gitbooks/developing/architecture/frontend.md). Tauri shell: [`gitbooks/developing/architecture/tauri-shell.md`](gitbooks/developing/architecture/tauri-shell.md). Agent-harness tool surface: [`gitbooks/developing/architecture/agent-harness.md`](gitbooks/developing/architecture/agent-harness.md).
 
-> **Active initiative — Workflows & Automations.** Read [`Automations/STATE.md`](Automations/STATE.md) first. Phase 0 (Connections Hub at `/connections` — unified view across Composio, Channels, Browser, Built-in, MCP, Generic HTTP, with a real verification model) is shipped to `main`. Phase 1 (Workflows Foundation) is `Automations/Tickets/phase-1-foundation/F-1.md`; required ADRs and the proposal-preview design live under `Automations/ADRs/` and `Automations/Artifacts/designs/`.
+> **Active initiative — Workflows & Automations.** Read [`Automations/STATE.md`](Automations/STATE.md) first.
+> - **Phase 0** (Connections Hub at `/connections`) — shipped to `main`.
+> - **Phase 1** (Workflows Foundation, F-1 → F-15) + **Phase 1.5** polish — landed on `main`. End-to-end chat-driven create / run / history works for Composio-routed workflows; Channel / Webview sender nodes are deliberate Phase 2 stubs. Tickets: `Automations/Tickets/phase-1-foundation/`.
+> - **Phase 2** (Execution Depth — multi-node chains, real channel/webview send, retries, scheduler) — 16 tickets drafted at `Automations/Tickets/phase-2-execution/`, not started.
+> - **Phase 3** (Canvas Editor) — 10 tickets drafted at `Automations/Tickets/phase-3-canvas/`, not started.
+> - ADRs + proposal-preview design: `Automations/ADRs/` and `Automations/Artifacts/designs/`.
+> - **Critical gotcha** — every new agent tool needs to be registered globally **and** added to the orchestrator's `[tools].named` allowlist in `src/openhuman/agent/agents/orchestrator/agent.toml`. The allowlist is an explicit whitelist, not a fallback — missing entries cause the agent to act as if the tool doesn't exist (commit `4c54e649`).
 
 ---
 
