@@ -248,10 +248,25 @@ async fn run_agent_for_text(
         description_chars = description.len(),
         "[workflows-proposer] dispatching one-shot drafter LLM call"
     );
-    provider
+    let response = provider
         .chat_with_system(Some(system_prompt), description, &model, 0.2)
         .await
-        .map_err(|e| RunFailure::new(format!("provider.chat_with_system failed: {e:#}")))
+        .map_err(|e| RunFailure::new(format!("provider.chat_with_system failed: {e:#}")))?;
+    // Surface the raw LLM response so when parsing fails we can SEE
+    // what came back instead of guessing. First 800 chars are usually
+    // enough to spot "refusal text", "prose instead of JSON", "missing
+    // closing fence", etc. — and 800 chars keep the log line readable.
+    let preview: String = response.chars().take(800).collect();
+    tracing::info!(
+        target: "workflows-proposer",
+        kind = %kind,
+        model = %model,
+        response_chars = response.len(),
+        has_json_fence = response.contains("```json") || response.contains("```\n{"),
+        response_preview = %preview,
+        "[workflows-proposer] drafter LLM response received"
+    );
+    Ok(response)
 }
 
 /// Extract a [`WorkflowProposal`] from the LLM's text response.
@@ -260,8 +275,18 @@ async fn run_agent_for_text(
 /// Falls back to parsing the whole response as raw JSON when no
 /// fence is found — the LLM occasionally returns the JSON inline.
 fn parse_proposal_from_response(text: &str) -> Result<WorkflowProposal, RunFailure> {
-    let body = extract_fenced_json(text).unwrap_or(text.trim());
+    let fenced = extract_fenced_json(text);
+    let body = fenced.unwrap_or_else(|| text.trim());
     serde_json::from_str::<WorkflowProposal>(body).map_err(|err| {
+        let body_preview: String = body.chars().take(400).collect();
+        tracing::warn!(
+            target: "workflows-proposer",
+            err = %err,
+            had_fence = fenced.is_some(),
+            body_chars = body.len(),
+            body_preview = %body_preview,
+            "[workflows-proposer] parse_proposal_from_response: serde_json::from_str FAILED"
+        );
         RunFailure::new(format!(
             "proposal payload not parseable as WorkflowProposal: {err}"
         ))
@@ -328,6 +353,12 @@ pub async fn draft_with_retries<D: Drafter + ?Sized>(
         let proposal = match drafter.draft(&system_prompt, description).await {
             Ok(p) => p,
             Err(err) => {
+                tracing::warn!(
+                    target: "workflows-proposer",
+                    attempt = attempt + 1,
+                    reason = %err.reason,
+                    "[workflows-proposer] drafter.draft FAILED — aborting retry loop with RunFailure"
+                );
                 return Err(DraftFailure::RunFailure { reason: err.reason });
             }
         };
