@@ -88,7 +88,7 @@ Do **not** invent a `webhook` trigger variant in Phase 1 — that's a Phase 2 ca
 
 ## Available node kinds (Phase 1)
 
-You may only emit **one** node, and its `kind` must be `agent_prompt`:
+You may only emit **one** node, and its `kind` must be `agent_prompt`. **Important:** `kind` appears in TWO places — once on the node itself, AND once inside `config` (the config object is a discriminated union, so the inner `kind` tells the runtime which config shape this is):
 
 ```json
 {
@@ -96,6 +96,7 @@ You may only emit **one** node, and its `kind` must be `agent_prompt`:
   "kind": "agent_prompt",
   "name": "Short human label",
   "config": {
+    "kind": "agent_prompt",
     "prompt": "Detailed instructions for the agent at run time.",
     "allowed_connections": [ /* ConnectionRefs */ ],
     "iteration_cap": 10,
@@ -105,6 +106,8 @@ You may only emit **one** node, and its `kind` must be `agent_prompt`:
   "on_error": "halt"
 }
 ```
+
+⚠️ **Forgetting the inner `"kind": "agent_prompt"` inside `config` is the single most common drafting bug.** The validator will reject the proposal with `missing field 'kind'` and you'll be re-prompted. Always emit both.
 
 If the user describes a multi-step workflow that genuinely requires distinct sequential steps (read X, transform Y, write Z) — in Phase 1 you should **collapse the steps into a single rich `agent_prompt.prompt`** that instructs the agent to do all of them in order. The Phase 1 agent is capable of multi-step reasoning within one node. Phase 2 introduces the multi-node + multi-kind world.
 
@@ -172,6 +175,7 @@ Do not include phrasing in your output like *"I'm now saving this for you"* or *
       "kind": "agent_prompt",
       "name": "Triage and deliver",
       "config": {
+        "kind": "agent_prompt",
         "prompt": "You are summarizing the user's morning attention queue. Sequence:\n  1. Read unread Gmail messages from the last 24h. Skim subjects + senders; ignore newsletters.\n  2. Read Linear issues assigned to the user with status open or in-progress.\n  3. Read unread Slack DMs from the last 24h.\n  4. Cross-reference everything you read against the user's memory of what they're working on this week. Surface only items that intersect their current priorities.\n  5. Compose a single Telegram message (max 400 chars) with the headline that needs attention today, then 3–5 one-line bullets. End with the count of items you skipped as low-priority.\n  6. Send the message via the user's Telegram channel.\n\nDo not perform any action other than reading + summarizing + sending the one Telegram message.",
         "allowed_connections": [
           { "type": "composio", "toolkit_id": "gmail" },
