@@ -239,9 +239,7 @@ export default function WorkflowsList() {
                 {t('workflows.no_results')}
               </div>
             ) : (
-              <div
-                className="grid grid-cols-1 md:grid-cols-2 gap-2"
-                data-testid="workflows-list">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2" data-testid="workflows-list">
                 {visibleWorkflows.map(w => (
                   <WorkflowCard key={w.id} workflow={w} />
                 ))}
