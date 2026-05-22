@@ -88,6 +88,34 @@ workflows:
 | `4c54e649` | expose workflow tools in the orchestrator `[tools].named` allowlist |
 | `b0e3b73c` | register `channel_send` + `webview_account_send` stub tools |
 | `1445afb5` | refresh proposer module doc — placeholder body is gone |
+| `b8716f90` | base64-encode `<workflow-preview>` data to survive quotes in prompt text |
+| `b8fbf865` | correct `ManualInitiator` wire shape so Run now succeeds |
+
+### F-16 — outstanding (not started)
+
+Live testing on 2026-05-21 revealed the F-15 placeholder swap was only
+done on the **drafter** side. The **executor** side
+(`run_agent_prompt`) still uses `Agent::from_config(config)` — the
+orchestrator — and ignores the `NodeAgentDefinition.allowed_tools`
+allowlist it computes per ADR-016. Symptom: a workflow run dispatches
+correctly, the agent fires, but the LLM picks
+`delegate_to_integrations_agent` (orchestrator default) instead of
+`composio_execute` (the deliberate per-connection tool). The Slack
+send then dies inside integrations_agent due to an unrelated
+Composio-action-name-hallucination bug, and `RunStep.status` records
+`Succeeded` because the agent returned text — even though no
+external action happened.
+
+F-16 closes this:
+
+- new `workflow_node` agent definition (honest identity, no
+  delegation, constrained tool surface)
+- per-instance `allowed_tools` override on the builder
+- `run_agent_prompt` rewritten to actually use `def`
+- honest `RunStep.status` based on tool-denial / tool-error events
+  during the run, not just "agent returned non-empty text"
+
+Spec lives at `F-16.md`; estimate ~7 hours.
 
 ---
 
