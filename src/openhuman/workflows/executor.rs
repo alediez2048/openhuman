@@ -723,11 +723,11 @@ async fn execute_agent_prompt(config: &Config, run: &Run, node: &Node) -> Result
                     // the run-history view can show what the agent
                     // tried to say), but the status reads honest.
                     let summary = format!(
-                        "agent run completed with {} tool call(s) reported as failed by the harness \
+                    "agent run completed with {} tool call(s) reported as failed by the harness \
                          (denied by allowlist or returned is_error=true). \
                          Check workflows-run + agent_loop logs for details.",
-                        output.tool_failure_count
-                    );
+                    output.tool_failure_count
+                );
                     (RunStatus::Failed, Some(payload), Some(summary))
                 } else {
                     (RunStatus::Succeeded, Some(payload), None)

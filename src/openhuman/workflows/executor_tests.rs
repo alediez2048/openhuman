@@ -827,7 +827,10 @@ fn build_node_agent_definition_output_drives_workflow_node_allowlist() {
     }
     // Sanity: baseline tools are present at the head, read-only
     // workflow tools at the tail.
-    assert_eq!(&def.allowed_tools[..BASELINE_TOOL_NAMES.len()], BASELINE_TOOL_NAMES);
+    assert_eq!(
+        &def.allowed_tools[..BASELINE_TOOL_NAMES.len()],
+        BASELINE_TOOL_NAMES
+    );
     let tail_start = def.allowed_tools.len() - READ_ONLY_WORKFLOW_TOOL_NAMES.len();
     assert_eq!(
         &def.allowed_tools[tail_start..],

@@ -1719,12 +1719,9 @@ mod dedup_tests {
         // (which needs ai providers, etc.), so we test the cloning
         // semantics directly via the override-clone code path that
         // build_session_agent_inner consumes.
-        use crate::openhuman::agent::harness::definition::{
-            AgentDefinitionRegistry, ToolScope,
-        };
+        use crate::openhuman::agent::harness::definition::{AgentDefinitionRegistry, ToolScope};
         let _ = AgentDefinitionRegistry::init_global_builtins();
-        let registry =
-            AgentDefinitionRegistry::global().expect("registry initialised above");
+        let registry = AgentDefinitionRegistry::global().expect("registry initialised above");
         let base = registry
             .get("workflow_node")
             .expect("workflow_node is in BUILTINS");
@@ -1753,7 +1750,10 @@ mod dedup_tests {
         }
         // omit_* flags survive the clone untouched (the override only
         // touches `tools`).
-        assert!(overridden.omit_identity, "omit_identity must survive override");
+        assert!(
+            overridden.omit_identity,
+            "omit_identity must survive override"
+        );
         assert!(
             overridden.omit_memory_context,
             "omit_memory_context must survive override"
