@@ -21,6 +21,8 @@ A fresh session should read this file first to know where the initiative stands.
 
 **Phase 4 (Canvas Editor) ticket set DRAFTED** under `Automations/Tickets/phase-4-canvas/` (10 tickets). **Gated on explicit user demand** — do not start unless a user asks for canvas editing in a way the existing chat + Linear-row list view can't satisfy. Per `prd.md §5.3`. The current chat-driven creation flow + the expanded inline workflow card UI may already cover the need.
 
+**Phase 5 (Structured Business Entities + Outcome Observability) PLACEHOLDER** at `Automations/Tickets/phase-5-business-entities/PLACEHOLDER.md` — not drafted. Forward-compat hook landing in F-17 via `entity_tags` so the structured layer can be built later from real data. Earliest start: after Phase 3 ships AND 3–6 months of `entity_tags` data has accumulated in the Memory Tree. Schemas emerge from observation, not theory. Surfaced by the 2026-05-22 grill when the user's vision pivoted from personal-productivity to "autonomous business-growth agent" — leads, deals, proposals, payments need structured queryability that Memory Tree's chunk model doesn't natively support.
+
 ---
 
 ## What's live on `main` today
