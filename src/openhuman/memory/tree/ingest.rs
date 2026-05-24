@@ -213,7 +213,23 @@ async fn persist(
     let written = tokio::task::spawn_blocking(move || -> Result<Option<usize>> {
         use std::collections::{HashMap, HashSet};
         store::with_connection(&config_owned, |conn| {
-            let tx = conn.unchecked_transaction()?;
+            // BEGIN IMMEDIATE rather than the rusqlite default BEGIN
+            // DEFERRED. The persist transaction does a SELECT (for the
+            // source-level claim + chunk dedup checks) followed by
+            // INSERTs/UPDATEs. Under concurrent gmail ingest, two
+            // workers both opening DEFERRED transactions would both
+            // acquire shared read snapshots, then race to promote to
+            // write — the loser hits SQLITE_BUSY_SNAPSHOT (error 517,
+            // "Cannot promote read transaction to write transaction
+            // because of writes by another connection"). IMMEDIATE
+            // acquires the write lock upfront so the second worker
+            // cleanly waits on busy_timeout (15s) rather than failing.
+            // Surfaced in user-visible Gmail ingest log warns 2026-05-23
+            // at 21:40 (~10 simultaneous "database is locked" errors).
+            let tx = rusqlite::Transaction::new_unchecked(
+                conn,
+                rusqlite::TransactionBehavior::Immediate,
+            )?;
 
             // Authoritative source-level gate (documents only).
             //

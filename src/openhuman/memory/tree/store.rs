@@ -715,6 +715,18 @@ pub(crate) fn with_connection<T>(
             "[memory_tree] Failed to enable WAL mode (filesystem may not support it): {wal_err}"
         );
     }
+    // Standard WAL companion: NORMAL fsync drops the per-commit fsync to
+    // a per-checkpoint fsync. Safe under WAL — durability guarantee is
+    // "no corruption on crash", which is what we want here (the worst
+    // case is losing the last few seconds of writes; we never lose
+    // structural integrity). Reduces lock-hold time per write by ~10×
+    // on macOS, which directly cuts down on busy contention between
+    // concurrent gmail ingest workers.
+    if let Err(sync_err) = conn.execute_batch("PRAGMA synchronous=NORMAL;") {
+        log::warn!(
+            "[memory_tree] Failed to set synchronous=NORMAL (non-fatal, sticks at FULL): {sync_err}"
+        );
+    }
     conn.execute_batch(SCHEMA)
         .context("Failed to initialize memory_tree schema")?;
     // Phase 2 migrations — additive, idempotent.
