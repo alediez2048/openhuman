@@ -77,6 +77,9 @@ export default function GenericHttpEditModal({
       : ''
   );
   const [credential, setCredential] = useState('');
+  // Default masked (security floor); click Show to reveal so the user
+  // can verify what they pasted. Resets on each open of the modal.
+  const [showCredential, setShowCredential] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -93,6 +96,7 @@ export default function GenericHttpEditModal({
         : ''
     );
     setCredential('');
+    setShowCredential(false);
     setError(null);
     setSubmitting(false);
   }, [open, existing]);
@@ -227,16 +231,26 @@ export default function GenericHttpEditModal({
 
         {needsCredential ? (
           <label className="block mb-3">
-            <span className="text-xs uppercase tracking-wide font-semibold text-stone-500 dark:text-neutral-400">
-              Credential {isEdit && '(leave blank to keep existing)'}
-            </span>
+            <div className="flex items-center justify-between">
+              <span className="text-xs uppercase tracking-wide font-semibold text-stone-500 dark:text-neutral-400">
+                Credential {isEdit && '(leave blank to keep existing)'}
+              </span>
+              <button
+                type="button"
+                onClick={() => setShowCredential(prev => !prev)}
+                className="text-xs font-medium text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300"
+                data-testid="generic-http-modal-credential-toggle"
+              >
+                {showCredential ? 'Hide' : 'Show'}
+              </button>
+            </div>
             <input
-              type="password"
+              type={showCredential ? 'text' : 'password'}
               value={credential}
               onChange={e => setCredential(e.target.value)}
               placeholder={isEdit ? '••••••••' : 'token'}
               autoComplete="new-password"
-              className="mt-1 w-full px-3 py-2 text-sm bg-white dark:bg-neutral-800 border border-stone-300 dark:border-neutral-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
+              className="mt-1 w-full px-3 py-2 text-sm bg-white dark:bg-neutral-800 border border-stone-300 dark:border-neutral-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 font-mono"
               data-testid="generic-http-modal-credential"
             />
           </label>

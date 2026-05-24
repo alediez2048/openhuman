@@ -59,6 +59,10 @@ export default function McpAddModal({ onClose }: Props) {
   const [endpoint, setEndpoint] = useState('');
   const [httpAuthKind, setHttpAuthKind] = useState<HttpAuthKind>('none');
   const [bearerToken, setBearerToken] = useState('');
+  // Default masked (security floor); click Show to reveal so the user
+  // can verify what they pasted before saving. Resets every time the
+  // modal opens because state lives at component scope.
+  const [showBearerToken, setShowBearerToken] = useState(false);
 
   // Stdio fields
   const [command, setCommand] = useState('');
@@ -221,16 +225,26 @@ export default function McpAddModal({ onClose }: Props) {
             </label>
             {httpAuthKind === 'bearer_token' ? (
               <label className="block mb-3">
-                <span className="text-xs uppercase tracking-wide font-semibold text-stone-500 dark:text-neutral-400">
-                  Bearer token
-                </span>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs uppercase tracking-wide font-semibold text-stone-500 dark:text-neutral-400">
+                    Bearer token
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setShowBearerToken(prev => !prev)}
+                    className="text-xs font-medium text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300"
+                    data-testid="mcp-add-bearer-token-toggle"
+                  >
+                    {showBearerToken ? 'Hide' : 'Show'}
+                  </button>
+                </div>
                 <input
-                  type="password"
+                  type={showBearerToken ? 'text' : 'password'}
                   value={bearerToken}
                   onChange={e => setBearerToken(e.target.value)}
                   placeholder="lin_oauth_…"
                   autoComplete="new-password"
-                  className="mt-1 w-full px-3 py-2 text-sm bg-white dark:bg-neutral-800 border border-stone-300 dark:border-neutral-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
+                  className="mt-1 w-full px-3 py-2 text-sm bg-white dark:bg-neutral-800 border border-stone-300 dark:border-neutral-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 font-mono"
                   data-testid="mcp-add-bearer-token"
                 />
               </label>

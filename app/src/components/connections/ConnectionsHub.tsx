@@ -34,7 +34,7 @@ const FILTER_CHIPS: { value: ConnectionKind | 'all'; label: string }[] = [
   { value: 'webview', label: 'Browser' },
   { value: 'builtin', label: 'Built-in' },
   { value: 'mcp', label: 'MCP' },
-  { value: 'generic_http', label: 'HTTP' },
+  { value: 'generic_http', label: 'API / HTTP' },
 ];
 
 function classify(c: ConnectionView): ConnectionKind {

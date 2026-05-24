@@ -64,9 +64,9 @@ export default function GenericHttpSection({ items }: Props) {
   return (
     <section data-testid="connections-section-generic-http">
       <SectionHeader
-        title="Generic HTTP Endpoints"
+        title="API / HTTP Endpoints"
         count={items.length}
-        subtitle="Escape hatch — any REST API, webhook, or external automation platform"
+        subtitle="Connect any REST API, webhook, or external automation platform (escape hatch — anything Composio doesn't already cover)"
       />
 
       <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
@@ -109,7 +109,7 @@ export default function GenericHttpSection({ items }: Props) {
           );
         })}
         <AddCustomTile
-          label="HTTP endpoint"
+          label="API endpoint"
           onClick={() => {
             setModal({ open: true, existing: null });
             setToast(null);
