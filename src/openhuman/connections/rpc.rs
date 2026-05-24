@@ -185,6 +185,47 @@ pub async fn connections_mcp_remove(
     ))
 }
 
+/// `openhuman.connections_mcp_orphans_list` — F-18 Part 3: surface MCP
+/// servers registered under a previous-session user dir. Used by the
+/// `/connections` UI to render the "restore previous-session
+/// credentials" banner. Tokens are redacted; the bearer secret never
+/// crosses this RPC boundary.
+pub async fn connections_mcp_orphans_list(
+    config: &Config,
+) -> Result<RpcOutcome<ops::McpOrphanListing>, String> {
+    let listing = ops::list_mcp_orphans(config)
+        .await
+        .map_err(|e| e.to_string())?;
+    let msg = format!(
+        "mcp-orphan scan: {} orphan(s) across {} non-active user dir(s){}",
+        listing.orphans.len(),
+        listing.user_dirs_scanned,
+        if listing.capped { " (capped)" } else { "" }
+    );
+    Ok(RpcOutcome::single_log(listing, msg))
+}
+
+/// `openhuman.connections_mcp_orphans_migrate` — F-18 Part 3: copy one
+/// orphan MCP server into the active user's config. Reads the source
+/// user's full server entry (including the bearer token) server-side
+/// and re-uses the regular `add_mcp_server` ops so the dedup check,
+/// stale-handle guard, and `ConnectionAdded` event publish all fire.
+/// Does NOT delete from the source.
+pub async fn connections_mcp_orphans_migrate(
+    config: &Config,
+    source_user_id: &str,
+    server_name: &str,
+) -> Result<RpcOutcome<crate::openhuman::config::McpServerConfig>, String> {
+    let server = ops::migrate_mcp_orphan(config, source_user_id, server_name)
+        .await
+        .map_err(|e| e.to_string())?;
+    let msg = format!(
+        "mcp orphan migrated: {} (from user {source_user_id}) → active user",
+        server.name
+    );
+    Ok(RpcOutcome::single_log(server, msg))
+}
+
 #[cfg(test)]
 #[path = "rpc_tests.rs"]
 mod tests;

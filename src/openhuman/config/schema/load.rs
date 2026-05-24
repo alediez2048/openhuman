@@ -448,6 +448,34 @@ pub fn pre_login_user_dir(default_openhuman_dir: &Path) -> PathBuf {
     user_openhuman_dir(default_openhuman_dir, PRE_LOGIN_USER_ID)
 }
 
+/// Resolve the `config.toml` path the runtime would write to RIGHT NOW.
+///
+/// Mirrors the user-id resolution inside [`Config::load_or_init`] without
+/// loading the config itself. Used by mutating ops (e.g. F-18's
+/// MCP-server-add stale-handle guard) to detect when an in-flight
+/// `Config` handle was loaded under a different active user than the
+/// one currently registered in `active_user.toml` — silently saving
+/// to that handle's `config_path` would orphan the write to a stale
+/// user dir (the F-18 repro).
+///
+/// Resolution order matches [`resolve_runtime_config_dirs_with`]:
+///   1. `OPENHUMAN_WORKSPACE` env override → that workspace's config
+///   2. `active_user.toml` → `users/<id>/config.toml`
+///   3. Active-workspace marker (legacy)
+///   4. Pre-login → `users/local/config.toml`
+///
+/// Returns the resolved `config.toml` path, NOT the openhuman dir.
+/// Callers compare against `config.config_path` for the guard check.
+pub async fn resolve_active_config_path() -> Result<PathBuf> {
+    let (default_openhuman_dir, default_workspace_dir) = default_config_and_workspace_dirs()?;
+    let (openhuman_dir, _workspace_dir, _source) = resolve_runtime_config_dirs(
+        &default_openhuman_dir,
+        &default_workspace_dir,
+    )
+    .await?;
+    Ok(openhuman_dir.join("config.toml"))
+}
+
 /// Try to parse config TOML. On failure, try `.bak`, then fall back to `Config::default()`.
 ///
 /// Returns `(config, was_corrupted)` where `was_corrupted == true` means the

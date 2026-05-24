@@ -27,6 +27,8 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("mcp_add"),
         schemas("mcp_remove"),
         schemas("mcp_test"),
+        schemas("mcp_orphans_list"),
+        schemas("mcp_orphans_migrate"),
     ]
 }
 
@@ -68,6 +70,14 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("mcp_test"),
             handler: handle_mcp_test,
+        },
+        RegisteredController {
+            schema: schemas("mcp_orphans_list"),
+            handler: handle_mcp_orphans_list,
+        },
+        RegisteredController {
+            schema: schemas("mcp_orphans_migrate"),
+            handler: handle_mcp_orphans_migrate,
         },
     ]
 }
@@ -258,6 +268,43 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 required: true,
             }],
         },
+        "mcp_orphans_list" => ControllerSchema {
+            namespace: "connections",
+            function: "mcp_orphans_list",
+            description: "F-18 Part 3: scan ~/.openhuman/users/*/config.toml for MCP servers registered under a previous-session user dir. Returns the orphan inventory so the /connections UI can surface a 'restore previous-session credentials' banner. Bearer tokens are redacted; the real value never crosses this RPC boundary.",
+            inputs: vec![],
+            outputs: vec![FieldSchema {
+                name: "listing",
+                ty: TypeSchema::Ref("McpOrphanListing"),
+                comment: "Orphan inventory + scan diagnostics.",
+                required: true,
+            }],
+        },
+        "mcp_orphans_migrate" => ControllerSchema {
+            namespace: "connections",
+            function: "mcp_orphans_migrate",
+            description: "F-18 Part 3: copy one orphan MCP server from a previous-session user's config into the active user's config. Reads the source bearer token server-side. Does NOT delete from the source.",
+            inputs: vec![
+                FieldSchema {
+                    name: "source_user_id",
+                    ty: TypeSchema::String,
+                    comment: "User-dir name (the SHA-style id) the orphan currently lives under.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "server_name",
+                    ty: TypeSchema::String,
+                    comment: "Case-insensitive match against the source's mcp_client.servers[].name.",
+                    required: true,
+                },
+            ],
+            outputs: vec![FieldSchema {
+                name: "server",
+                ty: TypeSchema::Ref("McpServerConfig"),
+                comment: "The migrated McpServerConfig (as persisted in the active user's config).",
+                required: true,
+            }],
+        },
         _other => ControllerSchema {
             namespace: "connections",
             function: "unknown",
@@ -406,6 +453,39 @@ fn handle_mcp_remove(params: Map<String, Value>) -> ControllerFuture {
             .ok_or_else(|| "missing required param 'name'".to_string())?
             .to_string();
         to_json(crate::openhuman::connections::rpc::connections_mcp_remove(&config, &name).await?)
+    })
+}
+
+fn handle_mcp_orphans_list(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        to_json(
+            crate::openhuman::connections::rpc::connections_mcp_orphans_list(&config).await?,
+        )
+    })
+}
+
+fn handle_mcp_orphans_migrate(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let source_user_id = params
+            .get("source_user_id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "missing required param 'source_user_id'".to_string())?
+            .to_string();
+        let server_name = params
+            .get("server_name")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "missing required param 'server_name'".to_string())?
+            .to_string();
+        to_json(
+            crate::openhuman::connections::rpc::connections_mcp_orphans_migrate(
+                &config,
+                &source_user_id,
+                &server_name,
+            )
+            .await?,
+        )
     })
 }
 
