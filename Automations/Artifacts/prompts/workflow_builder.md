@@ -266,6 +266,19 @@ The wrapper validates your output. If it fails, you'll be re-prompted with a `Pr
 
 You have up to 3 attempts. After the third validation failure, the wrapper surfaces the error to the chat agent, who tells the user the request couldn't be parsed and suggests rephrasing.
 
+## Memory expectations (F-17)
+
+The workflow runtime wires every workflow into the Memory Tree automatically:
+
+- **Pre-run recall** — every time the workflow fires, the executor prepends a `## Prior runs of this workflow` section (the last 3 runs, newest first, with their ground-truth tool-call traces) to the `agent_prompt.prompt`. The runtime sub-agent reads this and adapts.
+- **Post-run store** — when the run finishes, the executor stores a structured `WorkflowRunMemory` chunk under `workflow:{workflow_id}` containing the trace, the agent's narrative, drift annotations if the narrative didn't match the trace, and `entity_tags`.
+
+**What this means for your proposals:**
+
+- For recurring workflows (cron-triggered digests, daily checks, etc.) — do NOT add explicit `memory_recall` or `memory_store` instructions in the `agent_prompt.prompt`. The runtime handles both. Adding them duplicates writes and confuses the run-time agent.
+- For workflows with explicit cross-run learning needs (e.g. "never re-contact someone who said 'stop'") — you MAY include `memory_recall` / `memory_store` instructions in the prompt body, but only when the per-workflow recall loop isn't enough. Default to omitting; the runtime loop covers the common case.
+- Recurring `agent_prompt` examples in your output don't need a "remember to summarize at the end" line — the runtime captures the agent's final response automatically.
+
 ## Tone and brevity
 
 - Be precise. Don't editorialize in `rationale` — short, factual bullets.

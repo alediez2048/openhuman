@@ -21,15 +21,59 @@ use crate::openhuman::connections::types::ConnectionRef;
 use std::sync::Once;
 use tempfile::TempDir;
 
-/// Install a deterministic agent stub the first time any executor
-/// test runs. The stub echoes the prompt + allowed-tool count back
-/// to the caller, which gives every assertion a stable shape to
-/// match against (length, substring, truncation) without needing
-/// the real LLM.
+/// FIFO queue of narratives the F-17 path of the unified stub returns.
+/// Tests push one entry per planned `dispatch_run` call; the stub
+/// pops in order. When empty the stub falls back to the legacy echo.
+static NARRATIVE_SLOT: once_cell::sync::Lazy<
+    parking_lot::Mutex<std::collections::VecDeque<String>>,
+> = once_cell::sync::Lazy::new(|| parking_lot::Mutex::new(std::collections::VecDeque::new()));
+
+/// Process-wide capture of every composed prompt seen by the unified
+/// stub. F-17 integration tests inspect this to assert the recall
+/// block landed in run 2's user-message preamble.
+fn captured_prompts() -> &'static parking_lot::Mutex<Vec<String>> {
+    use std::sync::OnceLock;
+    static SLOT: OnceLock<parking_lot::Mutex<Vec<String>>> = OnceLock::new();
+    SLOT.get_or_init(|| parking_lot::Mutex::new(Vec::new()))
+}
+
+/// Install the unified deterministic agent stub. Behavior:
+///   - If the F-17 narrative queue ([`NARRATIVE_SLOT`]) has a pending
+///     entry, pop it and return it as the agent's text. Used by the
+///     F-17 integration tests to drive specific narratives + the
+///     confabulation sentinel.
+///   - Otherwise, fall back to the legacy echo behavior — `[test-stub]
+///     prompt={} ({} chars), allowed_tools={}`. The F-8/F-9/F-16 tests
+///     rely on this exact shape for their `output_json` assertions.
+///
+/// In both cases the prompt is captured into [`captured_prompts`] so
+/// F-17 tests can inspect what the recall block looked like.
+///
+/// Idempotent: the slot is a `Mutex<Option<Fn>>`; calling this
+/// repeatedly is fine — last-writer-wins is the desired contract.
 fn install_test_agent_stub() {
     static INIT: Once = Once::new();
     INIT.call_once(|| {
         set_test_agent_prompt_override(|prompt, def| {
+            captured_prompts().lock().push(prompt.to_string());
+            // Only F-17 tests embed the `F-17:` sentinel in their
+            // workflow prompts. Non-F-17 tests running in parallel
+            // must not pop entries off `NARRATIVE_SLOT` — otherwise
+            // they'd steal the F-17 test's narratives and the F-17
+            // tests would fall through to the echo path.
+            if prompt.contains("F-17:") {
+                if let Some(narrative) = NARRATIVE_SLOT.lock().pop_front() {
+                    if let Some(rest) = narrative.strip_prefix("F17-FAIL-RUN:") {
+                        let (run_id, real_narrative) =
+                            rest.split_once('|').unwrap_or((rest, ""));
+                        publish_synthetic_tool_failure(run_id.trim());
+                        return Ok(real_narrative.to_string());
+                    }
+                    return Ok(narrative);
+                }
+            }
+            // Legacy echo path — every pre-F-17 test depends on this
+            // exact shape for their `[test-stub]` substring asserts.
             Ok(format!(
                 "[test-stub] prompt={} ({} chars), allowed_tools={}",
                 prompt,
@@ -732,36 +776,15 @@ async fn run_step_succeeded_when_zero_tool_failure_events_observed() {
 #[tokio::test]
 async fn run_step_failed_when_tool_failure_event_observed_during_run() {
     ensure_event_bus_initialised();
-    // Re-install the override locally so we can fire the synthetic
-    // event between "agent invoked" and "run_single returns". The
-    // module-level INIT helper installs an override that ignores
-    // the run id — for this test we need access to the prompt to
-    // extract the run id, so we replace it here. Using
-    // `set_test_agent_prompt_override` directly is fine: the slot
-    // is a Mutex<Option<...>> and last-writer-wins.
-    use std::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
-    static REPLACED: AtomicU32 = AtomicU32::new(0);
-    if REPLACED.swap(1, AtomicOrdering::Relaxed) == 0 {
-        // First-call replacement is permanent for the suite — that's
-        // fine because the synthetic-failure publish is keyed by the
-        // run id embedded in the prompt below, so other tests that
-        // don't include that marker simply don't trigger a publish.
-        executor::set_test_agent_prompt_override(|prompt, def| {
-            // Stub still echoes the prompt so the existing
-            // assertions on `[test-stub]` text keep passing.
-            let body = format!(
-                "[test-stub] prompt={} ({} chars), allowed_tools={}",
-                prompt,
-                prompt.chars().count(),
-                def.allowed_tools.len()
-            );
-            if let Some(rest) = prompt.strip_prefix("F-16-FAIL-RUN:") {
-                publish_synthetic_tool_failure(rest.trim());
-            }
-            Ok(body)
-        });
-    }
-
+    // The F-16 stub variant this test used to install was behaviourally
+    // a no-op (its `strip_prefix("F-16-FAIL-RUN:")` branch never fired —
+    // the workflow prompt below never carried that literal). It also
+    // had a destructive side effect: it replaced the F-17 narrative-
+    // pop stub that the F-17 integration tests rely on, causing
+    // suite-mode F-17 failures. The unified stub installed by
+    // `install_test_agent_stub` already echoes the prompt + observes
+    // failures via the separate publish task spawned below, so no
+    // per-test stub replacement is needed here.
     let (_dir, config) = config_with_temp_workspace();
     // Two-stage: create the workflow → dispatch → re-fetch the
     // run id → publish through the stub on next dispatch. Since
@@ -871,5 +894,290 @@ fn build_node_agent_definition_output_drives_workflow_node_allowlist() {
     assert_eq!(
         &def.allowed_tools[tail_start..],
         READ_ONLY_WORKFLOW_TOOL_NAMES
+    );
+}
+
+// ── F-17: memory loop integration tests ────────────────────────────────
+
+/// Process-wide tempdir used to back the `memory::global` singleton
+/// across F-17 integration tests. The first test to run wins (per
+/// `OnceLock`); subsequent tests share the same workspace. Tests
+/// isolate by using unique workflow ids so their `workflow:{id}`
+/// namespaces never collide.
+fn ensure_test_memory_global_initialised() -> String {
+    use std::sync::OnceLock;
+    static WORKSPACE: OnceLock<TempDir> = OnceLock::new();
+    let ws = WORKSPACE.get_or_init(|| TempDir::new().expect("memory tempdir"));
+    let _ = crate::openhuman::memory::global::init(ws.path().join("workspace"));
+    ws.path().to_string_lossy().to_string()
+}
+
+/// Build a `Config` with a temp workspace AND prime the F-17 stub +
+/// memory client global. Tests get a fresh local workspace for the
+/// SQLite workflow DB, but share the process-wide memory workspace
+/// (because `memory::global` is one-shot).
+fn config_for_f17_test() -> (TempDir, Config) {
+    install_test_agent_stub();
+    ensure_event_bus_initialised();
+    let _ws = ensure_test_memory_global_initialised();
+    let dir = TempDir::new().unwrap();
+    let mut config = Config::default();
+    config.workspace_dir = dir.path().to_path_buf();
+    (dir, config)
+}
+
+/// Reset F-17 test scaffolding: clear captured prompts + the
+/// narrative queue. Tests call this on entry so test ordering
+/// doesn't leak state.
+fn reset_f17_scaffold() {
+    captured_prompts().lock().clear();
+    NARRATIVE_SLOT.lock().clear();
+}
+
+/// Serialise the F-17 integration tests — they share the agent stub's
+/// narrative queue + the prompt-capture buffer, and `cargo test`
+/// runs sibling tests in parallel by default. Holding this mutex
+/// for the duration of each F-17 test guarantees the queue contains
+/// only this test's narratives and the captures belong to this
+/// test's runs.
+///
+/// Other (non-F-17) executor tests don't push to `NARRATIVE_SLOT`,
+/// so they're free to keep running in parallel — the unified stub's
+/// fallback path is stateless echo.
+fn f17_test_lock() -> &'static parking_lot::Mutex<()> {
+    use std::sync::OnceLock;
+    static LOCK: OnceLock<parking_lot::Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| parking_lot::Mutex::new(()))
+}
+
+/// Look up the stored `WorkflowRunMemory` chunk for a given workflow +
+/// run id directly from the global memory client. Returns `None` when
+/// the chunk is missing or unparseable.
+async fn fetch_run_memory(
+    workflow_id: &str,
+    run_id: &str,
+) -> Option<super::memory::WorkflowRunMemory> {
+    use super::memory::{key_for_run, namespace_for, WorkflowRunMemory};
+    let client = crate::openhuman::memory::global::client_if_ready()?;
+    let mem = client.memory_handle();
+    let entry = mem
+        .get(&namespace_for(workflow_id), &key_for_run(run_id))
+        .await
+        .ok()??;
+    WorkflowRunMemory::parse_storage_markdown(&entry.content)
+}
+
+#[tokio::test]
+async fn memory_loop_first_run_renders_no_prior_runs_line() {
+    let _guard = f17_test_lock().lock();
+    reset_f17_scaffold();
+    NARRATIVE_SLOT
+        .lock()
+        .push_back("Done — fetched 0 items.".to_string());
+
+    let (_dir, config) = config_for_f17_test();
+    // Unique workflow id keeps memory namespace isolated from other
+    // tests sharing the global memory singleton.
+    let mut req = create_request("F-17: first-run recall fallback");
+    req.name = format!("f17-first-{}", uuid::Uuid::new_v4());
+    let created = ops::create(&config, req).await.unwrap().value;
+
+    executor::dispatch_run(
+        &config,
+        created.id.clone(),
+        TriggerSource::Manual {
+            initiator: "user".into(),
+        },
+    )
+    .await
+    .unwrap();
+    let _ = wait_for_terminal_run(&config, &created.id).await;
+
+    // The stub captured every prompt it received; the first one for
+    // this workflow_id must contain the "first execution" fallback
+    // line.
+    let prompts = captured_prompts().lock().clone();
+    let our_prompt = prompts
+        .iter()
+        .find(|p| p.contains("F-17: first-run recall fallback"))
+        .expect("captured prompt for our workflow");
+    assert!(
+        our_prompt.contains("## No prior runs — this is the first execution."),
+        "first run must carry the no-prior-runs fallback line; got:\n{our_prompt}"
+    );
+}
+
+#[tokio::test]
+async fn memory_loop_stores_and_recalls_across_two_runs() {
+    let _guard = f17_test_lock().lock();
+    reset_f17_scaffold();
+    // Two narratives — one per dispatch. The first becomes the prior-
+    // run summary the second will see.
+    NARRATIVE_SLOT
+        .lock()
+        .push_back("Sent the morning digest to #general.".to_string());
+    NARRATIVE_SLOT
+        .lock()
+        .push_back("Second run — followed the prior pattern.".to_string());
+
+    let (_dir, config) = config_for_f17_test();
+    let mut req = create_request("F-17: two-run recall sequence");
+    req.name = format!("f17-twin-{}", uuid::Uuid::new_v4());
+    let created = ops::create(&config, req).await.unwrap().value;
+
+    // Run 1.
+    let run1_id = executor::dispatch_run(
+        &config,
+        created.id.clone(),
+        TriggerSource::Manual {
+            initiator: "user".into(),
+        },
+    )
+    .await
+    .unwrap();
+    let run1 = wait_for_terminal_run(&config, &created.id).await;
+    assert!(matches!(run1.status, RunStatus::Succeeded));
+
+    // Memory write must land before run 2's recall reads it.
+    let stored = fetch_run_memory(&created.id, &run1_id)
+        .await
+        .expect("run 1 must persist a WorkflowRunMemory chunk");
+    assert!(stored.narrative.contains("Sent the morning digest"));
+    assert_eq!(stored.status, RunStatus::Succeeded);
+    assert!(stored.narrative_matches_actual);
+    assert!(stored.narrative_drift.is_empty());
+
+    // Run 2 — its composed prompt must include run 1's recall line.
+    captured_prompts().lock().clear();
+    executor::dispatch_run(
+        &config,
+        created.id.clone(),
+        TriggerSource::Manual {
+            initiator: "user".into(),
+        },
+    )
+    .await
+    .unwrap();
+    let _ = wait_for_terminal_run(&config, &created.id).await;
+
+    let prompts = captured_prompts().lock().clone();
+    let run2_prompt = prompts
+        .iter()
+        .find(|p| p.contains("F-17: two-run recall sequence"))
+        .expect("captured run-2 prompt");
+    assert!(
+        run2_prompt.contains("## Prior runs of this workflow"),
+        "run 2's prompt must carry the recall header; got:\n{run2_prompt}"
+    );
+    assert!(
+        !run2_prompt.contains("## No prior runs"),
+        "run 2 must NOT see the first-execution fallback; got:\n{run2_prompt}"
+    );
+    // Run 1's narrative is included in the recall line per
+    // `to_recall_line` happy-path branch.
+    assert!(
+        run2_prompt.contains("Sent the morning digest"),
+        "run 2's recall must surface run 1's narrative; got:\n{run2_prompt}"
+    );
+}
+
+#[tokio::test]
+async fn memory_loop_confabulation_marks_failed_and_drifts_into_next_run() {
+    let _guard = f17_test_lock().lock();
+    reset_f17_scaffold();
+
+    // Use a fresh config for the workflow_db (per-test).
+    let (_dir, config) = config_for_f17_test();
+    let mut req = create_request("F-17: confabulation regression");
+    req.name = format!("f17-lie-{}", uuid::Uuid::new_v4());
+    let created = ops::create(&config, req).await.unwrap().value;
+
+    // We need run 1's id to drive the synthetic failure event. Stub
+    // returns a "lying" narrative ("Sent the digest!") AND publishes
+    // a failure event keyed by the run id. The run id isn't known
+    // until dispatch returns — so we use a two-phase approach: get
+    // the run id, then race the synthetic failure publish (mirroring
+    // the F-16 test pattern).
+    //
+    // First, set up narrative for run 1 — plain "Sent the digest!"
+    // claim. The publish is driven externally via the same publish
+    // helper the F-16 test uses.
+    NARRATIVE_SLOT
+        .lock()
+        .push_back("Sent the digest to #general. All set.".to_string());
+
+    let run1_id = executor::dispatch_run(
+        &config,
+        created.id.clone(),
+        TriggerSource::Manual {
+            initiator: "user".into(),
+        },
+    )
+    .await
+    .unwrap();
+
+    // Race the agent: publish a synthetic failure event tied to run 1
+    // for up to 500ms or until the run terminates.
+    let publish_run_id = run1_id.clone();
+    let publish_handle = tokio::spawn(async move {
+        for _ in 0..50 {
+            publish_synthetic_tool_failure(&publish_run_id);
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    });
+
+    let run1 = wait_for_terminal_run(&config, &created.id).await;
+    publish_handle.abort();
+
+    // Honest-status gate must override Succeeded → Failed.
+    assert!(
+        matches!(run1.status, RunStatus::Failed),
+        "confabulation: a run with observed tool failures must end Failed; got {:?}",
+        run1.status
+    );
+
+    // Stored memory must reflect the drift.
+    let stored = fetch_run_memory(&created.id, &run1_id)
+        .await
+        .expect("run 1 must persist a WorkflowRunMemory chunk even on failure");
+    assert_eq!(stored.status, RunStatus::Failed);
+    assert!(
+        !stored.narrative_matches_actual,
+        "narrative claimed 'sent' but trace shows failure — must record drift"
+    );
+    assert!(
+        !stored.narrative_drift.is_empty(),
+        "drift entries must surface in stored memory; got: {stored:?}"
+    );
+
+    // Run 2: its recall block must carry the ⚠ annotation so the
+    // next-run agent doesn't inherit the confabulation.
+    captured_prompts().lock().clear();
+    NARRATIVE_SLOT
+        .lock()
+        .push_back("Run 2 — saw the drift annotation.".to_string());
+    executor::dispatch_run(
+        &config,
+        created.id.clone(),
+        TriggerSource::Manual {
+            initiator: "user".into(),
+        },
+    )
+    .await
+    .unwrap();
+    let _ = wait_for_terminal_run(&config, &created.id).await;
+
+    let prompts = captured_prompts().lock().clone();
+    let run2_prompt = prompts
+        .iter()
+        .find(|p| p.contains("F-17: confabulation regression"))
+        .expect("captured run-2 prompt");
+    assert!(
+        run2_prompt.contains("⚠ Narrative drift:"),
+        "next run must see the drift warning; got:\n{run2_prompt}"
+    );
+    assert!(
+        run2_prompt.contains("DO NOT assume the narrative is true"),
+        "drift annotation must include the safety guidance; got:\n{run2_prompt}"
     );
 }

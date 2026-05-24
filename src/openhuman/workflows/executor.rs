@@ -82,6 +82,7 @@
 use crate::core::event_bus::{publish_global, DomainEvent};
 use crate::openhuman::config::Config;
 use crate::openhuman::connections::types::ConnectionRef;
+use crate::openhuman::workflows::memory as workflow_memory;
 use crate::openhuman::workflows::store;
 use crate::openhuman::workflows::types::{
     AgentPromptConfig, Node, NodeConfig, NodeKind, Run, RunId, RunStatus, RunStep, RunStepId,
@@ -732,9 +733,13 @@ async fn execute_agent_prompt(config: &Config, run: &Run, node: &Node) -> Result
         agent_prompt_config.model_tier.clone(),
     );
 
-    let (terminal_status, output_json, error) =
-        match run_agent_prompt(config, &run.id, agent_prompt_config, &agent_def).await {
+    let (terminal_status, output_json, error, agent_narrative, observed_tool_calls) =
+        match run_agent_prompt(config, &run.workflow_id, &run.id, agent_prompt_config, &agent_def)
+            .await
+        {
             Ok(output) => {
+                let narrative = output.text.clone();
+                let trace = output.tool_calls.clone();
                 let truncated = store::truncate_output_to_64kib(output.text);
                 let payload = serde_json::to_string(&serde_json::json!({ "text": truncated }))
                     .unwrap_or_else(|_| "{}".into());
@@ -750,13 +755,38 @@ async fn execute_agent_prompt(config: &Config, run: &Run, node: &Node) -> Result
                          Check workflows-run + agent_loop logs for details.",
                     output.tool_failure_count
                 );
-                    (RunStatus::Failed, Some(payload), Some(summary))
+                    (
+                        RunStatus::Failed,
+                        Some(payload),
+                        Some(summary),
+                        narrative,
+                        trace,
+                    )
                 } else {
-                    (RunStatus::Succeeded, Some(payload), None)
+                    (RunStatus::Succeeded, Some(payload), None, narrative, trace)
                 }
             }
-            Err(err) => (RunStatus::Failed, None, Some(format!("{err:#}"))),
+            Err(err) => (
+                RunStatus::Failed,
+                None,
+                Some(format!("{err:#}")),
+                String::new(),
+                Vec::new(),
+            ),
         };
+
+    // F-17 deliverable C: persist the run as a structured chunk in the
+    // Memory Tree, ground-truth-first. Best-effort — a failed store
+    // does NOT roll back the run's terminal status.
+    persist_run_memory(
+        run,
+        terminal_status,
+        &agent_narrative,
+        &observed_tool_calls,
+        &agent_prompt_config.allowed_connections,
+        error.as_deref(),
+    )
+    .await;
 
     if let Err(err) = store::update_run_step_terminal(
         config,
@@ -791,17 +821,37 @@ async fn execute_agent_prompt(config: &Config, run: &Run, node: &Node) -> Result
     Ok(())
 }
 
-/// Node-execution output. Carries the agent's final text response
-/// AND a count of tool calls that the harness reported as
-/// `success = false` (per the
+/// One tool-call observation captured by the F-16 event-bus tap during
+/// a workflow run. Carries the fields the
 /// [`crate::core::event_bus::DomainEvent::ToolExecutionCompleted`]
-/// tap installed in [`run_agent_prompt`]).
+/// event surfaces today; F-17 deliverable C extends the subscriber to
+/// record these as a `Vec` (not just a counter) so the post-run memory
+/// builder can render per-call detail.
+///
+/// `redacted_args` + `inner_status` are reserved for a future event
+/// extension; the harness doesn't surface them on the current event
+/// surface, so the post-run builder writes the
+/// [`crate::openhuman::workflows::memory::ToolCallTrace`] with empty
+/// args + `None` inner_status. F4-6 is expected to extend the event.
+#[derive(Debug, Clone)]
+pub struct ToolCallObservation {
+    pub tool_name: String,
+    pub success: bool,
+    pub elapsed_ms: u64,
+}
+
+/// Node-execution output. Carries the agent's final text response
+/// AND the per-tool-call observations from the F-16 event-bus tap.
 ///
 /// F-16 D: the caller in [`execute_agent_prompt_node`] uses
 /// `tool_failure_count > 0` to override the step status to `Failed`
 /// even when the agent itself returned text — so a workflow that
 /// "completed" by emitting an apology after every tool call got
 /// denied no longer lies in run history.
+///
+/// F-17 deliverable C: `tool_calls` carries the full ordered trace
+/// so the post-run memory builder can record per-call detail in
+/// `ActualOutcome.tool_calls`.
 #[derive(Debug, Clone)]
 pub struct NodeOutput {
     pub text: String,
@@ -813,6 +863,10 @@ pub struct NodeOutput {
     /// Both are surfaced via the same `DomainEvent` with
     /// `success: false`, so the counter doesn't need to distinguish.
     pub tool_failure_count: u32,
+    /// Chronological list of every tool call observed during the run.
+    /// Used to build `ActualOutcome.tool_calls` in the post-run
+    /// memory chunk.
+    pub tool_calls: Vec<ToolCallObservation>,
 }
 
 /// Test-only override for [`run_agent_prompt`]. Production code
@@ -889,6 +943,7 @@ fn current_test_override() -> Option<TestAgentOverride> {
 /// never exists, and the constrained agent path above is what runs.
 async fn run_agent_prompt(
     config: &Config,
+    workflow_id: &WorkflowId,
     run_id: &RunId,
     agent_prompt_config: &AgentPromptConfig,
     def: &NodeAgentDefinition,
@@ -907,12 +962,39 @@ async fn run_agent_prompt(
     // override would short-circuit past the entire F-16 logic).
     let session_id = format!("workflow:{run_id}");
     let failure_counter = Arc::new(AtomicU32::new(0));
-    let _sub_handle = subscribe_tool_failure_counter(session_id.clone(), failure_counter.clone());
+    let observations: Arc<parking_lot::Mutex<Vec<ToolCallObservation>>> =
+        Arc::new(parking_lot::Mutex::new(Vec::new()));
+    let _sub_handle = subscribe_tool_call_recorder(
+        session_id.clone(),
+        failure_counter.clone(),
+        observations.clone(),
+    );
+
+    // F-17 deliverable B: pre-run memory recall. Fetch up to 3 prior
+    // runs of this workflow, render as a Markdown preamble, prepend
+    // to the user-message prompt. Best-effort — when the global
+    // memory client isn't initialised, recall_prior_runs returns []
+    // and render_recall_block emits the "first execution" fallback.
+    let prior_runs = workflow_memory::recall_prior_runs(workflow_id, 3).await;
+    let recall_block = workflow_memory::render_recall_block(
+        &prior_runs,
+        workflow_memory::RECALL_BLOCK_MAX_CHARS,
+    );
+    let composed_prompt =
+        workflow_memory::compose_prompt_with_recall(&recall_block, &agent_prompt_config.prompt);
+    tracing::info!(
+        target: "workflows-run",
+        run_id = %run_id,
+        prior_runs = prior_runs.len(),
+        recall_chars = recall_block.len(),
+        composed_chars = composed_prompt.len(),
+        "[workflows-run] pre-run recall composed into user prompt"
+    );
 
     let text = {
         #[cfg(test)]
         if let Some(stub) = current_test_override() {
-            let stubbed = stub(&agent_prompt_config.prompt, def)?;
+            let stubbed = stub(&composed_prompt, def)?;
             tracing::debug!(
                 target: "workflows-run",
                 "[workflows-run] run_agent_prompt via test override (text_len={})",
@@ -920,11 +1002,11 @@ async fn run_agent_prompt(
             );
             stubbed
         } else {
-            run_workflow_node_agent(config, &session_id, agent_prompt_config, def).await?
+            run_workflow_node_agent(config, &session_id, &composed_prompt, def).await?
         }
         #[cfg(not(test))]
         {
-            run_workflow_node_agent(config, &session_id, agent_prompt_config, def).await?
+            run_workflow_node_agent(config, &session_id, &composed_prompt, def).await?
         }
     };
 
@@ -935,17 +1017,27 @@ async fn run_agent_prompt(
     // ToolExecutionCompleted on its way out.)
     tokio::task::yield_now().await;
     let tool_failure_count = failure_counter.load(Ordering::Relaxed);
+    let tool_calls: Vec<ToolCallObservation> = observations.lock().clone();
     if tool_failure_count > 0 {
         tracing::warn!(
             target: "workflows-run",
             run_id = %run_id,
             tool_failure_count,
+            tool_call_count = tool_calls.len(),
             "[workflows-run] observed tool failures during run — step will be marked Failed"
+        );
+    } else {
+        tracing::debug!(
+            target: "workflows-run",
+            run_id = %run_id,
+            tool_call_count = tool_calls.len(),
+            "[workflows-run] agent finished cleanly"
         );
     }
     Ok(NodeOutput {
         text,
         tool_failure_count,
+        tool_calls,
     })
 }
 
@@ -970,7 +1062,7 @@ async fn run_agent_prompt(
 async fn run_workflow_node_agent(
     config: &Config,
     session_id: &str,
-    agent_prompt_config: &AgentPromptConfig,
+    composed_prompt: &str,
     def: &NodeAgentDefinition,
 ) -> Result<String> {
     tracing::info!(
@@ -1011,13 +1103,157 @@ async fn run_workflow_node_agent(
         def.allowed_tools.clone(),
     )?;
     agent.set_event_context(session_id.to_string(), "workflow");
-    agent.run_single(&agent_prompt_config.prompt).await
+    agent.run_single(composed_prompt).await
+}
+
+/// F-17 deliverable C: build a [`workflow_memory::WorkflowRunMemory`]
+/// chunk from the run's terminal state + the F-16 tool-call trace +
+/// the connection auto-tags + the agent-authored entity tags, then
+/// persist it under namespace `workflow:{workflow_id}` / key
+/// `run:{run_id}` via the global memory client.
+///
+/// **Best-effort.** A failed store logs a warn and returns. The run's
+/// terminal status is already persisted; missing memory is recoverable
+/// (the next run sees one fewer prior summary) but a rollback would be
+/// catastrophic.
+///
+/// The narrative-vs-actual drift detector
+/// ([`workflow_memory::compute_drift`]) runs here so the stored chunk
+/// records the honest summary the next-run recall will surface.
+async fn persist_run_memory(
+    run: &Run,
+    terminal_status: RunStatus,
+    agent_narrative: &str,
+    observed_tool_calls: &[ToolCallObservation],
+    allowed_connections: &[ConnectionRef],
+    terminal_error: Option<&str>,
+) {
+    // 1. Convert F-16 event-bus observations into structured
+    //    ToolCallTrace entries. Phase 1.5 leaves redacted_args empty
+    //    and inner_status None — the event surface today doesn't
+    //    carry those fields. A future ticket extends the event +
+    //    fills them in here.
+    let tool_calls: Vec<workflow_memory::ToolCallTrace> = observed_tool_calls
+        .iter()
+        .map(|obs| workflow_memory::ToolCallTrace {
+            tool_name: obs.tool_name.clone(),
+            redacted_args: serde_json::Value::Null,
+            success: obs.success,
+            elapsed_ms: obs.elapsed_ms,
+            inner_status: None,
+        })
+        .collect();
+
+    // 2. Anomalies: terminal_error from F-16's gate, plus a per-failure
+    //    line for each failed tool call (with name + elapsed_ms).
+    let mut anomalies: Vec<String> = Vec::new();
+    if let Some(err) = terminal_error {
+        anomalies.push(err.to_string());
+    }
+    for obs in observed_tool_calls.iter().filter(|o| !o.success) {
+        anomalies.push(format!(
+            "tool {} failed after {}ms",
+            obs.tool_name, obs.elapsed_ms
+        ));
+    }
+
+    let actual = workflow_memory::ActualOutcome {
+        tool_calls,
+        side_effects_confirmed: Vec::new(),
+        side_effects_claimed_unverified: Vec::new(),
+        anomalies,
+    };
+
+    // 3. Drift detection on the agent's text vs the ground-truth trace.
+    let (narrative_matches_actual, narrative_drift) =
+        workflow_memory::compute_drift(agent_narrative, &actual);
+
+    // 4. Entity tags: auto from connections + agent's `## Entities
+    //    touched` section.
+    let auto_tags = workflow_memory::auto_entity_tags(allowed_connections);
+    let agent_tags = workflow_memory::parse_agent_entity_tags(agent_narrative);
+    let entity_tags = workflow_memory::merge_entity_tags(auto_tags, agent_tags);
+
+    // 5. Truncate narrative to 600 chars per spec (keeps recall block
+    //    bounded; the full prose still lives in the run-step output).
+    let narrative = truncate_chars(agent_narrative, 600);
+
+    let memory_chunk = workflow_memory::WorkflowRunMemory {
+        workflow_id: run.workflow_id.clone(),
+        run_id: run.id.clone(),
+        triggered_at: run.started_at,
+        trigger_source: run.trigger_source.clone(),
+        status: terminal_status,
+        actual,
+        narrative,
+        narrative_matches_actual,
+        narrative_drift,
+        entity_tags,
+    };
+
+    let content = memory_chunk.to_storage_markdown();
+    let namespace = workflow_memory::namespace_for(&run.workflow_id);
+    let key = workflow_memory::key_for_run(&run.id);
+    let session_id = format!("workflow:{}", run.id);
+
+    let Some(client) = crate::openhuman::memory::global::client_if_ready() else {
+        tracing::warn!(
+            target: "workflows-memory",
+            run_id = %run.id,
+            "[workflows-memory] global memory client not initialised; \
+             skipping post-run store (this run will not appear in future recall)"
+        );
+        return;
+    };
+    let memory = client.memory_handle();
+    match memory
+        .store(
+            &namespace,
+            &key,
+            &content,
+            workflow_memory::WORKFLOW_MEMORY_CATEGORY,
+            Some(&session_id),
+        )
+        .await
+    {
+        Ok(()) => {
+            tracing::info!(
+                target: "workflows-memory",
+                run_id = %run.id,
+                namespace = %namespace,
+                drift = !narrative_matches_actual,
+                "[workflows-memory] post-run chunk stored"
+            );
+        }
+        Err(err) => {
+            tracing::warn!(
+                target: "workflows-memory",
+                run_id = %run.id,
+                "[workflows-memory] Memory::store failed: {err:#}; \
+                 terminal status already persisted, proceeding"
+            );
+        }
+    }
+}
+
+/// Helper: take the first `max_chars` Unicode scalars; append an
+/// ellipsis when truncated. Mirrors the `truncate_for_recall`
+/// utility in memory.rs but lives here so executor doesn't depend on
+/// the recall internals.
+fn truncate_chars(s: &str, max_chars: usize) -> String {
+    if s.chars().count() <= max_chars {
+        return s.to_string();
+    }
+    let truncated: String = s.chars().take(max_chars).collect();
+    format!("{truncated}…")
 }
 
 /// Subscribe to the global event bus for the duration of a workflow
-/// run and increment `counter` every time the harness publishes a
-/// [`DomainEvent::ToolExecutionCompleted`] with the matching
-/// `session_id` and `success = false`.
+/// run and record every [`DomainEvent::ToolExecutionCompleted`] with
+/// a matching `session_id` into `observations`. Failures also bump
+/// `counter` — the F-16 D honest-status gate reads the counter; F-17
+/// deliverable C reads the observations to build
+/// `ActualOutcome.tool_calls`.
 ///
 /// Returning the `SubscriptionHandle` is load-bearing — dropping it
 /// would abort the subscriber task immediately, before any events
@@ -1027,26 +1263,29 @@ async fn run_workflow_node_agent(
 /// When the global event bus isn't initialised (which is the case in
 /// some unit-test workspaces that don't go through the full RPC
 /// bootstrap), this returns `None`. The counter never increments,
-/// `tool_failure_count` stays 0, and the step status reverts to its
-/// pre-F-16 behaviour (Succeeded if the agent returned text). This
-/// is the safe failure mode: under-detection is preferred over
-/// over-detection of phantom failures.
-fn subscribe_tool_failure_counter(
+/// `tool_failure_count` stays 0, observations stay empty, and the
+/// step status reverts to its pre-F-16 behaviour (Succeeded if the
+/// agent returned text). This is the safe failure mode:
+/// under-detection is preferred over over-detection of phantom
+/// failures.
+fn subscribe_tool_call_recorder(
     target_session_id: String,
     counter: Arc<AtomicU32>,
+    observations: Arc<parking_lot::Mutex<Vec<ToolCallObservation>>>,
 ) -> Option<crate::core::event_bus::SubscriptionHandle> {
     use crate::core::event_bus::{subscribe_global, DomainEvent, EventHandler};
     use async_trait::async_trait;
 
-    struct ToolFailureCounter {
+    struct ToolCallRecorder {
         target_session_id: String,
         counter: Arc<AtomicU32>,
+        observations: Arc<parking_lot::Mutex<Vec<ToolCallObservation>>>,
     }
 
     #[async_trait]
-    impl EventHandler for ToolFailureCounter {
+    impl EventHandler for ToolCallRecorder {
         fn name(&self) -> &str {
-            "workflows-run::tool_failure_counter"
+            "workflows-run::tool_call_recorder"
         }
 
         fn domains(&self) -> Option<&[&str]> {
@@ -1058,20 +1297,30 @@ fn subscribe_tool_failure_counter(
 
         async fn handle(&self, event: &DomainEvent) {
             if let DomainEvent::ToolExecutionCompleted {
+                tool_name,
                 session_id,
                 success,
-                ..
+                elapsed_ms,
             } = event
             {
-                if !*success && session_id == &self.target_session_id {
+                if session_id != &self.target_session_id {
+                    return;
+                }
+                if !*success {
                     self.counter.fetch_add(1, Ordering::Relaxed);
                 }
+                self.observations.lock().push(ToolCallObservation {
+                    tool_name: tool_name.clone(),
+                    success: *success,
+                    elapsed_ms: *elapsed_ms,
+                });
             }
         }
     }
 
-    subscribe_global(Arc::new(ToolFailureCounter {
+    subscribe_global(Arc::new(ToolCallRecorder {
         target_session_id,
         counter,
+        observations,
     }))
 }

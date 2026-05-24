@@ -39,6 +39,7 @@ pub mod bus;
 pub mod diff;
 pub mod executor;
 pub mod health;
+pub mod memory;
 pub mod ops;
 pub mod proposer;
 pub mod rpc;
