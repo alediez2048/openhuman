@@ -70,7 +70,9 @@ The four bundled starter templates (`Automations/Templates/`):
 | F-14 | `8f8a2d91` | `WorkflowProposalPreview` + companion components |
 | F-15 | `152e6717` | hero + catalog E2E + Phase 1 capability + DEVLOG closure |
 | F-16 | `3b572f71` | enforce ADR-016 allowlist + workflow_node agent + honest step status |
-| F-17 | _drafted_ | wire workflows into the Memory Tree (pre-run recall + post-run store) |
+| F-17 | _landed local_ | wire workflows into the Memory Tree (pre-run recall + post-run store + entity_tags) |
+| F-18 | _landed local_ | MCP server registration is user-isolation safe (stale-handle guard + orphan scanner + migration RPCs; frontend banner deferred) |
+| F-19 | _landed local_ | MCP UX hardening — Parts 1+2 landed (structured tool errors + endpoint auto-probe on add); Part 3 catalog deferred |
 
 ### Phase 1.5 polish (post-F-15)
 
@@ -134,20 +136,36 @@ workflow + agent lib tests pass green.
 
 Spec lives at `F-16.md`.
 
-### F-17 — drafted, not started (2026-05-22)
+### F-17 — landed locally (2026-05-22)
 
-Closes the **memory↔doer loop** gap surfaced during the 2026-05-22
+Closed the **memory↔doer loop** gap surfaced during the 2026-05-22
 status grill. Phase 1 shipped the doer half of OpenHuman's
 "memory and doer" thesis; F-17 wires the doer back into the
-Memory Tree so workflows actually compound — pre-run recall
-prepends prior-run summaries into the agent's prompt, post-run
-store persists a structured outcome chunk under
-`workflow:{workflow_id}` so the next run starts informed.
+Memory Tree so workflows actually compound.
+
+What landed:
+
+- `src/openhuman/workflows/memory.rs` — new module: `WorkflowRunMemory`,
+  `ActualOutcome`, `ToolCallTrace`, `compute_drift`, `auto_entity_tags`,
+  `parse_agent_entity_tags`, `merge_entity_tags`, `redact_args`,
+  `recall_prior_runs`, `render_recall_block`. 19 new unit tests.
+- Executor wired: `run_agent_prompt` recalls + prepends, the F-16
+  subscriber upgraded from counter-only to `Vec<ToolCallObservation>`,
+  `persist_run_memory(...)` writes the post-run chunk best-effort.
+- Workflow-node prompt grows a "You are part of a learning system" +
+  `## Entities touched` section; drafter prompt (dual-write) grows a
+  "Memory expectations (F-17)" section.
+- 3 integration tests under `executor_tests::memory_loop_*` cover
+  first-run fallback, two-run sequence, and the confabulation
+  regression. All 202 workflow tests green.
 
 Per-workflow memory only in Phase 1.5; cross-workflow learning
-remains agent-opt-in via explicit `memory_store` for now.
+remains agent-opt-in via explicit `memory_store`. Per-call
+`redacted_args` + `inner_status` stay `Null`/`None` until a future
+ticket extends `DomainEvent::ToolExecutionCompleted` to carry
+them.
 
-Spec lives at `F-17.md`; estimate 1–2 days.
+Spec lives at `F-17.md`; full closure entry in `DEVLOG.md`.
 
 - **Catalog flow** (`workflows-seeded.spec.ts`, F-15) — NFR-2.6.4.
   Open `/workflows` → 4 starter cards → click [Add] on RU-1 →

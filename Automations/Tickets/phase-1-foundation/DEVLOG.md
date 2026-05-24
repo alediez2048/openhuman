@@ -1945,3 +1945,500 @@ trapdoor for the next refactorer.
 - **`model_tier` override on workflow_node**: F-16 logs but does not
   apply per-node model_tier. Phase 2.
 - Remaining Phase 2 / Phase 4 items unchanged.
+
+## F-17 Closure (2026-05-22)
+
+**Status:** Complete · **Branch/commit:** local; PR pending.
+**Tests:** all 202 workflow tests green; agent loader registration tests
+unchanged (workflow_node still registered + constrained).
+
+### What landed
+
+Wires workflows into the Memory Tree — the loop F-1 through F-16 left
+open. Three executor hooks:
+
+1. **Pre-run recall.** `executor::run_agent_prompt` calls
+   `workflow_memory::recall_prior_runs(workflow_id, 3)` BEFORE building
+   the workflow_node sub-agent. Last 3 chunks under
+   `workflow/{workflow_id}` come back newest-first; renders as
+   `## Prior runs of this workflow` Markdown prepended to the
+   user-message prompt (NOT the system prompt — the workflow_node
+   archetype's system prompt stays prefix-cache-stable per the F-17
+   design). When no prior runs exist, emits
+   `## No prior runs — this is the first execution.` so the LLM
+   doesn't think it's missing context.
+2. **Per-call tool trace.** F-16's `subscribe_tool_failure_counter`
+   subscriber became `subscribe_tool_call_recorder` — it still bumps
+   the failure counter (F-16's honest-status gate is unchanged), but
+   it ALSO records every observed `ToolExecutionCompleted` event into
+   a `Vec<ToolCallObservation>`. `NodeOutput` grew a `tool_calls:
+   Vec<ToolCallObservation>` field so the post-run builder can carry
+   per-call detail into the memory chunk.
+3. **Post-run store.** `execute_agent_prompt` calls
+   `persist_run_memory(...)` after the agent returns + before the
+   step row's terminal update. Builds a `WorkflowRunMemory` chunk
+   with: trace-derived `actual.tool_calls`, the agent's text as
+   `narrative` (truncated to 600 chars), F-16-honest `status`,
+   drift detection via `compute_drift` (regex/substring heuristic
+   that catches "agent claims sent/created/scheduled but all tool
+   calls failed"), and `entity_tags` merged from auto-tags
+   (`entity:source:slack` per connection) + the agent's optional
+   `## Entities touched` section. Memory write is best-effort —
+   failure logs a warn and does NOT roll back the run's terminal
+   status.
+
+### Ground-truth-first model
+
+The chunk format separates `actual` (what the trace observed) from
+`narrative` (what the agent said) and stamps
+`narrative_matches_actual` + `narrative_drift` after running the
+heuristic. The recall block renders the narrative when it matches,
+but REPLACES it with a `⚠ Narrative drift: ...` annotation when the
+detector fires. Next-run agents see the prior failure honestly
+instead of inheriting a confabulation. The confabulation regression
+test (`memory_loop_confabulation_marks_failed_and_drifts_into_next_run`)
+pins this end-to-end.
+
+### Entity tags (forward-compat Phase 5 hook)
+
+Auto-tags emerge from every workflow's `allowed_connections`:
+`Composio(slack) → entity:source:slack`, etc. The workflow_node
+prompt also teaches the agent to optionally append a
+`## Entities touched` section listing domain entities (`entity:lead:acme-corp`,
+`entity:deal:q3-2026`, ...). Parser is tolerant — a missing or
+malformed section just means no agent-authored tags. No schema
+enforcement yet — Phase 5 will codify the vocabulary once we see
+what kinds emerge in production.
+
+### Schema addressing
+
+Memory namespace is `workflow/{workflow_id}` (NOT `workflow:{id}` —
+`UnifiedMemory::sanitize_namespace` strips `:` to `_`, and
+`Memory::get` doesn't re-sanitize, so colon-separator chunks would
+write and never read back). Per-run key is `run:{run_id}` (colons
+allowed in keys). Recall reads directly via `Memory::sqlite_conn()`
+against `memory_docs` instead of `Memory::list`, because
+UnifiedMemory's `list` impl maps `title → content` (a documented
+quirk) which would surface titles instead of the canonical
+Markdown chunk.
+
+### Tactical deviations from the F-17 primer
+
+- **`redacted_args` + `inner_status` not yet captured.** The
+  `DomainEvent::ToolExecutionCompleted` event surface doesn't carry
+  args or inner status today; the post-run builder writes
+  `redacted_args: Value::Null` + `inner_status: None`. A future ticket
+  extends the event + fills them in here. The redaction helper
+  (`workflow_memory::redact_args`) ships now so the wiring is ready
+  when the event grows.
+- **Test serialization.** F-17 integration tests share a global agent-
+  stub narrative queue + prompt-capture buffer. Cargo runs sibling
+  tests in parallel, so the tests acquire `f17_test_lock()` at entry
+  to serialize amongst themselves. Non-F-17 tests remain
+  parallel-safe — the unified stub only pops from the narrative
+  queue when the prompt contains the literal `F-17:` sentinel.
+- **F-16 stub replacement removed.** The F-16 failure-event test
+  used to call `set_test_agent_prompt_override(...)` directly, which
+  silently replaced the unified test stub installed by every
+  `config_with_temp_workspace`. F-16's replacement was behaviourally
+  a no-op (its `strip_prefix("F-16-FAIL-RUN:")` branch never fired —
+  the workflow prompt didn't carry that literal). Removed; the F-16
+  test now relies on the unified stub + the separate publish task.
+  All F-16 tests stay green.
+
+### Prompt updates (D + E)
+
+- `src/openhuman/agent/agents/workflow_node/prompt.md` grows a
+  "You are part of a learning system — use memory" section plus the
+  `## Entities touched` convention. Existing `every_builtin_has_a_prompt_body`
+  test stays green.
+- `src/openhuman/agent/prompts/workflow_builder.md` (the drafter
+  prompt, bundled via Tauri resources) + the
+  `Automations/Artifacts/prompts/workflow_builder.md` dual-write copy
+  grow a "Memory expectations (F-17)" section telling the drafter not
+  to add explicit `memory_recall`/`memory_store` steps to recurring
+  workflows — the runtime handles both.
+
+### Tests
+
+19 new unit tests in `src/openhuman/workflows/memory.rs` cover the
+storage Markdown serializer/parser round-trip, the recall-line
+renderer happy + drift paths, the auto-entity-tag mapping for every
+`ConnectionRef` mechanism, the agent-authored entity-tag parser
+(canonical + shorthand + malformed + next-header tolerance),
+`merge_entity_tags` dedup, `compute_drift` happy + lying + negated +
+partial-success paths, `redact_args` recursive masking, the recall
+block first-execution fallback + char-cap budget, and the namespace
+helper. Plus 3 integration tests in `executor_tests.rs`:
+
+- `memory_loop_first_run_renders_no_prior_runs_line` — fresh
+  workflow → recall block renders the fallback line.
+- `memory_loop_stores_and_recalls_across_two_runs` — two
+  consecutive runs → run 2's composed prompt contains run 1's
+  narrative.
+- `memory_loop_confabulation_marks_failed_and_drifts_into_next_run`
+  — agent claims success on a failed tool call → stored memory
+  marks `Failed`, `narrative_drift` non-empty, run 2 sees the
+  ⚠ annotation.
+
+### Live verification (2026-05-23)
+
+Beyond the in-tree integration tests, F-17 was verified two more ways:
+
+**E2E spec in the real Tauri bundle.** New spec at
+`app/test/e2e/specs/workflows-memory-loop.spec.ts` (3 tests, all
+passing in 20s) exercises the real `openhuman-core` JSON-RPC surface
+inside the CEF-bundled `OpenHuman.app` and asserts against the
+SQLite memory DB:
+
+- `creates a workflow with no prior memory chunks`
+- `run 1 lands a chunk in the workflow/<id> namespace (regardless of agent success)`
+- `run 2 lands a second, strictly-newer chunk`
+
+Two infra gotchas surfaced bringing the spec up:
+
+1. **`custom-protocol` Tauri feature missing from E2E builds.** The
+   bundled CEF renderer fell back to `devUrl: http://localhost:1420`
+   (Vite dev server, not running in E2E mode) because
+   `cargo tauri build --features e2e-test-support` didn't auto-add
+   `custom-protocol` the way the Cargo.toml comment promises.
+   `waitForAppReady` timed out at 15s before any test ran. Fix: pass
+   `--features "e2e-test-support custom-protocol"` explicitly. A
+   permanent fix in `app/scripts/e2e-build.sh` is recommended as a
+   Phase 1.5 follow-up.
+2. **Per-user workspace path.** `OPENHUMAN_WORKSPACE` does NOT point
+   directly at the memory DB; per-user storage lives under
+   `<workspace>/users/<user_id_hash>/workspace/memory/memory.db`.
+   The spec discovers the right hash from `active_user.toml`.
+
+**Live manual run with real LLM + real Composio Gmail + real Composio
+Slack.** Workflow `5e46a6b6-1fd0-445c-914e-00d04ecb2b7b` ("Morning
+email digest to Slack") created via the chat drafter, ran twice from
+`/workflows` overflow `[Run now]`:
+
+- Run 1 @ 19:39:25 UTC → 2-bullet morning digest delivered to Slack DM.
+- Run 2 @ 19:40:21 UTC → entirely *different* 5-bullet digest delivered
+  (different emails surfaced — consistent with the recall block giving
+  the run-2 agent visibility into run 1's outcome).
+
+Both runs persisted structured `WorkflowRunMemory` chunks under
+`workflow/5e46a6b6-…` with strictly-increasing `updated_at`. Run 2's
+chunk had:
+
+- All canonical Markdown sections (`# Workflow run:`, `**Status:**`,
+  `## Narrative`, `## Actual`, `## Entities`) + parseable trailing
+  JSON fence.
+- 8 tool calls in `actual.tool_calls` (`current_time`,
+  `composio_list_tools` ×2, `composio_execute` ×5), all `success:
+  true`, elapsed_ms captured per call.
+- `narrative_matches_actual = true`, empty `narrative_drift`.
+- `entity_tags` merged correctly: `entity:source:gmail` +
+  `entity:source:slack` from auto-tagging, plus **five agent-emitted**
+  `entity:contact:<company>` tags (the LLM spontaneously appended a
+  `## Entities touched` section to its final response). The Phase 5
+  forward-compat convention works from day 1 in production traffic.
+- Drafter-prompt smoke (chat → "build me a workflow…") rendered a
+  clean proposal with ZERO redundant `memory_recall`/`memory_store`
+  instructions — the F-17 "Memory expectations" section in
+  `workflow_builder.md` is doing its job.
+
+### Cosmetic follow-ups (Phase 2 nice-to-haves, not blockers)
+
+1. The agent's `## Entities touched` ends up duplicated in the
+   rendered storage Markdown — once embedded in `narrative` (we
+   capture the full agent text verbatim), once as our own `##
+   Entities` section. A small narrative-trimming pass before store
+   would dedup the visible mirror without changing the parseable
+   JSON fence.
+2. The proposal-card `missing_connections` chip computation has a
+   stale match (shows "Connect →" for an already-connected Composio
+   toolkit). Server-side health gate computes Ready correctly on
+   save, so the user can still proceed — pre-existing client-side
+   matcher issue (commit `f0a2288c` family), not F-17 regression.
+
+### Remaining (deferred to future tickets)
+
+- Event-bus extension to carry `tool_args` + `inner_status` so
+  `ToolCallTrace` is fully populated (currently `Null` / `None`).
+- Smarter drift detector — current heuristic is regex + verb
+  matching; a semantic-similarity classifier could catch subtler
+  drifts at the cost of an extra LLM call per run.
+- Cross-workflow memory aggregation. F-17 ships per-workflow only;
+  cross-workflow learning stays agent-opt-in via explicit
+  `memory_store` calls until we have observation data to inform
+  the right aggregation granularity.
+- Permanent `--features custom-protocol` fix in
+  `app/scripts/e2e-build.sh`.
+- Stale `missing_connections` chip on the proposal card (server-side
+  health gate is correct, just the preview chip computation).
+
+## F-18 Closure (2026-05-23)
+
+**Status:** Parts 1+2+3 landed locally (backend); frontend banner UI
+deferred to a Phase 2 follow-up. PR pending.
+**Tests:** 52/52 connections lib tests green (44 pre-F-18 + 8 new).
+
+### Why F-18
+
+Surfaced during F-17 live test. User added a Higgsfield MCP server via
+the UI; UI said "Status: connected"; every MCP call thereafter failed;
+chat agent invented a "401 from Higgsfield" error. After three rounds
+of fresh-token-paste-fail the real cause turned out to be: the write
+landed in `users/6a0b81b…/config.toml` (a previous session's user dir)
+while the active runtime reads from `users/user-123/config.toml` per
+`active_user.toml`. The user's MCP server was orphaned in a stale user
+dir with no UI affordance to recover.
+
+Root cause class: `Config::save()` writes to `self.config_path`
+captured at load time. Any flow that flips `active_user.toml` between
+load + save silently lands the write in the stale user's config —
+logout/login, `test_reset`, account-switch, all trip the same wire.
+
+### Part 1 (one-shot data fix, 2026-05-23)
+
+Copied the orphaned Higgsfield `[[mcp_client.servers]]` block from
+`users/6a0b81bc03db3df2223f0e5f/config.toml` into
+`users/user-123/config.toml` (the active user) by hand. Bumped the
+`servers = []` to the array-of-tables form. Documented here as a
+one-off recovery — the proper fix is Part 3's migration RPC; this is
+"unblock the user TODAY".
+
+### Part 2 — stale-session-handle guard
+
+`src/openhuman/connections/ops.rs::add_mcp_server` and
+`remove_mcp_server` now call
+`guard_against_stale_session_handle(&persisted, op_label)` immediately
+before `persisted.save().await`. The guard:
+
+1. Re-resolves the currently-active config path via a new public
+   helper `crate::openhuman::config::resolve_active_config_path()`
+   (added to `src/openhuman/config/schema/load.rs`, re-exported
+   through `config/mod.rs` and `config/schema/mod.rs`).
+2. Compares against `persisted.config_path` (the path captured when
+   the in-flight Config was loaded).
+3. If they differ, returns an `anyhow!` error with the stable
+   `stale_session_handle:` prefix — the frontend (`McpAddModal.tsx`)
+   can detect the prefix and render a clear "your session changed
+   since you opened this dialog. Log out + back in" inline error
+   instead of the silent wrong-user write that produced the F-18
+   repro.
+
+Testable core (`guard_against_stale_session_handle_with_active_path`)
+takes the active path as a parameter so unit tests can drive both
+branches without mutating `OPENHUMAN_WORKSPACE`.
+
+### Part 3 — orphan MCP scanner + migration RPCs
+
+New RPCs:
+
+- **`openhuman.connections_mcp_orphans_list`** — scans
+  `~/.openhuman/users/*/config.toml` for `[[mcp_client.servers]]`
+  entries belonging to non-active users. Returns
+  `McpOrphanListing { orphans: Vec<McpOrphanServer>, user_dirs_scanned,
+  capped }`. Each orphan carries `source_user_id`, `name`, `endpoint`,
+  `command`, `args`, `enabled`, `timeout_secs`, `auth_kind_label`. The
+  bearer **token is NOT included** in the listing — the secret never
+  crosses this RPC boundary. Capped at 10 orphan-bearing user dirs to
+  bound work.
+- **`openhuman.connections_mcp_orphans_migrate { source_user_id,
+  server_name }`** — reads the full server entry (including the
+  bearer token) server-side from the source's config.toml and calls
+  the regular `add_mcp_server` ops against the active user's config.
+  Reuses the dedup check + the Part 2 stale-handle guard + the
+  `ConnectionAdded` event publish. Does NOT delete from the source
+  (the source user may log back in later and expect their MCP servers
+  intact). `QueryParam` auth bails with a clear migration-not-supported
+  error (the McpAddRequest enum doesn't expose it; user can re-create
+  manually).
+
+Schemas registered in `src/openhuman/connections/schemas.rs`; handlers
+follow the standard `Box::pin(async move { ... })` controller pattern.
+
+Testable core for the scanner (`list_mcp_orphans_at(root,
+active_user_id)`) takes both inputs explicitly so tests populate a
+tempdir with fake user configs without needing to mutate global env
+state.
+
+### What's NOT in this F-18 cut
+
+- **Frontend orphan banner.** The RPCs are live; the
+  `/connections` UI doesn't yet call them or render the "restore
+  previous-session credentials" surface. Deferred to a Phase 2 polish
+  ticket — backend foundation is ready; UI is small but needs a
+  component pass + dismiss-state plumbing.
+- **Boot-time `DomainEvent::McpOrphansDiscovered` publish.** Per the
+  F-18.md primer, this would let subscribers (telemetry, UI) react
+  without polling. Skipped because the UI banner is the only
+  intended subscriber and it can call `_list` on `/connections`
+  mount. Land if a second subscriber appears.
+- **Part 4 — chat-agent confabulation hardening.** Out of scope per
+  F-18.md; the agent inventing "401 from Higgsfield" when the real
+  error is "no MCP server registered for that name" is the related
+  but separable bug. F-19 candidate.
+
+### Files changed
+
+```
+src/openhuman/config/schema/load.rs          [+ resolve_active_config_path helper]
+src/openhuman/config/schema/mod.rs           [re-export]
+src/openhuman/config/mod.rs                  [re-export]
+src/openhuman/connections/ops.rs             [+ guard, list_mcp_orphans, migrate_mcp_orphan, McpOrphanServer, McpOrphanListing]
+src/openhuman/connections/rpc.rs             [+ connections_mcp_orphans_list / _migrate RPC handlers]
+src/openhuman/connections/schemas.rs         [+ register 2 new controllers + schemas]
+src/openhuman/connections/ops_tests.rs       [+ 8 new tests: stale-handle guard ×2, orphan scanner ×6]
+Automations/Tickets/phase-1-foundation/F-18.md [primer]
+Automations/Tickets/phase-1-foundation/README.md [add F-18 row]
+~/.openhuman/users/user-123/config.toml       [data fix — orphaned Higgsfield restored to active user]
+```
+
+### Tests added (8)
+
+- `stale_handle_guard_passes_when_in_flight_matches_active`
+- `stale_handle_guard_aborts_with_stale_session_handle_prefix`
+- `orphan_scanner_returns_empty_when_no_users_dir`
+- `orphan_scanner_skips_active_user_and_pre_login`
+- `orphan_scanner_picks_up_multiple_orphans_across_users`
+- `orphan_scanner_ignores_users_with_empty_mcp_servers`
+- `orphan_scanner_redacts_token_field`
+- `orphan_scanner_with_no_active_user_treats_all_non_prelogin_as_orphans`
+
+## F-19 Closure (2026-05-23)
+
+**Status:** Parts 1+2 landed locally. Part 3 (curated catalog) deferred.
+**Tests:** 8 new (6 classifier + 2 renderer); 295/295 across workflows
++ connections + agent loader regression sweep green.
+
+### Why F-19
+
+The day F-18 landed, the user hit a NEW MCP failure with Higgsfield:
+endpoint was the root URL `https://mcp.higgsfield.ai`, but the
+server's MCP JSON-RPC lives at `/mcp`. The user couldn't diagnose
+because:
+
+1. The MCP add modal saved any URL verbatim — no probe.
+2. The chat agent **invented** "POST / returns 404" / "401 from
+   Higgsfield" / "token invalid" claims when MCP tool calls failed.
+   These were fabrications — pattern-matched against the diagnostic
+   conversation, not real probe results. The MCP client returned
+   opaque `anyhow::Error` strings; the orchestrator LLM saw free-form
+   text and confabulated plausible-sounding root causes.
+
+~3 hours of "fresh API key → paste → fail" loops on what was a
+one-line URL-path typo.
+
+### Part 1 — Structured MCP tool errors end-to-end
+
+`src/openhuman/tools/impl/network/mcp.rs` grows:
+
+- `McpToolErrorKind` enum: `UnknownServer`, `AuthFailed`,
+  `EndpointNotFound`, `ServerError`, `EndpointUnreachable`,
+  `ToolReturnedError`, `ProtocolMismatch`, `Unknown`. Each carries
+  a stable `label()` (snake_case identifier) + `suggestion()`
+  (actionable remediation copy).
+- `classify_mcp_error(err_string) -> McpToolErrorKind` — pattern-
+  matches the strings produced by `mcp_client/client.rs` into the
+  right kind. Conservative: when no pattern fires, returns
+  `Unknown` instead of guessing.
+- `render_mcp_tool_error(server, tool, kind, detail) -> String`
+  produces a stable block the orchestrator surfaces verbatim:
+
+  ```
+  ⚠ MCP tool error
+  server: Higgsfield
+  tool: generate_image
+  kind: endpoint_not_found
+  detail: MCP HTTP 404 — POST /
+  suggestion: The endpoint path is likely wrong. Try /mcp, /sse, or /messages.
+
+  [Surface this block verbatim. Do NOT invent additional error details.]
+  ```
+
+The `McpCallTool::execute_with_options` `Err(err)` path was a
+free-form `"mcp_call_tool failed: {err}"` string; now classifies +
+renders structured. Stable `[mcp]` tracing on every failure with
+the `kind` label so log triage is trivial.
+
+**Orchestrator prompt update** (`agent/agents/orchestrator/prompt.md`)
+adds a "MCP tool failures — surface verbatim, never confabulate"
+section with four non-negotiable rules: preserve the block verbatim,
+never invent HTTP status codes, never override the suggestion field,
+never paraphrase the detail. This is the structural countermeasure
+against the F-19 repro pattern.
+
+### Part 2 — Endpoint auto-probe on MCP add
+
+`add_mcp_server` runs `probe_mcp_endpoint(endpoint, auth)` before
+save. The probe:
+
+1. Tries the user-provided URL first (respects explicit paths).
+2. If the URL has no path / just `/`, also tries `<base>/mcp`,
+   `<base>/sse`, `<base>/messages`.
+3. For each candidate, POSTs an `initialize` JSON-RPC request with
+   the user's auth attached. Accepts both bare JSON and SSE
+   (`event: message\ndata: {...}`) framings.
+4. First candidate that returns HTTP 200 + parseable
+   `result.protocolVersion` wins; that URL becomes the persisted
+   endpoint.
+5. 401/403 on any candidate fails fast with a clear "endpoint
+   exists but rejected your token" error (doesn't churn through
+   other paths against a known bad token).
+6. All paths exhausted with no MCP response → returns the full
+   tried list in the error for diagnostics.
+
+Per-path timeout: 5s. Total bound: 5s × candidates.
+
+Stdio (`command`-mode) servers skip the probe entirely.
+
+The corrected endpoint + probe diagnostic line are logged at
+`[connections]` info level; the resulting `McpServerConfig.endpoint`
+is the working URL, not the user's typo.
+
+### Files changed
+
+```
+src/openhuman/connections/ops.rs                       [+ probe_mcp_endpoint, McpProbeOutcome, auto-probe in add_mcp_server]
+src/openhuman/tools/impl/network/mcp.rs                [+ McpToolErrorKind, classify_mcp_error, render_mcp_tool_error, structured Err branch in McpCallTool, 8 unit tests]
+src/openhuman/agent/agents/orchestrator/prompt.md      [+ "MCP tool failures" section]
+Automations/Tickets/phase-1-foundation/F-19.md         [primer]
+Automations/Tickets/phase-1-foundation/README.md       [+ F-19 row]
+```
+
+### Tests added (8)
+
+Classification (6):
+- `classify_mcp_error_recognises_auth_failed` (401 + 403)
+- `classify_mcp_error_recognises_endpoint_not_found` (404)
+- `classify_mcp_error_recognises_server_error` (5xx + "server error")
+- `classify_mcp_error_recognises_unreachable` (DNS + connect-refused)
+- `classify_mcp_error_recognises_protocol_mismatch`
+- `classify_mcp_error_unknown_when_no_pattern_matches`
+
+Rendering (2):
+- `render_mcp_tool_error_carries_stable_shape`
+- `render_mcp_tool_error_unknown_kind_explicitly_marks_it`
+
+### What's NOT in this F-19 cut
+
+- **Part 3 — Curated MCP catalog.** ~10 popular servers (Higgsfield,
+  Linear, GitBook, Notion, Sentry, etc.) with name + endpoint +
+  auth-kind defaults baked in as a "Featured" tile row. Polish, not
+  pain relief — deferred to follow-up.
+- **Frontend probe-result notice.** Backend returns the auto-correction
+  log line in `RpcOutcome.logs`; the `McpAddModal` doesn't yet render
+  it inline. Backend foundation is there; small UI tweak.
+
+### What this fixes (verified)
+
+The two failure modes that ate ~3 hours of user time can no longer
+recur:
+
+1. Adding `https://mcp.higgsfield.ai` (root URL) now auto-corrects
+   to `https://mcp.higgsfield.ai/mcp` on save — proven via direct
+   curl in the repro session: `POST /mcp` returns 200, the probe
+   picks it.
+2. If the MCP server is unreachable / mis-pathed / auth-failed at
+   runtime, the chat agent's response surfaces the structured kind
+   verbatim (`kind: endpoint_not_found`) with the actual upstream
+   error in `detail` and a concrete `suggestion`. The orchestrator
+   prompt makes it a discipline violation to invent HTTP status
+   codes.
