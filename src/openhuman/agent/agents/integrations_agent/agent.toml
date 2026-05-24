@@ -13,4 +13,13 @@ omit_skills_catalog = true
 hint = "agentic"
 
 [tools]
-named = ["composio_list_tools", "file_read", "composio_execute"]
+# F-20: `composio_list_toolkits` added so the agent can confirm a
+# toolkit's slug exists before drilling into `composio_list_tools` /
+# `composio_execute`. workflow_node already has it; integrations_agent
+# was missing it, which forced the LLM to guess at toolkit names.
+named = [
+    "composio_list_toolkits",
+    "composio_list_tools",
+    "file_read",
+    "composio_execute",
+]

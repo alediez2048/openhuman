@@ -47,6 +47,7 @@ pub mod ops;
 pub mod periodic;
 pub mod providers;
 pub mod schemas;
+pub mod tool_errors;
 pub mod tools;
 pub mod trigger_history;
 pub mod types;

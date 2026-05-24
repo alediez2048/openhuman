@@ -73,6 +73,7 @@ The four bundled starter templates (`Automations/Templates/`):
 | F-17 | _landed local_ | wire workflows into the Memory Tree (pre-run recall + post-run store + entity_tags) |
 | F-18 | _landed local_ | MCP server registration is user-isolation safe (stale-handle guard + orphan scanner + migration RPCs; frontend banner deferred) |
 | F-19 | _landed local_ | MCP UX hardening — Parts 1+2 landed (structured tool errors + endpoint auto-probe on add); Part 3 catalog deferred |
+| F-20 | _in flight_ | integrations_agent hardening — slug-shape validation + structured Composio tool errors + prompt sharpening (mirror F-19 for Composio) |
 
 ### Phase 1.5 polish (post-F-15)
 

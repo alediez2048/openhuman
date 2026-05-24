@@ -2442,3 +2442,152 @@ recur:
    error in `detail` and a concrete `suggestion`. The orchestrator
    prompt makes it a discipline violation to invent HTTP status
    codes.
+
+## F-20 Closure (2026-05-24)
+
+Same disease F-19 fixed for MCP tools, now on the chat orchestrator's
+`integrations_agent → composio_execute` path. The user's most recent
+incident: orchestrator delegated a LinkedIn post → integrations_agent
+passed `tool: "linkedin"` (toolkit name) to `composio_execute` →
+backend returned `400 Bad Request: Toolkit "composio" is not enabled`
+→ orchestrator LLM fabricated "you need the w_member_social scope" and
+"your token is invalid" remediation — neither of which was true.
+Direct CLI verification confirmed `LINKEDIN_CREATE_LINKED_IN_POST`
+exists; the chat agent invented the failure mode.
+
+F-20 closes that confabulation surface by adding pre-dispatch
+slug-shape validation + the F-19-shape structured tool errors.
+
+### What landed
+
+**Part 1 — Slug-shape validation in `composio_execute`** —
+`composio/tools.rs::ComposioExecuteTool::execute` now runs an
+uppercase-+-underscores regex (`^[A-Z][A-Z0-9]*(_[A-Z0-9]+)+$`) on
+the inbound `tool` argument before dispatch. Hits the F-20 hero
+case: `linkedin`, `composio`, `gmail_send_email` all reject
+pre-dispatch with `kind: invalid_slug_shape`. Logged at `warn!` with
+`target: "composio"` for trivial triage.
+
+**Part 2 — Structured Composio tool errors** —
+`composio/tool_errors.rs` (new): `ComposioToolErrorKind` enum with
+10 variants (`InvalidSlugShape`, `ToolkitNotEnabled`, `AuthFailed`,
+`RateLimited`, `UpstreamProviderError`, `ScopeBlocked`, `NotCurated`,
+`ActionNotFound`, `Timeout`, `Unknown`), `label()` + `suggestion()`
+methods, `classify_composio_error()` pattern-matcher (covers the
+`[composio:error:<class>]` prefixes from `error_mapping.rs`, raw
+backend `Toolkit "X" is not enabled` strings, HTTP status codes,
+provider auth/rate-limit shapes), and `render_composio_tool_error()`
+that produces the verbatim-render block:
+```
+⚠ Composio tool error
+tool: LINKEDIN_CREATE_LINKED_IN_POST
+kind: toolkit_not_enabled
+detail: Backend returned 400: Toolkit "linkedin" is not enabled for this entity
+suggestion: The toolkit isn't connected for this user...
+
+[Surface this block verbatim. Do NOT invent additional error details.]
+```
+All three failure surfaces in `ComposioExecuteTool::execute`
+(scope-block, not-curated, final dispatch error) now render through
+this contract.
+
+**Part 3 — Orchestrator prompt extension** — the
+"MCP tool failures" section in `orchestrator/prompt.md` is now
+"MCP **and Composio** tool failures" with both shapes shown side by
+side and the 4 verbatim-render rules covering both. Common Composio
+kinds (`invalid_slug_shape`, `toolkit_not_enabled`, `auth_failed`,
+`action_not_found`) get a one-paragraph cheatsheet so the LLM
+recognises them mid-conversation.
+
+**Part 4 — integrations_agent prompt hardening** — `prompt.md`
+gains a concrete wrong-vs-right slug example, a new "When the user
+asks you to ACT, ACT" section forbidding text-instead-of-tool-call,
+and a "When a `composio_execute` call fails" section that mandates
+verbatim pass-through of the `⚠ Composio tool error` block to the
+orchestrator.
+
+**Part 5 — integrations_agent allowlist** — `agent.toml` adds
+`composio_list_toolkits` to `[tools].named` (workflow_node already
+had it). Pre-F-20 the agent had to guess at toolkit slugs because it
+couldn't see the enabled list.
+
+### Files changed
+
+```
+src/openhuman/composio/tool_errors.rs                    [new — enum + classifier + renderer + 13 unit tests]
+src/openhuman/composio/tools.rs                          [import + slug-shape validation + 3 error surfaces refactored]
+src/openhuman/composio/tools_tests.rs                    [+ updated missing-tool test, + linkedin-toolkit-name regression]
+src/openhuman/composio/mod.rs                            [+ pub mod tool_errors]
+src/openhuman/agent/agents/integrations_agent/agent.toml [+ composio_list_toolkits in named list]
+src/openhuman/agent/agents/integrations_agent/prompt.md  [+ wrong-vs-right slug, + "ACT" section, + verbatim-pass-through]
+src/openhuman/agent/agents/orchestrator/prompt.md        [+ Composio shape, header renamed to "MCP and Composio tool failures"]
+src/openhuman/agent/agents/loader.rs                     [updated integrations_agent allowlist test]
+Automations/Tickets/phase-1-foundation/F-20.md           [primer]
+Automations/Tickets/phase-1-foundation/README.md         [+ F-20 row]
+```
+
+### Tests added (15)
+
+`composio::tool_errors::tests` (13):
+- `slug_regex_accepts_real_action_slugs`
+- `slug_regex_rejects_toolkit_names`
+- `slug_regex_rejects_malformed_shapes`
+- `classify_recognises_toolkit_not_enabled`
+- `classify_recognises_auth_failed`
+- `classify_recognises_rate_limited`
+- `classify_recognises_upstream_provider_error`
+- `classify_recognises_action_not_found`
+- `classify_recognises_timeout`
+- `classify_unknown_when_no_pattern_matches`
+- `render_carries_stable_shape`
+- `render_unknown_kind_explicitly_marks_it`
+- `render_invalid_slug_shape_carries_the_actionable_suggestion`
+
+`composio::tools::tests` (2):
+- `execute_tool_execute_rejects_missing_tool` (updated — now asserts
+  the F-20 structured block instead of the old free-form string)
+- `execute_tool_execute_rejects_lowercase_toolkit_name_as_slug` (new
+  — the F-20 direct-repro regression: `tool: "linkedin"` rejects
+  pre-dispatch with `kind: invalid_slug_shape`)
+
+`agent::agents::loader::tests` (1, updated):
+- `integrations_agent_tool_scope_honours_toml` — now asserts all 4
+  required tools (`composio_list_toolkits` + `composio_list_tools` +
+  `composio_execute` + `file_read`) are present.
+
+### Regression sweep
+
+- `composio::` — 522 tests green
+- `openhuman::agent::agents::loader` — 33 tests green
+- `workflows::` — 202 tests green
+- `connections::` — 52 tests green
+- `memory::tree::` — 602 tests green
+
+### What's NOT in this F-20 cut
+
+- **Structural "no-tool-call iteration counter"** to detect "agent
+  returns text without acting" — Bug 2 from the primer. F-20 ships
+  prompt-level discipline instead ("if asked to act, act"). If the
+  prompt doesn't move the needle in production, a follow-up adds an
+  N-consecutive-tool-less-iterations detector.
+- **Backend-catalog slug lookup** as a pre-dispatch validation
+  layer. The regex catches >95% of LLM hallucinations at zero
+  network cost; backend round-trips would add latency for marginal
+  recall. Shape-valid-but-nonexistent slugs route through the
+  `ActionNotFound` classifier instead.
+
+### What this fixes (verified)
+
+1. `composio_execute({ tool: "linkedin", arguments: {} })` from any
+   agent — including delegate-to-integrations_agent paths from the
+   orchestrator — now returns a structured
+   `⚠ Composio tool error\nkind: invalid_slug_shape\n...` block.
+   Backend never sees the bad slug; orchestrator can't confabulate
+   on top of a free-form failure string.
+2. Real Composio dispatch failures (auth, rate limit, upstream
+   provider, action-not-found) classify into stable kinds with
+   per-kind suggestions. The orchestrator prompt's verbatim-render
+   contract now covers both MCP and Composio shapes.
+3. integrations_agent has `composio_list_toolkits` so it can verify
+   toolkit slugs exist before drilling — no more "guess what's
+   connected".

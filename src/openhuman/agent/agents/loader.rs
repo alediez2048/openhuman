@@ -554,12 +554,27 @@ mod tests {
     #[test]
     fn integrations_agent_tool_scope_honours_toml() {
         let def = find("integrations_agent");
-        // Current TOML: `named = ["composio_list_tools", "file_read"]`.
+        // F-20 TOML: `named = ["composio_list_toolkits",
+        // "composio_list_tools", "file_read", "composio_execute"]`.
+        // `composio_list_toolkits` was added so the agent can confirm a
+        // toolkit's slug exists before drilling into `composio_list_tools`
+        // — pre-F-20 the LLM had to guess at toolkit names.
         // Sub-agent runner additionally injects per-toolkit
         // ComposioActionTools at spawn time.
         match &def.tools {
             ToolScope::Named(names) => {
-                assert!(names.iter().any(|n| n == "composio_list_tools"));
+                for required in [
+                    "composio_list_toolkits",
+                    "composio_list_tools",
+                    "composio_execute",
+                    "file_read",
+                ] {
+                    assert!(
+                        names.iter().any(|n| n == required),
+                        "integrations_agent allowlist missing `{required}` — F-20 contract is \
+                         that the agent can discover toolkits + actions and execute them"
+                    );
+                }
             }
             other => panic!("expected Named scope, got {other:?}"),
         }

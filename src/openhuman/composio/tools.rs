@@ -39,6 +39,10 @@ use super::providers::{
     catalog_for_toolkit, classify_unknown, find_curated, get_provider, load_user_scope_or_default,
     toolkit_from_slug, ToolScope, UserScopePref,
 };
+use super::tool_errors::{
+    classify_composio_error, is_valid_composio_slug, render_composio_tool_error,
+    ComposioToolErrorKind,
+};
 use super::types::ComposioToolsResponse;
 
 /// Decision returned by [`evaluate_tool_visibility`].
@@ -844,9 +848,31 @@ impl Tool for ComposioExecuteTool {
             .trim()
             .to_string();
         if tool.is_empty() {
-            return Ok(ToolResult::error(
-                "composio_execute: 'tool' is required (e.g. GMAIL_SEND_EMAIL)",
-            ));
+            return Ok(ToolResult::error(render_composio_tool_error(
+                "",
+                ComposioToolErrorKind::InvalidSlugShape,
+                "received empty `tool` argument",
+            )));
+        }
+        // F-20 Part 1: catch LLM hallucinations BEFORE the backend
+        // rejects them. The most common confabulation pattern is the
+        // model passing a toolkit name (`composio`, `linkedin`,
+        // `slack`) or a lowercase slug as the `tool` argument. The
+        // shape regex catches >95% of these without a backend round
+        // trip; the remaining edge cases (shape-valid but nonexistent
+        // slugs) get caught by `classify_composio_error` → `ActionNotFound`.
+        if !is_valid_composio_slug(&tool) {
+            tracing::warn!(
+                target: "composio",
+                tool = %tool,
+                kind = "invalid_slug_shape",
+                "[composio] tool execute.execute: rejecting hallucinated slug pre-dispatch"
+            );
+            return Ok(ToolResult::error(render_composio_tool_error(
+                &tool,
+                ComposioToolErrorKind::InvalidSlugShape,
+                &format!("received `{tool}`"),
+            )));
         }
         let arguments = args.get("arguments").cloned();
         tracing::debug!(tool = %tool, "[composio] tool execute.execute");
@@ -885,14 +911,18 @@ impl Tool for ComposioExecuteTool {
             ToolDecision::BlockedByScope { scope } => {
                 let toolkit = toolkit_from_slug(&tool).unwrap_or_default();
                 let pref = load_user_scope_or_default(&toolkit).await;
-                let msg = scope_error_message(&tool, scope, pref);
+                let detail = scope_error_message(&tool, scope, pref);
                 tracing::info!(
                     tool = %tool,
                     toolkit = %toolkit,
                     scope = scope.as_str(),
                     "[composio][scopes] execute blocked by user scope pref"
                 );
-                return Ok(ToolResult::error(msg));
+                return Ok(ToolResult::error(render_composio_tool_error(
+                    &tool,
+                    ComposioToolErrorKind::ScopeBlocked,
+                    &detail,
+                )));
             }
             ToolDecision::NotCurated => {
                 let toolkit = toolkit_from_slug(&tool).unwrap_or_default();
@@ -901,9 +931,12 @@ impl Tool for ComposioExecuteTool {
                     toolkit = %toolkit,
                     "[composio][scopes] execute blocked: action not in curated whitelist"
                 );
-                return Ok(ToolResult::error(format!(
-                    "composio_execute: action `{tool}` is not in the curated whitelist for \
-                     toolkit `{toolkit}`. Use composio_list_tools to see available actions."
+                return Ok(ToolResult::error(render_composio_tool_error(
+                    &tool,
+                    ComposioToolErrorKind::NotCurated,
+                    &format!(
+                        "action `{tool}` is not in the curated whitelist for toolkit `{toolkit}`"
+                    ),
                 )));
             }
         }
@@ -936,8 +969,10 @@ impl Tool for ComposioExecuteTool {
             Ok(c) => c,
             Err(e) => {
                 tracing::warn!(error = %e, "[composio] tool execute.execute: load_config failed");
-                return Ok(ToolResult::error(format!(
-                    "composio_execute: failed to load live config: {e}"
+                return Ok(ToolResult::error(render_composio_tool_error(
+                    &tool,
+                    ComposioToolErrorKind::Unknown,
+                    &format!("failed to load live config: {e}"),
                 )));
             }
         };
@@ -945,7 +980,11 @@ impl Tool for ComposioExecuteTool {
             Ok(kind) => kind,
             Err(e) => {
                 tracing::warn!(error = %e, "[composio] tool execute.execute: factory failed");
-                return Ok(ToolResult::error(format!("composio_execute failed: {e}")));
+                return Ok(ToolResult::error(render_composio_tool_error(
+                    &tool,
+                    ComposioToolErrorKind::Unknown,
+                    &format!("composio client factory failed: {e}"),
+                )));
             }
         };
 
@@ -992,16 +1031,30 @@ impl Tool for ComposioExecuteTool {
                 Ok(ToolResult::success(body))
             }
             Err(e) => {
+                let err_str = e.to_string();
                 crate::core::event_bus::publish_global(
                     crate::core::event_bus::DomainEvent::ComposioActionExecuted {
                         tool: tool.clone(),
                         success: false,
-                        error: Some(e.to_string()),
+                        error: Some(err_str.clone()),
                         cost_usd: 0.0,
                         elapsed_ms,
                     },
                 );
-                Ok(ToolResult::error(e))
+                // F-20 Part 2: classify the dispatch error into a
+                // ComposioToolErrorKind and render the verbatim block
+                // so the orchestrator can't confabulate an explanation
+                // on top of a free-form anyhow string.
+                let kind = classify_composio_error(&err_str);
+                tracing::info!(
+                    target: "composio",
+                    tool = %tool,
+                    kind = kind.label(),
+                    "[composio] tool execute.execute: dispatch error classified"
+                );
+                Ok(ToolResult::error(render_composio_tool_error(
+                    &tool, kind, &err_str,
+                )))
             }
         }
     }

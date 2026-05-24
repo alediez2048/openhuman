@@ -169,7 +169,45 @@ async fn execute_tool_execute_rejects_missing_tool() {
         })
         .collect::<Vec<_>>()
         .join(" ");
-    assert!(txt.contains("'tool' is required"));
+    // F-20: empty `tool` now surfaces the structured
+    // ⚠ Composio tool error block with kind=invalid_slug_shape so the
+    // orchestrator can't confabulate on top of a free-form message.
+    assert!(
+        txt.starts_with("⚠ Composio tool error"),
+        "missing-tool surface should be the F-20 structured block; got: {txt}"
+    );
+    assert!(txt.contains("kind: invalid_slug_shape"));
+    assert!(txt.contains("received empty `tool` argument"));
+}
+
+#[tokio::test]
+async fn execute_tool_execute_rejects_lowercase_toolkit_name_as_slug() {
+    // F-20 direct repro: the LLM passes `"linkedin"` (a toolkit name)
+    // as the `tool` argument. Pre-F-20 the backend received it,
+    // returned `Toolkit "linkedin" is not enabled`, and the orchestrator
+    // LLM confabulated remediation (invented OAuth scope names, etc).
+    // Now the slug-shape regex rejects it pre-dispatch with the
+    // structured kind=invalid_slug_shape block.
+    let t = ComposioExecuteTool::new(fake_config_arc());
+    let result = t
+        .execute(serde_json::json!({ "tool": "linkedin", "arguments": {} }))
+        .await
+        .unwrap();
+    assert!(result.is_error);
+    let txt = result
+        .content
+        .iter()
+        .filter_map(|c| match c {
+            crate::openhuman::tools::traits::ToolContent::Text { text } => Some(text.clone()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(txt.starts_with("⚠ Composio tool error"));
+    assert!(txt.contains("tool: linkedin"));
+    assert!(txt.contains("kind: invalid_slug_shape"));
+    assert!(txt.contains("composio_list_tools"));
+    assert!(txt.contains("Surface this block verbatim"));
 }
 
 // ── all_composio_agent_tools ──────────────────────────────────
