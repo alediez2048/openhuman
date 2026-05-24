@@ -283,6 +283,60 @@ pub async fn composio_list_connections(
     ))
 }
 
+/// Bridge a Composio connection lifecycle change to the unified
+/// `DomainEvent::ConnectionAdded` / `ConnectionRemoved` stream that the
+/// Phase-1 `workflows::bus::WorkflowHealthRecomputeSubscriber` listens
+/// to. Pass `added = true` for create paths, `false` for delete paths.
+///
+/// Why two publishes per call:
+///
+/// The recompute subscriber's second-pass filter does an exact-match
+/// `Vec::contains(ref)` against each workflow's `referenced_connections`.
+/// Composio refs in a workflow come in two shapes:
+///   - `{ toolkit_id, account_id: None }` (wildcard — what the chat
+///     drafter usually emits because it doesn't know the user's
+///     specific account id at draft time)
+///   - `{ toolkit_id, account_id: Some(id) }` (pinned — when the user
+///     explicitly chose an account)
+///
+/// Publishing only one variant would silently miss the other. Two
+/// publishes cost ~nothing on the event bus and the recompute is
+/// idempotent (no-transition = no UPDATE).
+///
+/// The Phase 0 / P0-2 translator at `connections/bus.rs` is the
+/// architecturally correct home for this bridge; it's intentionally
+/// inert today. When P0-2 lands, this helper can be deleted and the
+/// translator can publish the unified events centrally.
+fn publish_unified_composio_connection_event(toolkit: &str, connection_id: &str, added: bool) {
+    let specific = crate::openhuman::connections::types::ConnectionRef::Composio {
+        toolkit_id: toolkit.to_string(),
+        account_id: Some(connection_id.to_string()),
+    };
+    let wildcard = crate::openhuman::connections::types::ConnectionRef::Composio {
+        toolkit_id: toolkit.to_string(),
+        account_id: None,
+    };
+    for r#ref in [specific, wildcard] {
+        let payload = serde_json::to_value(&r#ref).unwrap_or(serde_json::Value::Null);
+        let event = if added {
+            crate::core::event_bus::DomainEvent::ConnectionAdded {
+                connection_ref_json: payload,
+            }
+        } else {
+            crate::core::event_bus::DomainEvent::ConnectionRemoved {
+                connection_ref_json: payload,
+            }
+        };
+        crate::core::event_bus::publish_global(event);
+    }
+    tracing::debug!(
+        toolkit = %toolkit,
+        connection_id = %connection_id,
+        added,
+        "[composio] bridged composio lifecycle to unified ConnectionAdded/Removed (specific + wildcard variants)"
+    );
+}
+
 pub async fn composio_authorize(
     config: &Config,
     toolkit: &str,
@@ -342,6 +396,17 @@ pub async fn composio_authorize(
             connect_url: resp.connect_url.clone(),
         },
     );
+    // Bridge to the unified `DomainEvent::ConnectionAdded` stream the
+    // Phase-1 workflow health-recompute subscriber listens to
+    // (`workflows::bus::WorkflowHealthRecomputeSubscriber`). The Phase
+    // 0 translator at `connections/bus.rs` is intentionally inert per
+    // its P0-2 TODO; without this explicit publish, workflows that
+    // require this Composio toolkit never see their health flip back
+    // to `Ready` after the user reconnects. Publish both the specific-
+    // account and wildcard-account variants so the subscriber's
+    // exact-match second-pass filter catches workflows referencing
+    // either shape. Mirrors the `GenericHttp` ops.rs pattern.
+    publish_unified_composio_connection_event(toolkit, &resp.connection_id, true);
 
     Ok(RpcOutcome::new(
         resp,
@@ -383,6 +448,20 @@ pub async fn composio_delete_connection(
                 "[composio] PROFILE.md bullet removal failed (non-fatal)"
             );
         }
+    }
+    // Bridge to the unified `DomainEvent::ConnectionRemoved` stream
+    // BEFORE the toolkit `Option` is consumed by the composio-specific
+    // publish below. See `publish_unified_composio_connection_event`
+    // for the rationale (P0-2 translator gap; without this the
+    // workflow health-recompute subscriber never fires on Composio
+    // disconnect and workflow cards stay stuck on `Ready`).
+    if let Some(toolkit_str) = toolkit.as_deref() {
+        publish_unified_composio_connection_event(toolkit_str, connection_id, false);
+    } else {
+        tracing::warn!(
+            connection_id = %connection_id,
+            "[composio] unified ConnectionRemoved skipped — toolkit unknown for deleted connection; workflow health recompute won't fire for this disconnect"
+        );
     }
     crate::core::event_bus::publish_global(
         crate::core::event_bus::DomainEvent::ComposioConnectionDeleted {
