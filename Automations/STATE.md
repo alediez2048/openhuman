@@ -29,7 +29,7 @@ A fresh session should read this file first to know where the initiative stands.
 
 ## What's live on `main` today
 
-### Phase 1 deliverables (F-1 through F-16 + Phase 1.5 polish; F-17 drafted, not landed)
+### Phase 1 deliverables (F-1 through F-19 + Phase 1.5 polish; all landed)
 
 | Surface | Status | Where |
 |---|---|---|
@@ -175,15 +175,23 @@ These fail under `pnpm test:rust` and predate the branch:
 
 ## What a fresh session should do first
 
-**Default next action: start Phase 2.** F-17 has landed locally; Phase 1.5 is complete.
+**Default next action: start Phase 2.** F-17, F-18, F-19 all landed locally; Phase 1.5 is complete. 1,397 lib tests across workflows + connections + composio + memory_tree + agent loader all green.
 
 1. Read this file (`Automations/STATE.md`) to know where the initiative stands.
 2. Read `CLAUDE.md` for the repo-level commands + conventions.
-3. Verify all workflow tests pass on `main` (or the active branch): `cargo test --lib workflows::` should be 202 green.
-4. Read `Automations/Tickets/phase-1-foundation/F-17.md` + the F-17 closure in `DEVLOG.md` to understand the memory loop you're building on top of.
-5. Read `Automations/Tickets/phase-2-execution/README.md` and resolve the brainstorm OQs.
-6. Start F2-1.
-7. If a USER tasks you with a Phase 1 bug instead of Phase 2: re-check the "What's a known deferral" section in this file before assuming regression — many "missing" features are documented deferrals.
+3. Verify the regression baseline still holds: `cargo test --lib workflows::` (202), `cargo test --lib connections::` (52), `cargo test --lib composio::` (508), `cargo test --lib memory::tree` (602), `cargo test --lib agent::agents::loader` (33). 1,397 total.
+4. Read `Automations/Tickets/phase-2-execution/README.md` end-to-end. Resolve the 5 brainstorm OQs (OQ-4 triggers / OQ-5 retention / OQ-7 inter-node data / OQ-13 retry shape / OQ-14 webhook payload) — leans are documented; lock each.
+5. Read `Automations/Tickets/phase-2-execution/F2-1.md` end-to-end. F2-1 is "make Phase 2 NodeKind + Trigger variants reachable" — declarative scaffold; F2-3..F2-7 fill the per-kind execution bodies.
+6. Optional context: skim F-17 closure in DEVLOG.md (memory loop you're building on top of) + F-18 / F-19 (MCP user-isolation + UX, both backend-ready with frontend banner/notice deferred — not blockers for Phase 2).
+7. Start F2-1. The brainstorm OQs gate the architecture; once locked, F2-1 commit-then-test cadence picks up.
+
+**Deferred follow-ups that are NOT Phase 2 prereqs but worth knowing exist:**
+- F-18 frontend orphan banner on `/connections` (backend RPCs ready: `connections_mcp_orphans_list` + `connections_mcp_orphans_migrate`).
+- F-19 frontend probe-result notice in MCP Add modal (backend returns auto-correction in `RpcOutcome.logs`).
+- F-19 Part 3 curated MCP catalog (~10 popular MCP servers with defaults baked in).
+- Chat-agent confabulation hardening for non-MCP tools (F-19 only structurally fixed the MCP path).
+
+If a USER tasks you with a Phase 1 bug instead of Phase 2: re-check the "What's a known deferral" section in this file before assuming regression — many "missing" features are documented deferrals.
 
 **Do NOT start Phase 3 (browser agent), Phase 4 (canvas — demand-gated), Phase 5 (entity tables — placeholder), or Phase 6 (proactive agent — placeholder) without explicit user direction.** Their tickets exist as planning artifacts, not implementation targets.
 
@@ -202,7 +210,10 @@ These fail under `pnpm test:rust` and predate the branch:
 | `app/src/pages/Workflows/WorkflowsList.tsx` | `/workflows` route |
 | `app/src/pages/conversations/components/AgentMessageBubble.tsx` | Parses `<workflow-preview>` tags |
 | `app/src/pages/conversations/utils/format.ts` | `parseBubbleSegments` includes the tag matcher |
-| `Automations/Tickets/phase-1-foundation/F-17.md` | **The next implementation primer — read first when starting work** |
-| `Automations/Tickets/phase-1-foundation/F-16.md` | Closure context F-17 depends on (event-bus tap + workflow_node) |
+| `Automations/Tickets/phase-2-execution/F2-1.md` | **The next implementation primer — read first when starting work** |
+| `Automations/Tickets/phase-2-execution/README.md` | Phase 2 ticket index + 5 brainstorm OQs to resolve before F2-1 |
+| `Automations/Tickets/phase-1-foundation/F-17.md` | F-17 memory loop primer (closure context Phase 2 builds on) |
+| `Automations/Tickets/phase-1-foundation/F-18.md` | F-18 MCP user-isolation safety (orphan migration RPCs ready; UI banner deferred) |
+| `Automations/Tickets/phase-1-foundation/F-19.md` | F-19 MCP UX hardening (structured tool errors + endpoint auto-probe) |
 | `Automations/Tickets/phase-{1-foundation,2-execution,3-browser-agent,4-canvas,5-business-entities,6-proactive-agent}/` | Per-phase ticket sets (Phase 5/6 are placeholders only) |
 | `Automations/ADRs/` | 20 ADRs locked across the initiative |
