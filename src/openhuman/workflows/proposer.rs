@@ -501,9 +501,27 @@ fn push_group(out: &mut String, label: &str, items: &[&str]) {
 fn phase_constraints_block(phase: u32) -> String {
     let kinds = validator::allowed_node_kinds(phase);
     let kind_list: Vec<String> = kinds.iter().map(|k| format!("{k:?}")).collect();
+    let triggers = if phase >= 2 {
+        "Cron, Manual, Webhook, ComposioEvent, ChannelMessage"
+    } else {
+        "Cron, Manual"
+    };
+    let on_error = if phase >= 2 {
+        "Halt | Continue (workflow-level default: Halt; per-node retry_policy.max_attempts ∈ [1, 5])"
+    } else {
+        "Halt (Phase 1)"
+    };
+    let extras = if phase >= 2 {
+        "\n- Inter-node templating: `{{trigger.<path>}}` and `{{node.<id>.output.<path>}}` resolve at dispatch time (OQ-7)\n- Trigger payload exposure: `{{trigger}}` is the whole payload; `{{trigger.<path>}}` walks JSON (OQ-22)\n- Branching: `condition` node + `then_node_id` / optional `else_node_id`"
+    } else {
+        ""
+    };
     format!(
-        "- Allowed node kinds: {}\n- Allowed triggers: Cron, Manual\n- on_error policy: Halt (Phase 1)\n- timeout_secs clamp: [1, 3600]",
-        kind_list.join(", ")
+        "- Allowed node kinds: {}\n- Allowed triggers: {}\n- on_error policy: {}\n- timeout_secs clamp: [1, 3600]{}",
+        kind_list.join(", "),
+        triggers,
+        on_error,
+        extras,
     )
 }
 

@@ -242,6 +242,80 @@ fn build_system_prompt_phase_block_lists_phase_2_kinds_when_phase_is_2() {
     assert!(p2.contains("HttpRequest"));
 }
 
+// ── F2-13: workflow_builder prompt covers the Phase 2 surface ──────────
+
+/// F2-13: the bundled prompt teaches the LLM about every Phase 2
+/// trigger + node kind + templating concept. Each assertion pins one
+/// section header; a regression that drops the section text fails the
+/// test rather than silently shipping a Phase-1-only drafter.
+#[test]
+fn bundled_workflow_builder_prompt_covers_phase_2_surface() {
+    let snapshot = ConnectionsSnapshot::empty();
+    let prompt = build_system_prompt(&snapshot, 2, None);
+
+    // Phase 2 triggers.
+    assert!(
+        prompt.contains("Available triggers (Phase 2)"),
+        "missing Phase 2 triggers heading"
+    );
+    assert!(prompt.contains("composio_event"));
+    assert!(prompt.contains("channel_message"));
+    assert!(prompt.contains("webhook"));
+
+    // Phase 2 node kinds.
+    assert!(
+        prompt.contains("Phase 2 node kinds (active surface)"),
+        "missing Phase 2 node-kinds heading"
+    );
+    for kind in &[
+        "tool_call",
+        "http_request",
+        "channel_message",
+        "condition",
+        "delay",
+    ] {
+        assert!(
+            prompt.contains(kind),
+            "Phase 2 prompt missing node kind `{kind}`"
+        );
+    }
+
+    // Templating + branching + retry concepts.
+    assert!(prompt.contains("Inter-node templating"));
+    assert!(prompt.contains("{{trigger"));
+    assert!(prompt.contains("{{node."));
+    assert!(prompt.contains("Branching with `condition`"));
+    assert!(prompt.contains("`on_error` policy + retry budget"));
+}
+
+/// F2-13: the phase-2 constraints block surfaces the new triggers and
+/// retry semantics inline so the LLM sees them in every drafting call.
+#[test]
+fn phase_2_constraints_block_includes_new_triggers_and_retry_hint() {
+    let snapshot = ConnectionsSnapshot::empty();
+    let p2 = build_system_prompt(&snapshot, 2, None);
+    assert!(p2.contains("Webhook"));
+    assert!(p2.contains("ComposioEvent"));
+    assert!(p2.contains("ChannelMessage"));
+    assert!(p2.contains("Inter-node templating"));
+    assert!(p2.contains("retry_policy.max_attempts"));
+}
+
+/// F2-13: bundled prompt size sanity bound. Catches accidental
+/// bloat / accidental truncation. The Phase 2 prompt grew from
+/// ~19 KiB to ~24 KiB with the new sections; cap at 32 KiB to leave
+/// headroom for future small additions without forcing this test to
+/// move every time.
+#[test]
+fn bundled_workflow_builder_prompt_size_stays_below_32_kib() {
+    let bundled = include_str!("../agent/prompts/workflow_builder.md");
+    assert!(
+        bundled.len() < 32 * 1024,
+        "bundled prompt is {} bytes (>= 32 KiB) — consider trimming",
+        bundled.len()
+    );
+}
+
 // ── Allowlist + constants contract ─────────────────────────────────────
 
 #[test]

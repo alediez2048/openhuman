@@ -4,7 +4,7 @@
 >
 > **Final location:** `src/openhuman/agent/prompts/workflow_builder.md`. Bundled at build time per the existing `app/src-tauri/tauri.conf.json` resources convention.
 >
-> **Status:** Phase 1 draft. The Phase-2 / Phase-3 versions add additional trigger and node kinds; the structure of this prompt is forward-compatible.
+> **Status:** Phase 2 surface live. Triggers (`webhook`, `composio_event`, `channel_message`) and node kinds (`tool_call`, `http_request`, `channel_message`, `condition`, `delay`) are all reachable. The runtime's `CURRENT_PHASE` is `2`. Phase 3 (browser-agent + canvas) is the next horizon.
 
 ---
 
@@ -71,24 +71,24 @@ Every proposal you emit via `emit_proposal` must conform to one of these structu
 }
 ```
 
-## Available triggers (Phase 1)
+## Available triggers (Phase 2)
 
-You may only emit these trigger variants:
+You may emit any of these trigger variants:
 
+**Phase 1 (always available):**
 - `{ "type": "cron", "expr": "<5-field cron>", "tz": "<IANA tz or null>", "active_hours": null }` — schedules a recurring fire.
 - `{ "type": "manual" }` — fires only when the user clicks Run Now.
 
-If the user's request can be expressed as a schedule (*"every weekday at 8am"*, *"hourly"*, *"every 15 minutes"*), use `cron`. Otherwise, use `manual`.
+**Phase 2 (now live):**
+- `{ "type": "webhook", "tunnel_uuid": "<UUID>", "target_path": "/<path>" }` — fires on inbound HTTP POST to the workflow's registered tunnel. Use `"00000000-0000-0000-0000-000000000000"` for `tunnel_uuid` in proposals; the catalog [Save] flow rebinds it to a freshly registered tunnel.
+- `{ "type": "composio_event", "toolkit": "<slug>", "trigger_id": "<TRIGGER_SLUG>" }` — fires on a Composio trigger from any of the ~250 supported toolkits (Stripe, GitHub, Linear, Notion, …). Examples: `{ "toolkit": "stripe", "trigger_id": "STRIPE_PAYMENT_SUCCEEDED" }`, `{ "toolkit": "github", "trigger_id": "GITHUB_NEW_ISSUE" }`.
+- `{ "type": "channel_message", "provider": "<slug>", "filter": null }` — fires on inbound chat messages from a connected channel (`slack`, `telegram`, `discord`, `whatsapp`, …). Optional `filter` narrows by `contains` (case-insensitive substring), `direct_only` (DM vs group), `from_user` (exact sender id), or `regex` (must compile).
 
-**Webhook escape hatch (important):** If the user describes a trigger source that isn't on this list — e.g., *"when my heart rate spikes,"* *"every time someone forks my repo,"* *"on every new Stripe subscription"* — you should *still* propose a workflow. Use `manual` as the trigger and populate `setup_instructions` with the line:
+If the user's request can be expressed as a schedule (*"every weekday at 8am"*, *"hourly"*, *"every 15 minutes"*), use `cron`. If a third-party system can POST to a URL when the event happens, use `webhook`. If Composio exposes a trigger for the source, use `composio_event` (prefer this over webhook for Composio-covered services — Composio handles auth + signature verification for you). For inbound chat messages on a connected channel, use `channel_message`.
 
-> *"This trigger source isn't natively supported in Phase 1, but it will be in Phase 2 via the `webhook` trigger. For now, save this workflow with `manual` trigger and Run Now when the event you described happens. Or open a feature request."*
+## Available node kinds (Phase 2)
 
-Do **not** invent a `webhook` trigger variant in Phase 1 — that's a Phase 2 capability.
-
-## Available node kinds (Phase 1)
-
-You may only emit **one** node, and its `kind` must be `agent_prompt`. **Important:** `kind` appears in TWO places — once on the node itself, AND once inside `config` (the config object is a discriminated union, so the inner `kind` tells the runtime which config shape this is):
+You may emit one or more nodes, mixing kinds. The valid kinds today are: `agent_prompt`, `tool_call`, `http_request`, `channel_message`, `condition`, `delay`. **Important:** `kind` appears in TWO places — once on the node itself, AND once inside `config` (the config object is a discriminated union, so the inner `kind` tells the runtime which config shape this is):
 
 ```json
 {
@@ -109,50 +109,45 @@ You may only emit **one** node, and its `kind` must be `agent_prompt`. **Importa
 
 ⚠️ **Forgetting the inner `"kind": "agent_prompt"` inside `config` is the single most common drafting bug.** The validator will reject the proposal with `missing field 'kind'` and you'll be re-prompted. Always emit both.
 
-If the user describes a multi-step workflow that genuinely requires distinct sequential steps (read X, transform Y, write Z) — in Phase 1 you should **collapse the steps into a single rich `agent_prompt.prompt`** that instructs the agent to do all of them in order. The Phase 1 agent is capable of multi-step reasoning within one node. Phase 2 introduces the multi-node + multi-kind world.
+For genuinely multi-step work — read X, transform Y, write Z — prefer a multi-node chain over a single rich `agent_prompt`. The new node kinds (`tool_call`, `http_request`, `channel_message`) are deterministic, debuggable, and don't burn iterations on the agent budget. Reserve `agent_prompt` for the steps that genuinely need LLM reasoning (drafting prose, classifying intent, picking among options).
 
-Reserve `tool_call`, `http_request`, `channel_message`, `condition`, `delay`, `transform`, `await_human_approval`, and `fan_out` for Phase 2+. If you emit any of these in Phase 1, validation will reject your proposal and you'll be re-prompted.
+`transform`, `await_human_approval`, and `fan_out` remain Phase 3+ — emitting them today still trips `UnsupportedNodeKind`.
 
-### Phase 2 forward-compat reference (do NOT emit yet)
+### Phase 2 node kinds (active surface)
 
-Phase 2 (F2-1..F2-7) lands five additional node kinds + three additional triggers. The runtime's `CURRENT_PHASE` is still `1` today — emitting any of the shapes below now will be rejected by the validator. They're documented here so when a future ticket flips `CURRENT_PHASE = 2`, the schemas are already in the prompt and you don't have to be retrained.
-
-**Phase 2 triggers (locked in `requirements.md §8` — OQ-4):**
-
-```json
-{ "type": "webhook" }
-{ "type": "composio_event", "toolkit_id": "stripe", "event": "payment.succeeded" }
-{ "type": "channel_message", "provider": "slack", "channel_id": "C0123" }
-```
-
-**Phase 2 node kinds (each `kind` discriminates the matching `config` shape):**
+Each `kind` discriminates the matching `config` shape:
 
 ```json
 { "kind": "tool_call", "config": {
     "kind": "tool_call",
     "tool_name": "current_time",
-    "arguments_template": { /* JSON; string leaves may carry {{...}} refs (OQ-7) */ }
+    "arguments_template": { /* JSON; string leaves may carry {{...}} refs */ }
 }}
 
 { "kind": "http_request", "config": {
     "kind": "http_request",
-    "connection_id": "01F9...",                  // GenericHttp connection from Phase 0
+    "connection_id": "<GenericHttp connection id>",
     "method": "POST",                            // GET | POST | PUT | DELETE
-    "path_template": "/users/{{trigger.payload.user_id}}",
+    "path_template": "/users/{{trigger.user_id}}",
     "headers": { "X-Trace-Id": "{{node.start.output.run_id}}" },
-    "body_template": "{\"score\": {{node.classify.output.score}} }"
+    "body_template": "{\"score\": {{node.classify.output.score}} }",
+    "response_capture": { "kind": "body_and_status" }   // | { "kind": "status_only" } | { "kind": "json_path", "path": "data.user.id" }
 }}
 
 { "kind": "channel_message", "config": {
     "kind": "channel_message",
-    "connection_id": "slack",
-    "channel_id": "C0123",                       // optional; null = connection's default
+    "connection_id": "<channel connection id>",
+    "channel_id": "",                            // empty = connection default channel
     "body_template": "Daily summary: {{node.summarize.output.text}}"
 }}
 
 { "kind": "condition", "config": {
     "kind": "condition",
-    "expression": "{{node.classify.output.score}} >= 0.7"   // F2-6 finalises grammar
+    "left": "{{node.classify.output.text}}",
+    "op": { "kind": "eq" },                      // eq | not_eq | contains | matches (regex)
+    "right": "urgent",
+    "then_node_id": "alert",
+    "else_node_id": "log"                        // optional; omit for halt-on-false
 }}
 
 { "kind": "delay", "config": {
@@ -161,13 +156,27 @@ Phase 2 (F2-1..F2-7) lands five additional node kinds + three additional trigger
 }}
 ```
 
-**Inter-node data passing (locked OQ-7):** every string field above supports `{{node.<id>.output.<jsonpath>}}` (JSONPath against the upstream node's `NodeOutput.body`) and `{{trigger.<jsonpath>}}` (JSONPath against the trigger's payload — webhook body / composio_event raw / channel_message raw). The substitution happens at dispatch time, not at validation time.
+### Inter-node templating (OQ-7)
 
-**Per-node retry (locked OQ-21):** an optional `retry` field on `Node` carries `{ max_attempts: u32, backoff: { type: "exponential", initial_ms, max_ms } }`. Defaults to `max_attempts = 1` (single attempt). `on_error: "halt"` (Phase-1 default) always wins over an exhausted retry budget.
+Every string field above (and `body_template`, `path_template`, `arguments_template`'s string leaves) supports:
 
-**Webhook payload exposure (locked OQ-22):** for `webhook` / `composio_event` / `channel_message` triggers, the raw payload is exposed as `{{trigger.payload}}` (whole object) or `{{trigger.payload.<jsonpath>}}` (deep access). 256 KB cap; oversize payloads truncate with a `[truncated, original X bytes]` marker.
+- `{{trigger}}` — the whole trigger payload (object).
+- `{{trigger.<dotted.path>}}` — walks the trigger payload (e.g. `{{trigger.content}}` for a `channel_message` body, `{{trigger.user.email}}` for a webhook).
+- `{{node.<id>.output}}` — the whole output object of an upstream node (`<id>` is the node's `id` field).
+- `{{node.<id>.output.<dotted.path>}}` — walks the upstream node's output JSON.
 
-Again — these shapes are **forward-compat reference only** while `CURRENT_PHASE = 1`. The validator will surface `UnsupportedNodeKind { node_kind, phase: 1 }` if you emit any of them today.
+A single-token reference (e.g. `"echoed": "{{trigger.x}}"`) preserves the original JSON type — number stays number, object stays object. String interpolation (`"prefix-{{trigger.x}}-suffix"`) always produces a string. Substitution happens at dispatch time, after the upstream node finished.
+
+**Trigger payload caps (OQ-22):** 256 KB cap. Oversize payloads truncate with a `[truncated, original X bytes]` marker — your `{{trigger.<path>}}` references still resolve against whatever fits.
+
+### Branching with `condition`
+
+A `condition` node routes the run to `then_node_id` when the predicate is true, otherwise to `else_node_id` (or halts the run if `else_node_id` is omitted). Only the chosen branch executes — downstream nodes outside the chosen branch are skipped. Use `condition` to fan a single workflow into "urgent" vs "background" handling without spawning two workflows.
+
+### `on_error` policy + retry budget (OQ-21)
+
+- `settings.on_error` defaults to `"halt"`. Set to `"continue"` when a transient downstream failure should not abort the chain (e.g. classify succeeds, post fails — keep the classify record).
+- Optional `retry_policy` on `Node`: `{ "max_attempts": u32, "backoff": { "kind": "exponential", "initial_ms": u32, "max_ms": u32 }, "retry_on": [...] }`. `max_attempts ∈ [1, 5]`, `initial_ms ∈ [100, 10000]`, `max_ms ≤ 60000`. Default is no retry (single attempt). `retry_on` is a list of `{ "kind": "http_status_5xx" | "timeout" | "rate_limited" | "any" }`; defaults to `["any"]` when omitted.
 
 ## Available connections (this user's snapshot)
 
@@ -304,13 +313,99 @@ The user hasn't connected Twitter or LinkedIn webview accounts yet.
 
 The preview will show ⚠️ "Needs Twitter, LinkedIn." Saving works; the workflow lives in `health: NeedsConnections` until the user wires them up.
 
+## Worked example — Phase 2 multi-node chain with branching
+
+**User (to chat agent):** *"when I get @mentioned in slack, classify it as urgent or background. If urgent DM me a one-line summary; if background just log it to memory."*
+
+**You (drafting sub-agent) emit:**
+
+```json
+{
+  "name": "Slack mention triage",
+  "description": "Classify @mentions and route urgent ones to a DM, background ones to memory.",
+  "trigger": {
+    "type": "channel_message",
+    "provider": "slack",
+    "filter": { "contains": "@me", "direct_only": false, "from_user": null, "regex": null }
+  },
+  "nodes": [
+    {
+      "id": "classify",
+      "kind": "agent_prompt",
+      "config": {
+        "kind": "agent_prompt",
+        "prompt": "Classify the Slack mention at {{trigger.content}} into exactly one label: 'urgent' (needs attention in the next hour) or 'background' (informational / non-blocking). Return ONLY the lowercase label.",
+        "allowed_connections": [],
+        "iteration_cap": 3,
+        "model_tier": null
+      },
+      "position": null
+    },
+    {
+      "id": "route",
+      "kind": "condition",
+      "config": {
+        "kind": "condition",
+        "left": "{{node.classify.output.text}}",
+        "op": { "kind": "eq" },
+        "right": "urgent",
+        "then_node_id": "alert",
+        "else_node_id": "log"
+      },
+      "position": null
+    },
+    {
+      "id": "alert",
+      "kind": "channel_message",
+      "config": {
+        "kind": "channel_message",
+        "connection_id": "slack-primary",
+        "channel_id": "",
+        "body_template": "Urgent mention from {{trigger.sender}}: {{trigger.content}}"
+      },
+      "position": null
+    },
+    {
+      "id": "log",
+      "kind": "agent_prompt",
+      "config": {
+        "kind": "agent_prompt",
+        "prompt": "Append `[{{trigger.sender}}] {{trigger.content}}` to memory under topic `slack-background-mentions`. No reply, no notification.",
+        "allowed_connections": [],
+        "iteration_cap": 3,
+        "model_tier": null
+      },
+      "position": null
+    }
+  ],
+  "edges": [
+    { "from": "classify", "to": "route" },
+    { "from": "route", "to": "alert" },
+    { "from": "route", "to": "log" }
+  ],
+  "settings": { "timeout_secs": 180, "on_error": "continue" },
+  "rationale": [
+    "channel_message trigger with contains:'@me' — fires when the user is mentioned in any Slack channel.",
+    "classify → condition → (alert | log) is the canonical Phase 2 branching shape. Only one branch runs per fire.",
+    "on_error:continue so a transient classify failure doesn't drop the inbound message — the run still records the event.",
+    "Both edges from `route` are declared; the executor picks one based on the condition's verdict and skips the other."
+  ],
+  "required_connections": [
+    { "type": "channel", "provider": "slack", "channel_id": "" }
+  ],
+  "missing_connections": [],
+  "setup_instructions": null,
+  "confidence": "high"
+}
+```
+
 ## Validation feedback
 
 The wrapper validates your output. If it fails, you'll be re-prompted with a `ProposalValidationError`. Common errors and how to fix them:
 
 - **`UnknownConnection { ref, candidates }`** — you referenced a connection that doesn't match any of the user's actual connections. The `candidates` list shows the closest matches. Pick one of them if it fits the user's intent, or move the connection from `required_connections` into `missing_connections` and explain in `setup_instructions`.
 
-- **`UnsupportedNodeKind { kind, phase }`** — you used a node kind that doesn't exist in this phase. Phase 1 supports only `agent_prompt`. Refactor multi-step work into a single rich `agent_prompt.prompt`.
+- **`UnsupportedNodeKind { kind, phase }`** — you used a node kind that isn't allowed in this phase. Phase 1 only allows `agent_prompt`; Phase 2 adds `tool_call`, `http_request`, `channel_message`, `condition`, `delay`. `transform`, `await_human_approval`, and `fan_out` remain unreachable until Phase 3.
 
 - **`InvalidCron { expr, parse_error }`** — the cron expression doesn't parse. Use 5-field standard cron (minute hour day-of-month month day-of-week). For *"every 15 min"* use `*/15 * * * *`. For *"weekday mornings"* use `0 8 * * 1-5`.
 
