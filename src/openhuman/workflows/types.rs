@@ -283,15 +283,34 @@ pub enum NodeKind {
 /// Per-node configuration payload. Discriminated by `kind` at the wire
 /// level so the validator can match it against [`NodeKind`] without two
 /// parallel enums.
+///
+/// F2-1 added the Phase 2 variants (`ToolCall`, `HttpRequest`,
+/// `ChannelMessage`, `Condition`, `Delay`); their `*Config` payload
+/// shapes are sized to the OQ-7 / OQ-21 / OQ-22 locks recorded in
+/// `Automations/requirements.md §8`. Per-kind execution bodies land in
+/// F2-3..F2-7; F2-1 only makes the variants reachable end-to-end with
+/// the validator + a `NotImplementedYet` executor dispatch arm.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum NodeConfig {
     AgentPrompt(AgentPromptConfig),
-    // Phase 2/3 variants intentionally omitted — declared via NodeKind
-    // alone so a Phase 2 ticket adds the matching config variant in one
-    // place, not two. Until then, a workflow whose node has any non-
-    // AgentPrompt kind cannot deserialize a matching NodeConfig and the
-    // validator surfaces UnsupportedNodeKind.
+    /// Phase 2 — F2-3.
+    ToolCall(ToolCallConfig),
+    /// Phase 2 — F2-4.
+    HttpRequest(HttpRequestConfig),
+    /// Phase 2 — F2-5.
+    ChannelMessage(ChannelMessageConfig),
+    /// Phase 2 — F2-6.
+    Condition(ConditionConfig),
+    /// Phase 2 — F2-7.
+    Delay(DelayConfig),
+    // `Transform` / `AwaitHumanApproval` / `FanOut` stay unreachable
+    // until Phase 3+ — `NodeKind` carries them so the wire enum doesn't
+    // bump, but no `NodeConfig` arm = the validator rejects them via
+    // `UnsupportedNodeKind` (Phase 2's `allowed_node_kinds` already
+    // excludes `FanOut`; Transform / AwaitHumanApproval are still
+    // listed there but will be moved out in the F2-1 follow-up patch
+    // once their config shapes are designed).
 }
 
 /// Configuration for a [`NodeKind::AgentPrompt`] node.
@@ -315,6 +334,117 @@ pub struct AgentPromptConfig {
 
 fn default_iteration_cap() -> u32 {
     12
+}
+
+/// Configuration for a [`NodeKind::ToolCall`] node (F2-3).
+///
+/// Invokes a single named tool from `crate::openhuman::tools::registry`.
+/// `arguments_template` is a JSON value whose string leaves are subject
+/// to the OQ-7 templating surface (`{{node.<id>.output.<jsonpath>}}` /
+/// `{{trigger.<jsonpath>}}`). The executor substitutes templates at
+/// dispatch time, then forwards the resolved JSON to `Tool::execute`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ToolCallConfig {
+    /// Tool name as registered in
+    /// [`crate::openhuman::tools::registry`]. F2-3 resolves this at
+    /// dispatch time; F2-1's validator only enforces non-empty.
+    pub tool_name: String,
+    /// JSON arguments. String leaves may carry `{{...}}` template
+    /// references (OQ-7). Empty object is allowed for tools with no
+    /// arguments.
+    #[serde(default = "default_empty_object")]
+    pub arguments_template: serde_json::Value,
+}
+
+/// Configuration for a [`NodeKind::HttpRequest`] node (F2-4).
+///
+/// Hits a Phase-0 `GenericHttp` connection. `path_template`, headers,
+/// and `body_template` are all subject to OQ-7 templating. F2-4 will
+/// resolve the `connection_id` against the encrypted-credential store
+/// at dispatch and assemble the final request.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct HttpRequestConfig {
+    /// Generic-HTTP connection id (Phase 0 surface).
+    pub connection_id: String,
+    /// HTTP method.
+    pub method: HttpMethod,
+    /// Path appended to the connection's `base_url`. Templating
+    /// supported (e.g. `"/users/{{trigger.payload.user_id}}"`).
+    pub path_template: String,
+    /// Extra headers to send. Values support templating. Headers from
+    /// the connection's own `default_headers` merge underneath (F2-4
+    /// detail).
+    #[serde(default)]
+    pub headers: std::collections::BTreeMap<String, String>,
+    /// Optional request body. Templating supported. Sent as-is — the
+    /// executor sets `Content-Type` from the connection or from
+    /// `headers["Content-Type"]` if the user provided one.
+    #[serde(default)]
+    pub body_template: Option<String>,
+}
+
+/// HTTP methods exposed to `NodeKind::HttpRequest`. Phase 2 starts
+/// with the common four; PATCH / HEAD / OPTIONS can land later if a
+/// concrete use case appears.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum HttpMethod {
+    Get,
+    Post,
+    Put,
+    Delete,
+}
+
+/// Configuration for a [`NodeKind::ChannelMessage`] node (F2-5).
+///
+/// Sends a message to a connected chat channel (Slack, Discord,
+/// Telegram, …). `body_template` is the message text; templating
+/// substitutes upstream node outputs / trigger payload before send.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ChannelMessageConfig {
+    /// Channel-connection id (the user's connected workspace).
+    pub connection_id: String,
+    /// Optional target channel within the workspace. When `None`, F2-5
+    /// uses the connection's default channel (e.g. Slack `#general`).
+    /// Distinct from `connection_id` because one Slack workspace can
+    /// target many channels.
+    #[serde(default)]
+    pub channel_id: Option<String>,
+    /// Message text. Templating supported.
+    pub body_template: String,
+}
+
+/// Configuration for a [`NodeKind::Condition`] node (F2-6).
+///
+/// Phase 2 starts with a single text-match predicate against a
+/// resolved template value — the executor evaluates `expression` after
+/// substitution and routes to the matching outbound edge. F2-6
+/// finalises the predicate grammar; F2-1 stores the raw string.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ConditionConfig {
+    /// Predicate expression. Templating supported in the LHS; the
+    /// predicate operator + RHS live inline (e.g.
+    /// `"{{node.classify.output.score}} >= 0.7"`). F2-6 owns the
+    /// expression grammar; this struct just persists the text.
+    pub expression: String,
+}
+
+/// Configuration for a [`NodeKind::Delay`] node (F2-7).
+///
+/// Pauses the run for `seconds`. F2-7 makes the pause persistent
+/// across core restarts (per the spec). F2-1 caps the value at 24h to
+/// keep a runaway workflow from sleeping forever — refine if a
+/// concrete use case needs longer.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DelayConfig {
+    /// Pause duration in seconds. Validator caps at 86 400 (24 h).
+    pub seconds: u64,
+}
+
+/// Default for `arguments_template` — an empty JSON object so a
+/// tool-call node can omit the field entirely for argumentless tools.
+fn default_empty_object() -> serde_json::Value {
+    serde_json::json!({})
 }
 
 /// Terminal + transient states for a [`Run`] or [`RunStep`].
@@ -548,6 +678,16 @@ pub enum ProposalValidationError {
     },
     /// A required scalar (`name`, `description`, `nodes`) was empty.
     MissingRequiredField { field: String },
+    /// A `NodeConfig` payload field failed per-kind validation —
+    /// e.g. `ToolCallConfig.tool_name` empty, `DelayConfig.seconds`
+    /// over the 24-hour cap. F2-1 lands the shape checks; per-kind
+    /// dispatch-time checks (tool registry lookup, connection-id
+    /// resolution) live in F2-3..F2-7.
+    InvalidNodeConfig {
+        node_id: NodeId,
+        node_kind: NodeKind,
+        reason: String,
+    },
 }
 
 impl ProposalValidationError {
@@ -561,6 +701,7 @@ impl ProposalValidationError {
             Self::InvalidCron { .. } => "invalid_cron",
             Self::EdgeIntegrity { .. } => "edge_integrity",
             Self::MissingRequiredField { .. } => "missing_required_field",
+            Self::InvalidNodeConfig { .. } => "invalid_node_config",
         }
     }
 }

@@ -87,7 +87,9 @@ fn workflow_diff_trigger_kind_change_produces_label_bullet() {
 fn workflow_diff_added_allowed_connection_produces_added_bullet() {
     let current = sample_workflow("x");
     let mut proposed = current.clone();
-    let NodeConfig::AgentPrompt(cfg) = &mut proposed.nodes[0].config;
+    let NodeConfig::AgentPrompt(cfg) = &mut proposed.nodes[0].config else {
+        panic!("sample_workflow must produce an AgentPrompt node");
+    };
     cfg.allowed_connections.push(ConnectionRef::Composio {
         toolkit_id: "slack".into(),
         account_id: None,
@@ -102,13 +104,17 @@ fn workflow_diff_added_allowed_connection_produces_added_bullet() {
 #[test]
 fn workflow_diff_removed_allowed_connection_produces_removed_bullet() {
     let mut current = sample_workflow("x");
-    let NodeConfig::AgentPrompt(cfg) = &mut current.nodes[0].config;
+    let NodeConfig::AgentPrompt(cfg) = &mut current.nodes[0].config else {
+        panic!("sample_workflow must produce an AgentPrompt node");
+    };
     cfg.allowed_connections.push(ConnectionRef::Composio {
         toolkit_id: "slack".into(),
         account_id: None,
     });
     let mut proposed = current.clone();
-    let NodeConfig::AgentPrompt(cfg) = &mut proposed.nodes[0].config;
+    let NodeConfig::AgentPrompt(cfg) = &mut proposed.nodes[0].config else {
+        panic!("clone preserves AgentPrompt shape");
+    };
     cfg.allowed_connections.clear();
     let bullets = workflow_diff(&current, &proposed);
     assert_eq!(bullets.len(), 1);
@@ -151,19 +157,20 @@ fn workflow_diff_caps_long_change_lists_with_tail_bullet() {
     // Force more than MAX_DIFF_BULLETS deltas by toggling a long
     // string of allowed_connections on / off in proposed vs. current.
     // We add (MAX + 5) distinct connections; current has none.
-    let mut current = sample_workflow("x");
+    let current = sample_workflow("x");
     let mut proposed = current.clone();
-    let NodeConfig::AgentPrompt(cfg) = &mut proposed.nodes[0].config;
+    let NodeConfig::AgentPrompt(cfg) = &mut proposed.nodes[0].config else {
+        panic!("sample_workflow must produce an AgentPrompt node");
+    };
     for i in 0..(MAX_DIFF_BULLETS + 5) {
         cfg.allowed_connections.push(ConnectionRef::Composio {
             toolkit_id: format!("toolkit_{i}"),
             account_id: None,
         });
     }
-    // Add a rename + schedule change to make sure the cap accounts
-    // for all bullet sources, not just connection adds.
+    // Add a rename to make sure the cap accounts for all bullet
+    // sources, not just connection adds.
     proposed.name = "renamed".into();
-    let NodeConfig::AgentPrompt(_) = &mut current.nodes[0].config;
 
     let bullets = workflow_diff(&current, &proposed);
     assert_eq!(bullets.len(), MAX_DIFF_BULLETS);
@@ -178,7 +185,9 @@ fn workflow_diff_caps_long_change_lists_with_tail_bullet() {
 fn workflow_diff_iteration_cap_change_produces_cap_bullet() {
     let current = sample_workflow("x");
     let mut proposed = current.clone();
-    let NodeConfig::AgentPrompt(cfg) = &mut proposed.nodes[0].config;
+    let NodeConfig::AgentPrompt(cfg) = &mut proposed.nodes[0].config else {
+        panic!("sample_workflow must produce an AgentPrompt node");
+    };
     cfg.iteration_cap = 24;
     let bullets = workflow_diff(&current, &proposed);
     assert_eq!(bullets.len(), 1);

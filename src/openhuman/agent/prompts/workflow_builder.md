@@ -113,6 +113,62 @@ If the user describes a multi-step workflow that genuinely requires distinct seq
 
 Reserve `tool_call`, `http_request`, `channel_message`, `condition`, `delay`, `transform`, `await_human_approval`, and `fan_out` for Phase 2+. If you emit any of these in Phase 1, validation will reject your proposal and you'll be re-prompted.
 
+### Phase 2 forward-compat reference (do NOT emit yet)
+
+Phase 2 (F2-1..F2-7) lands five additional node kinds + three additional triggers. The runtime's `CURRENT_PHASE` is still `1` today — emitting any of the shapes below now will be rejected by the validator. They're documented here so when a future ticket flips `CURRENT_PHASE = 2`, the schemas are already in the prompt and you don't have to be retrained.
+
+**Phase 2 triggers (locked in `requirements.md §8` — OQ-4):**
+
+```json
+{ "type": "webhook" }
+{ "type": "composio_event", "toolkit_id": "stripe", "event": "payment.succeeded" }
+{ "type": "channel_message", "provider": "slack", "channel_id": "C0123" }
+```
+
+**Phase 2 node kinds (each `kind` discriminates the matching `config` shape):**
+
+```json
+{ "kind": "tool_call", "config": {
+    "kind": "tool_call",
+    "tool_name": "current_time",
+    "arguments_template": { /* JSON; string leaves may carry {{...}} refs (OQ-7) */ }
+}}
+
+{ "kind": "http_request", "config": {
+    "kind": "http_request",
+    "connection_id": "01F9...",                  // GenericHttp connection from Phase 0
+    "method": "POST",                            // GET | POST | PUT | DELETE
+    "path_template": "/users/{{trigger.payload.user_id}}",
+    "headers": { "X-Trace-Id": "{{node.start.output.run_id}}" },
+    "body_template": "{\"score\": {{node.classify.output.score}} }"
+}}
+
+{ "kind": "channel_message", "config": {
+    "kind": "channel_message",
+    "connection_id": "slack",
+    "channel_id": "C0123",                       // optional; null = connection's default
+    "body_template": "Daily summary: {{node.summarize.output.text}}"
+}}
+
+{ "kind": "condition", "config": {
+    "kind": "condition",
+    "expression": "{{node.classify.output.score}} >= 0.7"   // F2-6 finalises grammar
+}}
+
+{ "kind": "delay", "config": {
+    "kind": "delay",
+    "seconds": 60                                // 1..=86400 (24h cap)
+}}
+```
+
+**Inter-node data passing (locked OQ-7):** every string field above supports `{{node.<id>.output.<jsonpath>}}` (JSONPath against the upstream node's `NodeOutput.body`) and `{{trigger.<jsonpath>}}` (JSONPath against the trigger's payload — webhook body / composio_event raw / channel_message raw). The substitution happens at dispatch time, not at validation time.
+
+**Per-node retry (locked OQ-21):** an optional `retry` field on `Node` carries `{ max_attempts: u32, backoff: { type: "exponential", initial_ms, max_ms } }`. Defaults to `max_attempts = 1` (single attempt). `on_error: "halt"` (Phase-1 default) always wins over an exhausted retry budget.
+
+**Webhook payload exposure (locked OQ-22):** for `webhook` / `composio_event` / `channel_message` triggers, the raw payload is exposed as `{{trigger.payload}}` (whole object) or `{{trigger.payload.<jsonpath>}}` (deep access). 256 KB cap; oversize payloads truncate with a `[truncated, original X bytes]` marker.
+
+Again — these shapes are **forward-compat reference only** while `CURRENT_PHASE = 1`. The validator will surface `UnsupportedNodeKind { node_kind, phase: 1 }` if you emit any of them today.
+
 ## Available connections (this user's snapshot)
 
 > **Note to the runtime:** the wrapper injects the user's connection inventory into the prompt right here, dynamically. The static template looks like:

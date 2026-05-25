@@ -1180,3 +1180,122 @@ async fn memory_loop_confabulation_marks_failed_and_drifts_into_next_run() {
         "drift annotation must include the safety guidance; got:\n{run2_prompt}"
     );
 }
+
+// ── F2-1: dispatch_node skeleton ───────────────────────────────────────
+
+/// Build a minimal Run for direct dispatch_node tests. We only need
+/// `id`, `workflow_id`, and a few timestamps populated — the function
+/// passes them through to per-kind bodies, which are NotImplementedYet
+/// for every Phase 2 variant.
+fn dispatch_test_run() -> Run {
+    Run {
+        id: "run-test-1".into(),
+        workflow_id: "wf-test-1".into(),
+        trigger_source: TriggerSource::Manual {
+            initiator: "test".into(),
+        },
+        status: RunStatus::Pending,
+        started_at: chrono::Utc::now(),
+        completed_at: None,
+        error: None,
+        cancelled: false,
+    }
+}
+
+fn dispatch_test_node(kind: NodeKind, config: NodeConfig) -> Node {
+    Node {
+        id: "n1".into(),
+        kind,
+        config,
+        position: None,
+    }
+}
+
+#[tokio::test]
+async fn dispatch_node_returns_not_implemented_for_tool_call() {
+    let (_dir, config) = config_with_temp_workspace();
+    let run = dispatch_test_run();
+    let node = dispatch_test_node(
+        NodeKind::ToolCall,
+        NodeConfig::ToolCall(ToolCallConfig {
+            tool_name: "current_time".into(),
+            arguments_template: serde_json::json!({}),
+        }),
+    );
+    let err = executor::dispatch_node(&config, &run, &node)
+        .await
+        .expect_err("ToolCall must return NotImplementedYet in F2-1");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("not yet implemented") && msg.contains("ToolCall"),
+        "got: {msg}"
+    );
+}
+
+#[tokio::test]
+async fn dispatch_node_returns_not_implemented_for_http_request() {
+    let (_dir, config) = config_with_temp_workspace();
+    let run = dispatch_test_run();
+    let node = dispatch_test_node(
+        NodeKind::HttpRequest,
+        NodeConfig::HttpRequest(HttpRequestConfig {
+            connection_id: "conn-1".into(),
+            method: HttpMethod::Get,
+            path_template: "/health".into(),
+            headers: Default::default(),
+            body_template: None,
+        }),
+    );
+    let err = executor::dispatch_node(&config, &run, &node)
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("HttpRequest"));
+}
+
+#[tokio::test]
+async fn dispatch_node_returns_not_implemented_for_channel_message() {
+    let (_dir, config) = config_with_temp_workspace();
+    let run = dispatch_test_run();
+    let node = dispatch_test_node(
+        NodeKind::ChannelMessage,
+        NodeConfig::ChannelMessage(ChannelMessageConfig {
+            connection_id: "slack".into(),
+            channel_id: None,
+            body_template: "hi".into(),
+        }),
+    );
+    let err = executor::dispatch_node(&config, &run, &node)
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("ChannelMessage"));
+}
+
+#[tokio::test]
+async fn dispatch_node_returns_not_implemented_for_condition() {
+    let (_dir, config) = config_with_temp_workspace();
+    let run = dispatch_test_run();
+    let node = dispatch_test_node(
+        NodeKind::Condition,
+        NodeConfig::Condition(ConditionConfig {
+            expression: "x > 1".into(),
+        }),
+    );
+    let err = executor::dispatch_node(&config, &run, &node)
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("Condition"));
+}
+
+#[tokio::test]
+async fn dispatch_node_returns_not_implemented_for_delay() {
+    let (_dir, config) = config_with_temp_workspace();
+    let run = dispatch_test_run();
+    let node = dispatch_test_node(
+        NodeKind::Delay,
+        NodeConfig::Delay(DelayConfig { seconds: 60 }),
+    );
+    let err = executor::dispatch_node(&config, &run, &node)
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("Delay"));
+}

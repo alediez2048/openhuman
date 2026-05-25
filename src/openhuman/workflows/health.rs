@@ -119,15 +119,46 @@ pub fn recompute(workflow: &Workflow, snapshot: &ConnectionsSnapshot) -> Workflo
 /// arm here.
 pub fn referenced_connections(workflow: &Workflow) -> Vec<ConnectionRef> {
     let mut out: Vec<ConnectionRef> = Vec::new();
+    let push_unique = |r: &ConnectionRef, out: &mut Vec<ConnectionRef>| {
+        if !out.contains(r) {
+            out.push(r.clone());
+        }
+    };
     for node in &workflow.nodes {
         match &node.config {
             NodeConfig::AgentPrompt(cfg) => {
                 for r in &cfg.allowed_connections {
-                    if !out.contains(r) {
-                        out.push(r.clone());
-                    }
+                    push_unique(r, &mut out);
                 }
-            } // Phase 2: add ToolCall / HttpRequest / ChannelMessage arms.
+            }
+            NodeConfig::HttpRequest(cfg) => {
+                // F2-4 will dispatch via the GenericHttp connection.
+                push_unique(
+                    &ConnectionRef::GenericHttp {
+                        connection_id: cfg.connection_id.clone(),
+                    },
+                    &mut out,
+                );
+            }
+            NodeConfig::ChannelMessage(cfg) => {
+                // F2-5 will dispatch via the chat-channel connection.
+                // `connection_id` is the provider slug today; F2-5
+                // may swap to a provider+channel pair once the dispatch
+                // shape is locked.
+                push_unique(
+                    &ConnectionRef::Channel {
+                        provider: cfg.connection_id.clone(),
+                        channel_id: cfg.channel_id.clone().unwrap_or_default(),
+                    },
+                    &mut out,
+                );
+            }
+            // ToolCall / Condition / Delay don't (today) carry a
+            // connection in their config — tool resolution happens
+            // against the agent's tool registry, not the connections
+            // snapshot. F2-3/F2-6/F2-7 reconfirm this when they land
+            // bodies.
+            NodeConfig::ToolCall(_) | NodeConfig::Condition(_) | NodeConfig::Delay(_) => {}
         }
     }
     out

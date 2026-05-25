@@ -416,3 +416,324 @@ fn validate_runs_under_50ms_on_a_realistic_proposal() {
         "validator must stay sub-50ms; 10× = {elapsed:?}"
     );
 }
+
+// ── F2-1: Phase 2 NodeConfig variants + validation arms ────────────────
+
+#[test]
+fn allowed_node_kinds_phase_2_contains_full_phase_2_set() {
+    // Stronger than the existing phase-2 test: pins the EXACT set so a
+    // future bump (e.g. promoting Transform / AwaitHumanApproval into
+    // Phase 2) is forced through this test as a deliberate change.
+    let kinds = allowed_node_kinds(2);
+    assert_eq!(
+        kinds,
+        &[
+            NodeKind::AgentPrompt,
+            NodeKind::ToolCall,
+            NodeKind::HttpRequest,
+            NodeKind::ChannelMessage,
+            NodeKind::Condition,
+            NodeKind::Delay,
+        ]
+    );
+}
+
+/// Build a Phase-2 node with arbitrary kind + config. Helper for the
+/// per-config validation tests below.
+fn node_with_config(id: &str, kind: NodeKind, config: NodeConfig) -> Node {
+    Node {
+        id: id.into(),
+        kind,
+        config,
+        position: None,
+    }
+}
+
+#[test]
+fn validate_phase_1_rejects_tool_call_node() {
+    let mut proposal = valid_proposal();
+    proposal.nodes[0] = node_with_config(
+        "n1",
+        NodeKind::ToolCall,
+        NodeConfig::ToolCall(ToolCallConfig {
+            tool_name: "current_time".into(),
+            arguments_template: serde_json::json!({}),
+        }),
+    );
+    let snapshot = ConnectionsSnapshot::empty();
+    match validate(&proposal, &snapshot, 1) {
+        Err(ProposalValidationError::UnsupportedNodeKind { node_kind, phase }) => {
+            assert_eq!(node_kind, NodeKind::ToolCall);
+            assert_eq!(phase, 1);
+        }
+        other => panic!("expected UnsupportedNodeKind, got {other:?}"),
+    }
+}
+
+#[test]
+fn validate_phase_2_accepts_tool_call_node() {
+    let mut proposal = valid_proposal();
+    proposal.nodes[0] = node_with_config(
+        "n1",
+        NodeKind::ToolCall,
+        NodeConfig::ToolCall(ToolCallConfig {
+            tool_name: "current_time".into(),
+            arguments_template: serde_json::json!({}),
+        }),
+    );
+    let snapshot = ConnectionsSnapshot::empty();
+    validate(&proposal, &snapshot, 2).expect("tool_call valid under phase=2");
+}
+
+#[test]
+fn validate_phase_2_rejects_tool_call_with_empty_name() {
+    let mut proposal = valid_proposal();
+    proposal.nodes[0] = node_with_config(
+        "n1",
+        NodeKind::ToolCall,
+        NodeConfig::ToolCall(ToolCallConfig {
+            tool_name: "  ".into(), // whitespace-only — should reject
+            arguments_template: serde_json::json!({}),
+        }),
+    );
+    let snapshot = ConnectionsSnapshot::empty();
+    match validate(&proposal, &snapshot, 2) {
+        Err(ProposalValidationError::InvalidNodeConfig {
+            node_id, reason, ..
+        }) => {
+            assert_eq!(node_id, NodeId::from("n1"));
+            assert!(
+                reason.contains("tool_name must be non-empty"),
+                "got: {reason}"
+            );
+        }
+        other => panic!("expected InvalidNodeConfig, got {other:?}"),
+    }
+}
+
+#[test]
+fn validate_phase_2_rejects_http_request_missing_connection_id() {
+    let mut proposal = valid_proposal();
+    proposal.nodes[0] = node_with_config(
+        "n1",
+        NodeKind::HttpRequest,
+        NodeConfig::HttpRequest(HttpRequestConfig {
+            connection_id: "".into(),
+            method: HttpMethod::Get,
+            path_template: "/health".into(),
+            headers: Default::default(),
+            body_template: None,
+        }),
+    );
+    let snapshot = ConnectionsSnapshot::empty();
+    match validate(&proposal, &snapshot, 2) {
+        Err(ProposalValidationError::InvalidNodeConfig { reason, .. }) => {
+            assert!(reason.contains("connection_id"), "got: {reason}");
+        }
+        other => panic!("expected InvalidNodeConfig, got {other:?}"),
+    }
+}
+
+#[test]
+fn validate_phase_2_rejects_http_request_missing_path_template() {
+    let mut proposal = valid_proposal();
+    proposal.nodes[0] = node_with_config(
+        "n1",
+        NodeKind::HttpRequest,
+        NodeConfig::HttpRequest(HttpRequestConfig {
+            connection_id: "conn-1".into(),
+            method: HttpMethod::Post,
+            path_template: "".into(),
+            headers: Default::default(),
+            body_template: None,
+        }),
+    );
+    let snapshot = ConnectionsSnapshot::empty();
+    match validate(&proposal, &snapshot, 2) {
+        Err(ProposalValidationError::InvalidNodeConfig { reason, .. }) => {
+            assert!(reason.contains("path_template"), "got: {reason}");
+        }
+        other => panic!("expected InvalidNodeConfig, got {other:?}"),
+    }
+}
+
+#[test]
+fn validate_phase_2_rejects_channel_message_missing_body() {
+    let mut proposal = valid_proposal();
+    proposal.nodes[0] = node_with_config(
+        "n1",
+        NodeKind::ChannelMessage,
+        NodeConfig::ChannelMessage(ChannelMessageConfig {
+            connection_id: "slack".into(),
+            channel_id: Some("C123".into()),
+            body_template: "  ".into(),
+        }),
+    );
+    let snapshot = ConnectionsSnapshot::empty();
+    match validate(&proposal, &snapshot, 2) {
+        Err(ProposalValidationError::InvalidNodeConfig { reason, .. }) => {
+            assert!(reason.contains("body_template"), "got: {reason}");
+        }
+        other => panic!("expected InvalidNodeConfig, got {other:?}"),
+    }
+}
+
+#[test]
+fn validate_phase_2_rejects_condition_with_empty_expression() {
+    let mut proposal = valid_proposal();
+    proposal.nodes[0] = node_with_config(
+        "n1",
+        NodeKind::Condition,
+        NodeConfig::Condition(ConditionConfig {
+            expression: "".into(),
+        }),
+    );
+    let snapshot = ConnectionsSnapshot::empty();
+    match validate(&proposal, &snapshot, 2) {
+        Err(ProposalValidationError::InvalidNodeConfig { reason, .. }) => {
+            assert!(reason.contains("expression"), "got: {reason}");
+        }
+        other => panic!("expected InvalidNodeConfig, got {other:?}"),
+    }
+}
+
+#[test]
+fn validate_phase_2_rejects_delay_zero_seconds() {
+    let mut proposal = valid_proposal();
+    proposal.nodes[0] = node_with_config(
+        "n1",
+        NodeKind::Delay,
+        NodeConfig::Delay(DelayConfig { seconds: 0 }),
+    );
+    let snapshot = ConnectionsSnapshot::empty();
+    match validate(&proposal, &snapshot, 2) {
+        Err(ProposalValidationError::InvalidNodeConfig { reason, .. }) => {
+            assert!(reason.contains("seconds must be > 0"), "got: {reason}");
+        }
+        other => panic!("expected InvalidNodeConfig, got {other:?}"),
+    }
+}
+
+#[test]
+fn validate_phase_2_rejects_delay_over_24h_cap() {
+    let mut proposal = valid_proposal();
+    proposal.nodes[0] = node_with_config(
+        "n1",
+        NodeKind::Delay,
+        NodeConfig::Delay(DelayConfig {
+            seconds: 86_401, // 1s over the 24h cap
+        }),
+    );
+    let snapshot = ConnectionsSnapshot::empty();
+    match validate(&proposal, &snapshot, 2) {
+        Err(ProposalValidationError::InvalidNodeConfig { reason, .. }) => {
+            assert!(reason.contains("86400"), "got: {reason}");
+        }
+        other => panic!("expected InvalidNodeConfig, got {other:?}"),
+    }
+}
+
+#[test]
+fn validate_phase_2_accepts_delay_at_24h_boundary() {
+    let mut proposal = valid_proposal();
+    proposal.nodes[0] = node_with_config(
+        "n1",
+        NodeKind::Delay,
+        NodeConfig::Delay(DelayConfig { seconds: 86_400 }),
+    );
+    let snapshot = ConnectionsSnapshot::empty();
+    validate(&proposal, &snapshot, 2).expect("24h delay accepted at boundary");
+}
+
+#[test]
+fn invalid_node_config_carries_stable_kind_label() {
+    let err = ProposalValidationError::InvalidNodeConfig {
+        node_id: NodeId::from("n1"),
+        node_kind: NodeKind::Delay,
+        reason: "x".into(),
+    };
+    assert_eq!(err.kind_label(), "invalid_node_config");
+}
+
+// ── F2-1: serde round-trip of new NodeConfig variants ─────────────────
+
+#[test]
+fn node_config_tool_call_round_trips_through_serde() {
+    let original = NodeConfig::ToolCall(ToolCallConfig {
+        tool_name: "current_time".into(),
+        arguments_template: serde_json::json!({ "tz": "{{trigger.payload.user_tz}}" }),
+    });
+    let json = serde_json::to_string(&original).unwrap();
+    assert!(json.contains("\"kind\":\"tool_call\""));
+    assert!(json.contains("current_time"));
+    let parsed: NodeConfig = serde_json::from_str(&json).unwrap();
+    assert_eq!(parsed, original);
+}
+
+#[test]
+fn node_config_http_request_round_trips_through_serde() {
+    let mut headers = std::collections::BTreeMap::new();
+    headers.insert("X-Trace".into(), "{{node.start.output.run_id}}".into());
+    let original = NodeConfig::HttpRequest(HttpRequestConfig {
+        connection_id: "01F9".into(),
+        method: HttpMethod::Post,
+        path_template: "/users".into(),
+        headers,
+        body_template: Some("{\"x\": 1}".into()),
+    });
+    let json = serde_json::to_string(&original).unwrap();
+    assert!(json.contains("\"kind\":\"http_request\""));
+    assert!(json.contains("\"method\":\"POST\""));
+    let parsed: NodeConfig = serde_json::from_str(&json).unwrap();
+    assert_eq!(parsed, original);
+}
+
+#[test]
+fn node_config_channel_message_round_trips_through_serde() {
+    let original = NodeConfig::ChannelMessage(ChannelMessageConfig {
+        connection_id: "slack".into(),
+        channel_id: Some("C0123".into()),
+        body_template: "hi".into(),
+    });
+    let json = serde_json::to_string(&original).unwrap();
+    assert!(json.contains("\"kind\":\"channel_message\""));
+    let parsed: NodeConfig = serde_json::from_str(&json).unwrap();
+    assert_eq!(parsed, original);
+}
+
+#[test]
+fn node_config_condition_round_trips_through_serde() {
+    let original = NodeConfig::Condition(ConditionConfig {
+        expression: "{{node.classify.output.score}} >= 0.7".into(),
+    });
+    let json = serde_json::to_string(&original).unwrap();
+    assert!(json.contains("\"kind\":\"condition\""));
+    let parsed: NodeConfig = serde_json::from_str(&json).unwrap();
+    assert_eq!(parsed, original);
+}
+
+#[test]
+fn node_config_delay_round_trips_through_serde() {
+    let original = NodeConfig::Delay(DelayConfig { seconds: 60 });
+    let json = serde_json::to_string(&original).unwrap();
+    assert!(json.contains("\"kind\":\"delay\""));
+    assert!(json.contains("\"seconds\":60"));
+    let parsed: NodeConfig = serde_json::from_str(&json).unwrap();
+    assert_eq!(parsed, original);
+}
+
+#[test]
+fn tool_call_arguments_template_defaults_to_empty_object() {
+    // The drafter / UI can omit `arguments_template` for tools with
+    // no arguments; serde must materialise it as `{}` so the executor
+    // doesn't have to special-case missing.
+    let json = r#"{"kind":"tool_call","tool_name":"current_time"}"#;
+    let parsed: NodeConfig = serde_json::from_str(json).unwrap();
+    match parsed {
+        NodeConfig::ToolCall(cfg) => {
+            assert_eq!(cfg.tool_name, "current_time");
+            assert_eq!(cfg.arguments_template, serde_json::json!({}));
+        }
+        other => panic!("expected ToolCall, got {other:?}"),
+    }
+}

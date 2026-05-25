@@ -53,11 +53,15 @@ use std::str::FromStr;
 
 /// Node kinds the proposal validator accepts at the given phase.
 ///
-/// Phase 1 = `[AgentPrompt]` only. Phase 2 will add `ToolCall`,
-/// `HttpRequest`, `ChannelMessage`, `Condition`, `Delay`, `Transform`,
-/// `AwaitHumanApproval`. Phase 3 adds `FanOut`. The validator surfaces
-/// `UnsupportedNodeKind { node_kind, phase }` for anything outside the
-/// returned slice — see ADR-019.
+/// Phase 1 = `[AgentPrompt]` only. Phase 2 (F2-1) lands `ToolCall`,
+/// `HttpRequest`, `ChannelMessage`, `Condition`, `Delay`. `Transform`
+/// and `AwaitHumanApproval` remain unreachable in Phase 2 because
+/// their `NodeConfig::*` payload shapes haven't been designed yet
+/// (deserialisation would fail before the validator even sees the
+/// node — leaving them out of the allowed list keeps the validator
+/// error honest). Phase 3 adds `FanOut`. The validator surfaces
+/// `UnsupportedNodeKind { node_kind, phase }` for anything outside
+/// the returned slice — see ADR-019.
 pub fn allowed_node_kinds(phase: u32) -> &'static [NodeKind] {
     match phase {
         1 => &[NodeKind::AgentPrompt],
@@ -68,8 +72,6 @@ pub fn allowed_node_kinds(phase: u32) -> &'static [NodeKind] {
             NodeKind::ChannelMessage,
             NodeKind::Condition,
             NodeKind::Delay,
-            NodeKind::Transform,
-            NodeKind::AwaitHumanApproval,
         ],
         _ => &[
             NodeKind::AgentPrompt,
@@ -171,15 +173,94 @@ pub fn validate(
         }
     }
 
-    // ── per-node allowed_connections ⊆ snapshot ────────────────────────
+    // ── per-NodeConfig shape validation ────────────────────────────────
+    //
+    // F2-1 adds the Phase 2 variants. Each one gets a shallow shape
+    // check here (non-empty strings, bounded delay, etc.); per-kind
+    // dispatch-time checks (tool-registry lookup, connection-id
+    // resolution against the encrypted-credential store) live in the
+    // per-kind executor bodies (F2-3..F2-7) so the validator stays
+    // I/O-free per NFR-2.1.5.
     for node in &proposal.nodes {
-        let NodeConfig::AgentPrompt(cfg) = &node.config;
-        for r in &cfg.allowed_connections {
-            if !connections.is_connected(r) {
-                return Err(ProposalValidationError::UnknownConnection {
-                    r#ref: r.clone(),
-                    candidates: fuzzy_candidates(r, connections),
-                });
+        match &node.config {
+            NodeConfig::AgentPrompt(cfg) => {
+                for r in &cfg.allowed_connections {
+                    if !connections.is_connected(r) {
+                        return Err(ProposalValidationError::UnknownConnection {
+                            r#ref: r.clone(),
+                            candidates: fuzzy_candidates(r, connections),
+                        });
+                    }
+                }
+            }
+            NodeConfig::ToolCall(cfg) => {
+                if cfg.tool_name.trim().is_empty() {
+                    return Err(ProposalValidationError::InvalidNodeConfig {
+                        node_id: node.id.clone(),
+                        node_kind: node.kind,
+                        reason: "tool_call.tool_name must be non-empty".into(),
+                    });
+                }
+            }
+            NodeConfig::HttpRequest(cfg) => {
+                if cfg.connection_id.trim().is_empty() {
+                    return Err(ProposalValidationError::InvalidNodeConfig {
+                        node_id: node.id.clone(),
+                        node_kind: node.kind,
+                        reason: "http_request.connection_id must be non-empty".into(),
+                    });
+                }
+                if cfg.path_template.trim().is_empty() {
+                    return Err(ProposalValidationError::InvalidNodeConfig {
+                        node_id: node.id.clone(),
+                        node_kind: node.kind,
+                        reason: "http_request.path_template must be non-empty".into(),
+                    });
+                }
+            }
+            NodeConfig::ChannelMessage(cfg) => {
+                if cfg.connection_id.trim().is_empty() {
+                    return Err(ProposalValidationError::InvalidNodeConfig {
+                        node_id: node.id.clone(),
+                        node_kind: node.kind,
+                        reason: "channel_message.connection_id must be non-empty".into(),
+                    });
+                }
+                if cfg.body_template.trim().is_empty() {
+                    return Err(ProposalValidationError::InvalidNodeConfig {
+                        node_id: node.id.clone(),
+                        node_kind: node.kind,
+                        reason: "channel_message.body_template must be non-empty".into(),
+                    });
+                }
+            }
+            NodeConfig::Condition(cfg) => {
+                if cfg.expression.trim().is_empty() {
+                    return Err(ProposalValidationError::InvalidNodeConfig {
+                        node_id: node.id.clone(),
+                        node_kind: node.kind,
+                        reason: "condition.expression must be non-empty".into(),
+                    });
+                }
+            }
+            NodeConfig::Delay(cfg) => {
+                if cfg.seconds == 0 {
+                    return Err(ProposalValidationError::InvalidNodeConfig {
+                        node_id: node.id.clone(),
+                        node_kind: node.kind,
+                        reason: "delay.seconds must be > 0".into(),
+                    });
+                }
+                // 24-hour cap: a runaway workflow shouldn't sleep
+                // forever. Refine in F2-7 if a concrete use case
+                // needs longer.
+                if cfg.seconds > 86_400 {
+                    return Err(ProposalValidationError::InvalidNodeConfig {
+                        node_id: node.id.clone(),
+                        node_kind: node.kind,
+                        reason: "delay.seconds must be ≤ 86400 (24h)".into(),
+                    });
+                }
             }
         }
     }

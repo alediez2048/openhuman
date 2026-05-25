@@ -163,33 +163,41 @@ fn diff_nodes(
                 c.kind, p.kind
             ));
         }
-        let NodeConfig::AgentPrompt(c_cfg) = &c.config;
-        let NodeConfig::AgentPrompt(p_cfg) = &p.config;
-
-        if c_cfg.prompt != p_cfg.prompt {
-            let c_lines = c_cfg.prompt.lines().count();
-            let p_lines = p_cfg.prompt.lines().count();
-            out.push(format!(
-                "Rewrote step {step} prompt ({c_lines} → {p_lines} lines)."
+        // F2-1: per-config diff prose only fires when BOTH sides are
+        // `AgentPrompt` (the only kind with prose-diffable fields
+        // today). Cross-kind changes are summarised by the
+        // already-emitted "Changed step kind" line above; per-kind
+        // diff prose lands in the F2-3..F2-7 tickets that own each
+        // body. Mixed AgentPrompt↔Phase-2-kind diffs intentionally
+        // fall through with only the kind-change line.
+        if let (NodeConfig::AgentPrompt(c_cfg), NodeConfig::AgentPrompt(p_cfg)) =
+            (&c.config, &p.config)
+        {
+            if c_cfg.prompt != p_cfg.prompt {
+                let c_lines = c_cfg.prompt.lines().count();
+                let p_lines = p_cfg.prompt.lines().count();
+                out.push(format!(
+                    "Rewrote step {step} prompt ({c_lines} → {p_lines} lines)."
+                ));
+            }
+            if c_cfg.iteration_cap != p_cfg.iteration_cap {
+                out.push(format!(
+                    "Changed step {step} iteration cap from {} to {}.",
+                    c_cfg.iteration_cap, p_cfg.iteration_cap
+                ));
+            }
+            if c_cfg.model_tier != p_cfg.model_tier {
+                out.push(format!(
+                    "Changed step {step} model tier from {:?} to {:?}.",
+                    c_cfg.model_tier, p_cfg.model_tier
+                ));
+            }
+            out.extend(diff_connections(
+                step,
+                &c_cfg.allowed_connections,
+                &p_cfg.allowed_connections,
             ));
         }
-        if c_cfg.iteration_cap != p_cfg.iteration_cap {
-            out.push(format!(
-                "Changed step {step} iteration cap from {} to {}.",
-                c_cfg.iteration_cap, p_cfg.iteration_cap
-            ));
-        }
-        if c_cfg.model_tier != p_cfg.model_tier {
-            out.push(format!(
-                "Changed step {step} model tier from {:?} to {:?}.",
-                c_cfg.model_tier, p_cfg.model_tier
-            ));
-        }
-        out.extend(diff_connections(
-            step,
-            &c_cfg.allowed_connections,
-            &p_cfg.allowed_connections,
-        ));
     }
     out
 }

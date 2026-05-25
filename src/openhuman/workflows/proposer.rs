@@ -534,6 +534,15 @@ fn format_validation_error(err: &ProposalValidationError) -> String {
                 cands = names.join(", "),
             )
         }
+        E::InvalidNodeConfig {
+            node_id,
+            node_kind,
+            reason,
+        } => {
+            format!(
+                "- error_kind: invalid_node_config\n- node_id: {node_id}\n- node_kind: {node_kind:?}\n- reason: {reason}"
+            )
+        }
     }
 }
 
@@ -711,14 +720,10 @@ pub fn build_update_system_prompt(
 fn collect_required_connections(
     wf: &Workflow,
 ) -> Vec<crate::openhuman::connections::types::ConnectionRef> {
-    let mut out: Vec<crate::openhuman::connections::types::ConnectionRef> = Vec::new();
-    for node in &wf.nodes {
-        let crate::openhuman::workflows::types::NodeConfig::AgentPrompt(cfg) = &node.config;
-        for r in &cfg.allowed_connections {
-            if !out.contains(r) {
-                out.push(r.clone());
-            }
-        }
-    }
-    out
+    // F2-1: delegates to `health::referenced_connections`, which
+    // walks every NodeConfig variant. Pre-F2-1 this only looked at
+    // AgentPrompt; HttpRequest + ChannelMessage now contribute their
+    // connection refs too so the projected `required_connections`
+    // stays accurate for Phase 2 chains.
+    crate::openhuman::workflows::health::referenced_connections(wf)
 }

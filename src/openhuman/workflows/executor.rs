@@ -606,7 +606,7 @@ async fn execute_inner(config: Config, workflow: Workflow, run: Run) {
 
     let outcome = tokio::time::timeout(
         Duration::from_secs(timeout_secs as u64),
-        execute_agent_prompt(&config, &run, &node),
+        dispatch_node(&config, &run, &node),
     )
     .await;
 
@@ -692,13 +692,78 @@ fn finalize_run(
     );
 }
 
+// ── dispatch_node ──────────────────────────────────────────────────────
+
+/// Structured failure modes for [`dispatch_node`]. F2-1 introduces
+/// `NotImplementedYet` so a workflow that includes a Phase 2 node kind
+/// can save + start a run, but the run terminates with a clear error
+/// rather than panicking. F2-3..F2-7 wire the real per-kind bodies and
+/// remove the `NotImplementedYet` arms one at a time.
+///
+/// Surfaced via anyhow at the `execute_inner` call site so the existing
+/// `RunStatus::Failed` + `terminal_error` plumbing carries the message
+/// straight to the user without a new persistence shape.
+#[derive(Debug, thiserror::Error)]
+pub enum NodeDispatchError {
+    /// The matching `NodeConfig::*` variant has no executor body yet.
+    /// F2-3..F2-7 land the bodies; until then the run fails honestly.
+    #[error(
+        "node kind `{0:?}` is not yet implemented in this build — \
+         lands in F2-3..F2-7 (Phase 2 execution depth)"
+    )]
+    NotImplementedYet(NodeKind),
+}
+
+/// F2-1 dispatcher: matches `node.config` and routes to the per-kind
+/// executor. Phase 1's single-node loop calls this; F2-2's multi-node
+/// chain loop calls it once per node.
+///
+/// Today only `AgentPrompt` has a real body. Every other Phase 2
+/// variant returns `NodeDispatchError::NotImplementedYet` — the
+/// upstream `execute_inner` translates that into a terminal
+/// `RunStatus::Failed` so the user sees a clear "this node kind isn't
+/// implemented yet" error in their run history.
+///
+/// Wiring contract for F2-3..F2-7: each ticket adds its arm by
+/// replacing the matching `Err(NotImplementedYet(_))` with a real
+/// `execute_<kind>(config, run, node).await` call.
+pub(crate) async fn dispatch_node(config: &Config, run: &Run, node: &Node) -> Result<()> {
+    match &node.config {
+        NodeConfig::AgentPrompt(_) => execute_agent_prompt(config, run, node).await,
+        NodeConfig::ToolCall(_) => {
+            Err(NodeDispatchError::NotImplementedYet(NodeKind::ToolCall).into())
+        }
+        NodeConfig::HttpRequest(_) => {
+            Err(NodeDispatchError::NotImplementedYet(NodeKind::HttpRequest).into())
+        }
+        NodeConfig::ChannelMessage(_) => {
+            Err(NodeDispatchError::NotImplementedYet(NodeKind::ChannelMessage).into())
+        }
+        NodeConfig::Condition(_) => {
+            Err(NodeDispatchError::NotImplementedYet(NodeKind::Condition).into())
+        }
+        NodeConfig::Delay(_) => Err(NodeDispatchError::NotImplementedYet(NodeKind::Delay).into()),
+    }
+}
+
 // ── execute_agent_prompt ───────────────────────────────────────────────
 
 /// Phase 1 node body: persist a step row, fire `WorkflowRunStepStarted`,
 /// run the agent (PLACEHOLDER per the module-doc), truncate + persist
 /// output, fire `WorkflowRunStepCompleted`.
 async fn execute_agent_prompt(config: &Config, run: &Run, node: &Node) -> Result<()> {
-    let NodeConfig::AgentPrompt(ref agent_prompt_config) = node.config;
+    let agent_prompt_config = match &node.config {
+        NodeConfig::AgentPrompt(cfg) => cfg,
+        other => {
+            // Unreachable under `dispatch_node`'s routing, but guard
+            // anyway so a future caller that bypasses the dispatcher
+            // can't silently mis-dispatch.
+            anyhow::bail!(
+                "execute_agent_prompt invoked on non-AgentPrompt node config: {:?}",
+                std::mem::discriminant(other)
+            );
+        }
+    };
     let step_id: RunStepId = Uuid::new_v4().to_string();
     let started_at = Utc::now();
     let step = RunStep {
