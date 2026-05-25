@@ -681,6 +681,55 @@ pub(crate) fn topological_sort(
     Ok(sorted)
 }
 
+/// Transitive-closure reachability map: for each node id, the set of
+/// node ids reachable from it via outbound edges (NOT including the
+/// node itself). Built once at run start; consumed by
+/// [`execute_inner`] when a `condition` node routes to a target so
+/// the un-routed branch's nodes can be skipped without reordering
+/// the topologically-sorted walk.
+fn build_reachability(
+    nodes: &[Node],
+    edges: &[crate::openhuman::workflows::types::Edge],
+) -> HashMap<String, std::collections::HashSet<String>> {
+    // Adjacency list: from -> [to, to, ...]
+    let mut adjacency: HashMap<&str, Vec<&str>> = HashMap::new();
+    for node in nodes {
+        adjacency.entry(node.id.as_str()).or_default();
+    }
+    for edge in edges {
+        adjacency
+            .entry(edge.from.as_str())
+            .or_default()
+            .push(edge.to.as_str());
+    }
+    // BFS from each node to compute the transitive set.
+    let mut out: HashMap<String, std::collections::HashSet<String>> =
+        HashMap::with_capacity(nodes.len());
+    for node in nodes {
+        let mut visited: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut queue: std::collections::VecDeque<&str> = std::collections::VecDeque::new();
+        if let Some(neighbours) = adjacency.get(node.id.as_str()) {
+            for n in neighbours {
+                queue.push_back(*n);
+            }
+        }
+        while let Some(id) = queue.pop_front() {
+            if !visited.insert(id.to_string()) {
+                continue;
+            }
+            if let Some(neighbours) = adjacency.get(id) {
+                for n in neighbours {
+                    if !visited.contains(*n) {
+                        queue.push_back(*n);
+                    }
+                }
+            }
+        }
+        out.insert(node.id.clone(), visited);
+    }
+    out
+}
+
 /// Drives the run to a terminal status. Spawned on a tokio task by
 /// `dispatch_run`; doesn't return anything because every state
 /// transition flows through the event bus + the `workflow_runs` table.
@@ -725,6 +774,20 @@ async fn execute_inner(config: Config, workflow: Workflow, run: Run) {
         .map(|n| (n.id.clone(), n.clone()))
         .collect();
 
+    // F2-6: precompute the reachability closure so a `condition`
+    // node's routing decision can restrict the remainder of the walk
+    // to nodes downstream of the routed target. Without this, the
+    // un-routed branch (e.g. `else_node` when we routed to
+    // `then_node`) would still execute as the cursor advances
+    // through the topological order. Phase 2 branches are typically
+    // 1-node; Phase 3 canvas with joining branches uses the same
+    // closure unchanged.
+    let reachable = build_reachability(&workflow.nodes, &workflow.edges);
+    // `branch_root` tracks the last condition's routing target. When
+    // Some, the cursor only fires nodes that are `branch_root` itself
+    // OR downstream of it.
+    let mut branch_root: Option<crate::openhuman::workflows::types::NodeId> = None;
+
     // F2-2: NodeContext seeded with the trigger's payload. Today
     // Cron / Manual triggers carry no payload (`Value::Null`); F2-9
     // / F2-10 / F2-11 surface webhook / composio_event /
@@ -749,10 +812,39 @@ async fn execute_inner(config: Config, workflow: Workflow, run: Run) {
     let mut terminal_status = RunStatus::Succeeded;
     let mut terminal_error: Option<String> = None;
 
-    for node_id in &order {
+    // F2-6: walk by cursor (not for-loop) so a `condition` node can
+    // jump the cursor to its `then_node_id` / `else_node_id` instead
+    // of advancing one step. The cursor moves forward only — backward
+    // jumps would form a cycle (rejected by `topological_sort`).
+    let mut cursor: usize = 0;
+    while cursor < order.len() {
+        let node_id = &order[cursor];
         let node = nodes_by_id
             .get(node_id)
             .expect("topological_sort returns only node ids from `nodes`");
+
+        // F2-6: when a prior `condition` routed to a target, skip any
+        // node not in that target's reachability closure. Lets the
+        // unselected branch's nodes pass without execution while
+        // still preserving the linear cursor walk.
+        if let Some(root) = &branch_root {
+            let on_branch = node_id == root
+                || reachable
+                    .get(root.as_str())
+                    .map(|set| set.contains(node_id.as_str()))
+                    .unwrap_or(false);
+            if !on_branch {
+                tracing::debug!(
+                    target: "workflows-run",
+                    run = %run.id,
+                    skipped = %node_id,
+                    branch_root = %root,
+                    "[workflows-run] skipping node — not on routed branch"
+                );
+                cursor += 1;
+                continue;
+            }
+        }
 
         // Between-nodes cancel check — cooperative cancellation per
         // FR-1.6.9. Triggers before dispatching the next node so the
@@ -778,8 +870,72 @@ async fn execute_inner(config: Config, workflow: Workflow, run: Run) {
 
         match outcome {
             Ok(Ok(body)) => {
+                // F2-6 routing: condition nodes (and any future kind
+                // with branching semantics) write a sentinel
+                // `_workflow_route_to` key into their body.
+                //   - missing key → advance cursor by 1 (default)
+                //   - `null` value → halt the walk cleanly (Succeeded)
+                //   - String value → find the target id in `order`
+                //     forward of the current cursor and jump to it.
+                //     Backward jumps OR an unknown id surface as a
+                //     Failed terminal status.
+                let routing = body
+                    .as_object()
+                    .and_then(|obj| obj.get(ROUTING_KEY))
+                    .cloned();
                 ctx.record_output(node_id.clone(), body);
-                continue;
+                match routing {
+                    None => {
+                        cursor += 1;
+                    }
+                    Some(serde_json::Value::Null) => {
+                        // Condition with `else_node_id = None`
+                        // evaluated to false → halt-success.
+                        break;
+                    }
+                    Some(serde_json::Value::String(target_id)) => {
+                        match order
+                            .iter()
+                            .position(|id| id.as_str() == target_id.as_str())
+                        {
+                            Some(next_idx) if next_idx > cursor => {
+                                cursor = next_idx;
+                                // Restrict subsequent walk to nodes
+                                // reachable from the routed target —
+                                // skips the un-selected branch.
+                                branch_root = Some(target_id);
+                            }
+                            Some(_) => {
+                                // Backward jump — would form a cycle
+                                // that topological_sort should have
+                                // caught. Treat as a hard runtime
+                                // failure for defence-in-depth.
+                                terminal_status = RunStatus::Failed;
+                                terminal_error = Some(format!(
+                                    "node `{}` routing to `{}` would form a cycle (already executed)",
+                                    node.id, target_id
+                                ));
+                                break;
+                            }
+                            None => {
+                                terminal_status = RunStatus::Failed;
+                                terminal_error = Some(format!(
+                                    "node `{}` routes to `{}` which is not in the workflow",
+                                    node.id, target_id
+                                ));
+                                break;
+                            }
+                        }
+                    }
+                    Some(other) => {
+                        terminal_status = RunStatus::Failed;
+                        terminal_error = Some(format!(
+                            "node `{}` produced an invalid `{}` value: {}",
+                            node.id, ROUTING_KEY, other
+                        ));
+                        break;
+                    }
+                }
             }
             Ok(Err(err)) => {
                 // F2-2 `on_error: Halt` (workflow-level default) —
@@ -920,9 +1076,7 @@ pub(crate) async fn dispatch_node(
         NodeConfig::ToolCall(_) => execute_tool_call(config, run, node, ctx).await,
         NodeConfig::HttpRequest(_) => execute_http_request(config, run, node, ctx).await,
         NodeConfig::ChannelMessage(_) => execute_channel_message(config, run, node, ctx).await,
-        NodeConfig::Condition(_) => {
-            Err(NodeDispatchError::NotImplementedYet(NodeKind::Condition).into())
-        }
+        NodeConfig::Condition(_) => execute_condition(config, run, node, ctx).await,
         NodeConfig::Delay(_) => Err(NodeDispatchError::NotImplementedYet(NodeKind::Delay).into()),
     }
 }
@@ -1824,6 +1978,155 @@ fn test_channel_message_override() -> Option<Arc<ChannelMessageStubFn>> {
     CHANNEL_MESSAGE_OVERRIDE
         .get()
         .and_then(|slot| slot.lock().clone())
+}
+
+// ── execute_condition (F2-6) ───────────────────────────────────────────
+
+/// Reserved key in a node's output `Value` that signals the
+/// executor's run loop to route to a specific downstream node id
+/// instead of advancing topologically. Set by `execute_condition`;
+/// read in `execute_inner` (the multi-node loop).
+///
+/// Other future node kinds with branching semantics (await_human_approval,
+/// fan_out termination) can write this same key to take advantage of
+/// the routing path without inventing a parallel surface.
+pub(crate) const ROUTING_KEY: &str = "_workflow_route_to";
+
+/// F2-6 node body for `NodeKind::Condition`.
+///
+/// Steps:
+///   1. Substitute `left` + `right` against the live `NodeContext`.
+///   2. Compile / evaluate the predicate per `op`. Regex compile
+///      failures surface as a clean Failed step (no panic).
+///   3. Emit a body Value with `matched: bool`, `left`, `right`,
+///      `op`, AND the reserved `ROUTING_KEY` carrying the target
+///      node id (then / else). When the predicate is false and
+///      `else_node_id` is `None`, the body still records
+///      `matched: false` but ROUTING_KEY is absent — `execute_inner`
+///      reads that as "halt the walk; remaining nodes skipped".
+async fn execute_condition(
+    config: &Config,
+    run: &Run,
+    node: &Node,
+    ctx: &crate::openhuman::workflows::templating::NodeContext,
+) -> Result<serde_json::Value> {
+    let cond_cfg = match &node.config {
+        NodeConfig::Condition(cfg) => cfg,
+        other => anyhow::bail!(
+            "execute_condition invoked on non-Condition node config: {:?}",
+            std::mem::discriminant(other)
+        ),
+    };
+
+    let step_id: RunStepId = Uuid::new_v4().to_string();
+    let started_at = Utc::now();
+    let step = RunStep {
+        id: step_id.clone(),
+        run_id: run.id.clone(),
+        node_id: node.id.clone(),
+        status: RunStatus::Running,
+        started_at,
+        completed_at: None,
+        output_json: None,
+        error: None,
+    };
+    if let Err(err) = store::insert_run_step(config, &step) {
+        anyhow::bail!("insert_run_step failed: {err:#}");
+    }
+    publish_global(DomainEvent::WorkflowRunStepStarted {
+        run_id: run.id.clone(),
+        node_id: node.id.clone(),
+    });
+
+    let (terminal_status, output_json, error, body_value) = match evaluate_condition(cond_cfg, ctx)
+    {
+        Ok(body) => {
+            let payload = serde_json::to_string(&body).unwrap_or_else(|_| "{}".into());
+            (RunStatus::Succeeded, Some(payload), None, body)
+        }
+        Err(reason) => (
+            RunStatus::Failed,
+            None,
+            Some(reason),
+            serde_json::Value::Null,
+        ),
+    };
+
+    if let Err(err) = store::update_run_step_terminal(
+        config,
+        &step_id,
+        terminal_status,
+        Utc::now(),
+        output_json,
+        error.clone(),
+    ) {
+        anyhow::bail!("update_run_step_terminal failed: {err:#}");
+    }
+    let status_json = serde_json::to_value(&terminal_status).unwrap_or(serde_json::Value::Null);
+    publish_global(DomainEvent::WorkflowRunStepCompleted {
+        run_id: run.id.clone(),
+        node_id: node.id.clone(),
+        status_json,
+    });
+
+    if matches!(terminal_status, RunStatus::Failed) {
+        if let Some(reason) = error {
+            anyhow::bail!("condition step failed: {reason}");
+        }
+        anyhow::bail!("condition step failed");
+    }
+    Ok(body_value)
+}
+
+/// Pure-Rust predicate evaluator. Returns the body Value (with the
+/// optional `ROUTING_KEY`) or `Err(reason)` for shape errors that
+/// should surface as a Failed step (today: bad regex).
+fn evaluate_condition(
+    cfg: &crate::openhuman::workflows::types::ConditionConfig,
+    ctx: &crate::openhuman::workflows::templating::NodeContext,
+) -> Result<serde_json::Value, String> {
+    use crate::openhuman::workflows::templating::substitute;
+    use crate::openhuman::workflows::types::CompareOp;
+    let left = substitute(&cfg.left, ctx).resolved;
+    let right = substitute(&cfg.right, ctx).resolved;
+
+    let matched = match cfg.op {
+        CompareOp::Eq => left == right,
+        CompareOp::NotEq => left != right,
+        CompareOp::Contains => left.contains(&right),
+        CompareOp::Matches => {
+            let re = regex::Regex::new(&right)
+                .map_err(|e| format!("invalid regex in condition.right: {e}"))?;
+            re.is_match(&left)
+        }
+    };
+
+    // F2-6 routing convention (see `execute_inner`):
+    //   - `String(target_id)` → jump to that node
+    //   - `Null`              → halt the walk cleanly (Succeeded)
+    //   - key missing         → default advance (non-routing nodes)
+    // ALWAYS insert the key for condition nodes so the executor never
+    // accidentally falls through to default-advance after a
+    // halt-on-false branch.
+    let route_value = if matched {
+        serde_json::Value::String(cfg.then_node_id.clone())
+    } else {
+        match &cfg.else_node_id {
+            Some(target) => serde_json::Value::String(target.clone()),
+            None => serde_json::Value::Null,
+        }
+    };
+
+    let mut body = serde_json::Map::new();
+    body.insert("matched".into(), serde_json::Value::Bool(matched));
+    body.insert("left".into(), serde_json::Value::String(left));
+    body.insert("right".into(), serde_json::Value::String(right));
+    body.insert(
+        "op".into(),
+        serde_json::to_value(&cfg.op).unwrap_or(serde_json::Value::Null),
+    );
+    body.insert(ROUTING_KEY.into(), route_value);
+    Ok(serde_json::Value::Object(body))
 }
 
 // ── execute_agent_prompt ───────────────────────────────────────────────

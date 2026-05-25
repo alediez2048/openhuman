@@ -445,17 +445,52 @@ pub struct ChannelMessageConfig {
 
 /// Configuration for a [`NodeKind::Condition`] node (F2-6).
 ///
-/// Phase 2 starts with a single text-match predicate against a
-/// resolved template value — the executor evaluates `expression` after
-/// substitution and routes to the matching outbound edge. F2-6
-/// finalises the predicate grammar; F2-1 stores the raw string.
+/// Branches the workflow's execution path. The executor substitutes
+/// `left` + `right` against the live `NodeContext`, evaluates the
+/// predicate per `op`, and routes to `then_node_id` (predicate true)
+/// or `else_node_id` (predicate false, when present). A missing
+/// `else_node_id` halts the run cleanly on false — the workflow
+/// terminates `Succeeded` with downstream nodes skipped.
+///
+/// Phase 2 ships a curated set of compare ops (per OQ-7's lean —
+/// predictable for the LLM to emit). Phase 3 canvas inherits the
+/// same routing semantics.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ConditionConfig {
-    /// Predicate expression. Templating supported in the LHS; the
-    /// predicate operator + RHS live inline (e.g.
-    /// `"{{node.classify.output.score}} >= 0.7"`). F2-6 owns the
-    /// expression grammar; this struct just persists the text.
-    pub expression: String,
+    /// Left-hand side. Templating supported (e.g.
+    /// `"{{node.classify.output.label}}"`). Substituted before the
+    /// predicate fires.
+    pub left: String,
+    /// Predicate operator. See [`CompareOp`].
+    pub op: CompareOp,
+    /// Right-hand side. Templating supported (lets a condition
+    /// compare two upstream outputs). Literal otherwise.
+    pub right: String,
+    /// Node id to route to when the predicate is true.
+    pub then_node_id: NodeId,
+    /// Optional node id to route to when the predicate is false.
+    /// `None` = halt-on-false (run terminates Succeeded with the
+    /// remaining nodes skipped).
+    #[serde(default)]
+    pub else_node_id: Option<NodeId>,
+}
+
+/// Predicates the [`ConditionConfig`] node evaluates. F2-6 ships
+/// the minimum useful set; future ops (numeric comparisons,
+/// contains-any-of) can land when concrete use cases appear.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum CompareOp {
+    /// `left == right` (string equality, case-sensitive).
+    Eq,
+    /// `left != right` (string inequality, case-sensitive).
+    NotEq,
+    /// `left.contains(right)` (substring match).
+    Contains,
+    /// `left` matches the regex in `right`. Regex compile happens at
+    /// dispatch time; an invalid regex fails the step with a clear
+    /// reason rather than panicking.
+    Matches,
 }
 
 /// Configuration for a [`NodeKind::Delay`] node (F2-7).

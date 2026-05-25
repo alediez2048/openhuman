@@ -1234,22 +1234,9 @@ fn dispatch_test_node(kind: NodeKind, config: NodeConfig) -> Node {
 // The integration tests at the bottom of this file cover the new
 // dispatch path end-to-end.
 
-#[tokio::test]
-async fn dispatch_node_returns_not_implemented_for_condition() {
-    let (_dir, config) = config_with_temp_workspace();
-    let run = dispatch_test_run();
-    let node = dispatch_test_node(
-        NodeKind::Condition,
-        NodeConfig::Condition(ConditionConfig {
-            expression: "x > 1".into(),
-        }),
-    );
-    let ctx = crate::openhuman::workflows::templating::NodeContext::default();
-    let err = executor::dispatch_node(&config, &run, &node, &ctx)
-        .await
-        .unwrap_err();
-    assert!(err.to_string().contains("Condition"));
-}
+// F2-6 replaced F2-1's NotImplementedYet stub for `Condition`. The
+// integration tests at the bottom of this file cover the new
+// dispatch + routing path end-to-end.
 
 #[tokio::test]
 async fn dispatch_node_returns_not_implemented_for_delay() {
@@ -2544,5 +2531,309 @@ async fn channel_message_send_failure_halts_run() {
     assert!(
         steps.iter().all(|s| s.node_id != "n2"),
         "n2 must not run after n1 failed"
+    );
+}
+
+// ── F2-6: condition node ───────────────────────────────────────────────
+
+/// Build a 3-node workflow:
+///   - cond: ConditionConfig
+///   - then_node: AgentPrompt "ran the THEN branch"
+///   - else_node: AgentPrompt "ran the ELSE branch"
+/// Edges link cond → then_node and cond → else_node so the
+/// topological sort has all three reachable.
+fn cond_workflow(id: &str, cond_cfg: ConditionConfig) -> Workflow {
+    f2_2_workflow(
+        id,
+        vec![
+            Node {
+                id: "cond".into(),
+                kind: NodeKind::Condition,
+                config: NodeConfig::Condition(cond_cfg),
+                position: None,
+            },
+            f2_2_agent_node("then_node", "ran the THEN branch"),
+            f2_2_agent_node("else_node", "ran the ELSE branch"),
+        ],
+        vec![
+            Edge {
+                from: "cond".into(),
+                to: "then_node".into(),
+            },
+            Edge {
+                from: "cond".into(),
+                to: "else_node".into(),
+            },
+        ],
+    )
+}
+
+#[tokio::test]
+async fn condition_eq_match_routes_to_then_node() {
+    let (_dir, config) = config_with_temp_workspace();
+    let workflow = cond_workflow(
+        &format!("wf-cond-eq-{}", uuid::Uuid::new_v4()),
+        ConditionConfig {
+            left: "hello".into(),
+            op: CompareOp::Eq,
+            right: "hello".into(),
+            then_node_id: "then_node".into(),
+            else_node_id: Some("else_node".into()),
+        },
+    );
+    store::insert_workflow(&config, &workflow).expect("insert_workflow");
+
+    executor::dispatch_run(
+        &config,
+        workflow.id.clone(),
+        TriggerSource::Manual {
+            initiator: "test".into(),
+        },
+    )
+    .await
+    .expect("dispatch_run");
+    let run = wait_for_terminal_run(&config, &workflow.id).await;
+    assert!(matches!(run.status, RunStatus::Succeeded));
+
+    let (_run, steps) = store::get_run(&config, &run.id).unwrap().expect("run row");
+    let step_ids: Vec<&str> = steps.iter().map(|s| s.node_id.as_str()).collect();
+    // cond ran → then_node ran → else_node skipped.
+    assert!(step_ids.contains(&"cond"));
+    assert!(step_ids.contains(&"then_node"));
+    assert!(
+        !step_ids.contains(&"else_node"),
+        "else_node must NOT have run; got: {step_ids:?}"
+    );
+}
+
+#[tokio::test]
+async fn condition_eq_no_match_routes_to_else_node() {
+    let (_dir, config) = config_with_temp_workspace();
+    let workflow = cond_workflow(
+        &format!("wf-cond-noeq-{}", uuid::Uuid::new_v4()),
+        ConditionConfig {
+            left: "hello".into(),
+            op: CompareOp::Eq,
+            right: "goodbye".into(),
+            then_node_id: "then_node".into(),
+            else_node_id: Some("else_node".into()),
+        },
+    );
+    store::insert_workflow(&config, &workflow).expect("insert_workflow");
+
+    executor::dispatch_run(
+        &config,
+        workflow.id.clone(),
+        TriggerSource::Manual {
+            initiator: "test".into(),
+        },
+    )
+    .await
+    .expect("dispatch_run");
+    let run = wait_for_terminal_run(&config, &workflow.id).await;
+    assert!(matches!(run.status, RunStatus::Succeeded));
+
+    let (_run, steps) = store::get_run(&config, &run.id).unwrap().expect("run row");
+    let step_ids: Vec<&str> = steps.iter().map(|s| s.node_id.as_str()).collect();
+    assert!(step_ids.contains(&"cond"));
+    assert!(step_ids.contains(&"else_node"));
+    assert!(!step_ids.contains(&"then_node"));
+}
+
+#[tokio::test]
+async fn condition_contains_with_templated_left_routes_correctly() {
+    use crate::openhuman::workflows::executor::{
+        clear_test_tool_call_override, set_test_tool_call_override,
+    };
+    let _lock = TOOL_CALL_TEST_LOCK.lock();
+    // n_emit emits `{"subject": "URGENT: server down"}` via ToolCall.
+    set_test_tool_call_override(|_name, _args, _ctx| async move {
+        Ok::<serde_json::Value, String>(serde_json::json!({ "subject": "URGENT: server down" }))
+    });
+
+    let (_dir, config) = config_with_temp_workspace();
+    let workflow = f2_2_workflow(
+        &format!("wf-cond-contains-{}", uuid::Uuid::new_v4()),
+        vec![
+            Node {
+                id: "n_emit".into(),
+                kind: NodeKind::ToolCall,
+                config: NodeConfig::ToolCall(ToolCallConfig {
+                    tool_name: "current_time".into(),
+                    arguments_template: serde_json::json!({}),
+                }),
+                position: None,
+            },
+            Node {
+                id: "cond".into(),
+                kind: NodeKind::Condition,
+                config: NodeConfig::Condition(ConditionConfig {
+                    left: "{{node.n_emit.output.subject}}".into(),
+                    op: CompareOp::Contains,
+                    right: "URGENT".into(),
+                    then_node_id: "alarm".into(),
+                    else_node_id: Some("queue".into()),
+                }),
+                position: None,
+            },
+            f2_2_agent_node("alarm", "FIRE THE ALARM"),
+            f2_2_agent_node("queue", "queue for tomorrow"),
+        ],
+        vec![
+            Edge {
+                from: "n_emit".into(),
+                to: "cond".into(),
+            },
+            Edge {
+                from: "cond".into(),
+                to: "alarm".into(),
+            },
+            Edge {
+                from: "cond".into(),
+                to: "queue".into(),
+            },
+        ],
+    );
+    store::insert_workflow(&config, &workflow).expect("insert_workflow");
+
+    executor::dispatch_run(
+        &config,
+        workflow.id.clone(),
+        TriggerSource::Manual {
+            initiator: "test".into(),
+        },
+    )
+    .await
+    .expect("dispatch_run");
+    let run = wait_for_terminal_run(&config, &workflow.id).await;
+    clear_test_tool_call_override();
+    assert!(matches!(run.status, RunStatus::Succeeded));
+
+    let (_run, steps) = store::get_run(&config, &run.id).unwrap().expect("run row");
+    let step_ids: Vec<&str> = steps.iter().map(|s| s.node_id.as_str()).collect();
+    assert!(step_ids.contains(&"n_emit"));
+    assert!(step_ids.contains(&"cond"));
+    assert!(step_ids.contains(&"alarm"));
+    assert!(!step_ids.contains(&"queue"));
+}
+
+#[tokio::test]
+async fn condition_matches_regex_op() {
+    let (_dir, config) = config_with_temp_workspace();
+    let workflow = cond_workflow(
+        &format!("wf-cond-rx-{}", uuid::Uuid::new_v4()),
+        ConditionConfig {
+            left: "URGENT: act now".into(),
+            op: CompareOp::Matches,
+            right: r"^URGENT".into(),
+            then_node_id: "then_node".into(),
+            else_node_id: Some("else_node".into()),
+        },
+    );
+    store::insert_workflow(&config, &workflow).expect("insert_workflow");
+
+    executor::dispatch_run(
+        &config,
+        workflow.id.clone(),
+        TriggerSource::Manual {
+            initiator: "test".into(),
+        },
+    )
+    .await
+    .expect("dispatch_run");
+    let run = wait_for_terminal_run(&config, &workflow.id).await;
+    assert!(matches!(run.status, RunStatus::Succeeded));
+
+    let (_run, steps) = store::get_run(&config, &run.id).unwrap().expect("run row");
+    let step_ids: Vec<&str> = steps.iter().map(|s| s.node_id.as_str()).collect();
+    assert!(step_ids.contains(&"then_node"));
+    assert!(!step_ids.contains(&"else_node"));
+}
+
+#[tokio::test]
+async fn condition_halt_on_false_when_no_else_branch() {
+    let (_dir, config) = config_with_temp_workspace();
+    // Only `cond` + `then_node`; no else branch.
+    let workflow = f2_2_workflow(
+        &format!("wf-cond-halt-{}", uuid::Uuid::new_v4()),
+        vec![
+            Node {
+                id: "cond".into(),
+                kind: NodeKind::Condition,
+                config: NodeConfig::Condition(ConditionConfig {
+                    left: "no".into(),
+                    op: CompareOp::Eq,
+                    right: "yes".into(),
+                    then_node_id: "then_node".into(),
+                    else_node_id: None,
+                }),
+                position: None,
+            },
+            f2_2_agent_node("then_node", "should not run"),
+        ],
+        vec![Edge {
+            from: "cond".into(),
+            to: "then_node".into(),
+        }],
+    );
+    store::insert_workflow(&config, &workflow).expect("insert_workflow");
+
+    executor::dispatch_run(
+        &config,
+        workflow.id.clone(),
+        TriggerSource::Manual {
+            initiator: "test".into(),
+        },
+    )
+    .await
+    .expect("dispatch_run");
+    let run = wait_for_terminal_run(&config, &workflow.id).await;
+    // Halt-on-false is a CLEAN terminal — Succeeded, not Failed.
+    assert!(
+        matches!(run.status, RunStatus::Succeeded),
+        "halt-on-false must terminate Succeeded; got {:?} (err: {:?})",
+        run.status,
+        run.error
+    );
+
+    let (_run, steps) = store::get_run(&config, &run.id).unwrap().expect("run row");
+    let step_ids: Vec<&str> = steps.iter().map(|s| s.node_id.as_str()).collect();
+    assert!(step_ids.contains(&"cond"));
+    assert!(
+        !step_ids.contains(&"then_node"),
+        "then_node must NOT have run; got: {step_ids:?}"
+    );
+}
+
+#[tokio::test]
+async fn condition_with_invalid_regex_fails_step_cleanly() {
+    let (_dir, config) = config_with_temp_workspace();
+    let workflow = cond_workflow(
+        &format!("wf-cond-bad-rx-{}", uuid::Uuid::new_v4()),
+        ConditionConfig {
+            left: "anything".into(),
+            op: CompareOp::Matches,
+            right: r"[unclosed".into(), // invalid regex
+            then_node_id: "then_node".into(),
+            else_node_id: Some("else_node".into()),
+        },
+    );
+    store::insert_workflow(&config, &workflow).expect("insert_workflow");
+
+    executor::dispatch_run(
+        &config,
+        workflow.id.clone(),
+        TriggerSource::Manual {
+            initiator: "test".into(),
+        },
+    )
+    .await
+    .expect("dispatch_run");
+    let run = wait_for_terminal_run(&config, &workflow.id).await;
+    assert!(matches!(run.status, RunStatus::Failed));
+    let err = run.error.as_deref().unwrap_or("");
+    assert!(
+        err.contains("invalid regex"),
+        "terminal_error must name the regex issue; got: {err}"
     );
 }

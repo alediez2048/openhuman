@@ -235,12 +235,41 @@ pub fn validate(
                 }
             }
             NodeConfig::Condition(cfg) => {
-                if cfg.expression.trim().is_empty() {
+                // `left` may be a templated reference (whole `{{...}}`
+                // tokens are pre-substituted at dispatch); we only
+                // reject EMPTY because that's the un-fillable form.
+                if cfg.left.is_empty() {
                     return Err(ProposalValidationError::InvalidNodeConfig {
                         node_id: node.id.clone(),
                         node_kind: node.kind,
-                        reason: "condition.expression must be non-empty".into(),
+                        reason: "condition.left must be non-empty".into(),
                     });
+                }
+                // F2-6: NodeId references must resolve. Catches
+                // typos in the drafter's output AND a misaligned
+                // copy-paste from a different workflow.
+                let known_ids: std::collections::HashSet<&str> =
+                    proposal.nodes.iter().map(|n| n.id.as_str()).collect();
+                if !known_ids.contains(cfg.then_node_id.as_str()) {
+                    return Err(ProposalValidationError::InvalidNodeConfig {
+                        node_id: node.id.clone(),
+                        node_kind: node.kind,
+                        reason: format!(
+                            "condition.then_node_id `{}` references a node that doesn't exist",
+                            cfg.then_node_id
+                        ),
+                    });
+                }
+                if let Some(else_id) = &cfg.else_node_id {
+                    if !known_ids.contains(else_id.as_str()) {
+                        return Err(ProposalValidationError::InvalidNodeConfig {
+                            node_id: node.id.clone(),
+                            node_kind: node.kind,
+                            reason: format!(
+                                "condition.else_node_id `{else_id}` references a node that doesn't exist"
+                            ),
+                        });
+                    }
                 }
             }
             NodeConfig::Delay(cfg) => {

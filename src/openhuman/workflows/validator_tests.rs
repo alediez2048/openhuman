@@ -581,19 +581,82 @@ fn validate_phase_2_rejects_channel_message_missing_body() {
 }
 
 #[test]
-fn validate_phase_2_rejects_condition_with_empty_expression() {
+fn validate_phase_2_rejects_condition_with_empty_left() {
+    let mut proposal = valid_proposal();
+    // Two AgentPrompt nodes so the condition's then_node_id resolves.
+    proposal.nodes = vec![
+        agent_node("n2", vec![]),
+        node_with_config(
+            "n1",
+            NodeKind::Condition,
+            NodeConfig::Condition(ConditionConfig {
+                left: "".into(),
+                op: CompareOp::Eq,
+                right: "x".into(),
+                then_node_id: "n2".into(),
+                else_node_id: None,
+            }),
+        ),
+    ];
+    let snapshot = ConnectionsSnapshot::empty();
+    match validate(&proposal, &snapshot, 2) {
+        Err(ProposalValidationError::InvalidNodeConfig { reason, .. }) => {
+            assert!(reason.contains("left"), "got: {reason}");
+        }
+        other => panic!("expected InvalidNodeConfig, got {other:?}"),
+    }
+}
+
+#[test]
+fn validate_phase_2_rejects_condition_with_dangling_then_node_id() {
     let mut proposal = valid_proposal();
     proposal.nodes[0] = node_with_config(
         "n1",
         NodeKind::Condition,
         NodeConfig::Condition(ConditionConfig {
-            expression: "".into(),
+            left: "x".into(),
+            op: CompareOp::Eq,
+            right: "x".into(),
+            then_node_id: "nonexistent".into(),
+            else_node_id: None,
         }),
     );
     let snapshot = ConnectionsSnapshot::empty();
     match validate(&proposal, &snapshot, 2) {
         Err(ProposalValidationError::InvalidNodeConfig { reason, .. }) => {
-            assert!(reason.contains("expression"), "got: {reason}");
+            assert!(
+                reason.contains("then_node_id") && reason.contains("nonexistent"),
+                "got: {reason}"
+            );
+        }
+        other => panic!("expected InvalidNodeConfig, got {other:?}"),
+    }
+}
+
+#[test]
+fn validate_phase_2_rejects_condition_with_dangling_else_node_id() {
+    let mut proposal = valid_proposal();
+    proposal.nodes = vec![
+        agent_node("n2", vec![]),
+        node_with_config(
+            "n1",
+            NodeKind::Condition,
+            NodeConfig::Condition(ConditionConfig {
+                left: "x".into(),
+                op: CompareOp::Eq,
+                right: "x".into(),
+                then_node_id: "n2".into(),
+                else_node_id: Some("nonexistent".into()),
+            }),
+        ),
+    ];
+    let snapshot = ConnectionsSnapshot::empty();
+    match validate(&proposal, &snapshot, 2) {
+        Err(ProposalValidationError::InvalidNodeConfig { reason, .. }) => {
+            assert!(
+                reason.contains("else_node_id") && reason.contains("nonexistent"),
+                "got: {reason}"
+            );
         }
         other => panic!("expected InvalidNodeConfig, got {other:?}"),
     }
@@ -707,10 +770,15 @@ fn node_config_channel_message_round_trips_through_serde() {
 #[test]
 fn node_config_condition_round_trips_through_serde() {
     let original = NodeConfig::Condition(ConditionConfig {
-        expression: "{{node.classify.output.score}} >= 0.7".into(),
+        left: "{{node.classify.output.label}}".into(),
+        op: CompareOp::Contains,
+        right: "URGENT".into(),
+        then_node_id: "send_slack".into(),
+        else_node_id: Some("send_email".into()),
     });
     let json = serde_json::to_string(&original).unwrap();
     assert!(json.contains("\"kind\":\"condition\""));
+    assert!(json.contains("\"op\":{\"kind\":\"contains\"}"));
     let parsed: NodeConfig = serde_json::from_str(&json).unwrap();
     assert_eq!(parsed, original);
 }
