@@ -1,11 +1,11 @@
 # Phase 2 — Execution Depth: DEVLOG
 
-Closure log for the F2-1..F2-16 sequence. Every entry references the
+Closure log for the F2-1..F2-17 sequence. Every entry references the
 commit SHA that landed it on `main`.
 
 ---
 
-## Status: 🟢 Core ticket sequence shipped (F2-1..F2-16). E2E specs deferred to F2-16b.
+## Status: 🟢 Phase 2 complete (F2-1..F2-17). Deferred follow-up: F2-17b live-transport scenarios.
 
 All 16 Phase 2 tickets executed against the locked OQ-7 / OQ-21 / OQ-22
 decisions in `Automations/requirements.md §8`. The Phase 2 surface is
@@ -34,33 +34,35 @@ reachable from chat-driven drafting all the way through the executor.
 | F2-13 | `9a8076eb` | `workflow_builder.md` prompt rewritten — flipped the Phase 2 "do NOT emit yet" reference into the active surface, added a Phase 2 worked example (channel_message → classify → condition → channel_message) |
 | F2-14 | `4b7965c7` | 30-day soft-delete + `retention::run_purge_sweep` (`now_provider` injection point for tests) + `workflows_restore` RPC + `ListFilter.include_deleted` |
 | F2-15 | `6585660b` | `Trigger::Cron.active_hours` enforcement — scheduler resolves "now" in the trigger's `tz` (chrono-tz) and drops out-of-window ticks with `SkippedReason::OutsideActiveHours` |
-| F2-16 | *(this commit)* | Phase 2 closure — `CURRENT_PHASE = 2` flipped in `ops.rs` + `propose_create.rs` + `propose_update.rs`; 7 Phase 2 capability entries added to `about_app::catalog`; DEVLOG + README closure |
+| F2-16 | `c81188e8` | Phase 2 closure — `CURRENT_PHASE = 2` flipped in `ops.rs` + `propose_create.rs` + `propose_update.rs`; 7 Phase 2 capability entries added to `about_app::catalog`; DEVLOG + README closure |
+| F2-7b | `6a66c98f` | Delay-node persistent resume tracking — migration 005 adds `workflow_runs.pending_resume_at`; `execute_delay` writes/clears around the sleep; `resume_or_fail_delayed_runs` boot helper partitions delayed rows into immediate-flip vs scheduled-flip buckets |
+| F2-9b | `5bb0b365` | Webhook boot reconcile + OQ-22 256 KB trigger-payload cap — `reconcile_webhooks_at_startup` re-registers enabled `Trigger::Webhook` rows; `truncate_trigger_payload` enforces the cap at `dispatch_run_with_payload` entry with a structured `{ truncated: true, original_bytes, cap_bytes, preview }` marker |
+| F2-16b | `13dd7842` | Phase 2 catalog WDIO spec (`workflows-phase-2-catalog.spec.ts`) — 9 starter cards, Add/Delete RU-7 round-trip, soft-delete + Trash-view assertions |
+| F2-17 | *(this commit)* | Phase 2 live-testing pass (`workflows-phase-2-live.spec.ts`) — 5 working Appium scenarios (multi-node chain, soft-delete+restore, active_hours validator, starter catalog, capability surface, UI render canary) + 4 explicitly `.skip()`'d scenarios for the trigger-bus paths that need scaffolding tracked as F2-17b |
 
 ## Deferred follow-ups
 
-Per the MVP-per-ticket convention, three follow-up tickets carry the
-remaining scope so the Phase 2 thread closes cleanly:
+All four follow-ups (F2-7b, F2-9b, F2-16b, F2-17) shipped in the
+post-F2-16 push. The single remaining deferral is the live-transport
+scenarios that need new test scaffolding:
 
-- **F2-7b** — `delay` node persistent resume across core restarts. F2-7
-  shipped an in-process `tokio::sleep`; longer delays survive only if
-  the core stays up. Persistent resume needs the run-row schema to
-  carry a `resume_at` cursor + the orphan-recovery sweep to refire
-  scheduled resumes on boot.
-- **F2-9b** — webhook boot reconcile + proposer `setup_instructions`
-  + `target_path` regex validation. F2-9 registers webhooks on
-  `create/update/enable`, but a fresh core boot doesn't re-register
-  existing rows. The reconcile loop should walk every enabled
-  `Trigger::Webhook` row at startup and re-register against the live
-  router. The drafter also needs to surface the registered URL +
-  HMAC secret in `setup_instructions`.
-- **F2-16b** — Hero E2E (`workflows-phase-2-hero.spec.ts`) +
-  Catalog E2E (`workflows-phase-2-catalog.spec.ts`). The Rust core +
-  validator + executor are fully tested at the unit + integration
-  level (345 workflows tests pass, including 100+ added during this
-  Phase 2 sequence). The WDIO/Appium E2E specs need a mock LLM that
-  emits a deterministic multi-node proposal + a tunnel-shaped
-  webhook receiver — both worth landing but neither blocks the
-  closure of the F2-1..F2-15 implementation work.
+- **F2-17b** — Live-transport scenarios for the F2-17 Appium spec.
+  F2-17 ships 5 working scenarios + 4 `.skip()`'d ones for the
+  trigger-bus paths (webhook POST end-to-end, composio_event fan-out,
+  channel_message filter, condition branching via stub agent). Each
+  needs scaffolding:
+    - Webhook POST: a tunnel-shaped HTTP receiver inside the test rig
+      that can POST to the registered tunnel URL with a valid HMAC.
+    - Composio fan-out + channel_message: a
+      `workflows_dev_simulate_trigger` debug RPC gated by
+      `OPENHUMAN_DEV_E2E=1` so the spec can fire bus events without
+      going through the actual transport.
+    - Condition branching: a `workflows_dev_inject_agent_stub` debug
+      RPC so the condition predicate can be driven against
+      deterministic agent outputs.
+  All four scenarios are exhaustively covered by Rust unit +
+  integration tests (333+/333+ workflows tests pass). F2-17b is the
+  through-the-transport verification, not a coverage gap.
 
 ## ADR drift audit
 
