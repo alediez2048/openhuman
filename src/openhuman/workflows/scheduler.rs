@@ -46,7 +46,8 @@ use crate::openhuman::cron::normalize_expression;
 use crate::openhuman::workflows::executor;
 use crate::openhuman::workflows::store;
 use crate::openhuman::workflows::types::{
-    ListFilter, ManualInitiator, RunId, RunNowError, Trigger, TriggerSource, Workflow, WorkflowId,
+    ListFilter, ManualInitiator, RunId, RunNowError, SkippedReason, Trigger, TriggerSource,
+    Workflow, WorkflowId,
 };
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -200,6 +201,16 @@ pub async fn run(config: Config) -> Result<()> {
             let config = config.clone();
             tokio::spawn(async move {
                 let workflow_id = entry.workflow_id.clone();
+                // F2-15: gate cron dispatch on `Trigger::Cron.active_hours`.
+                // We re-read the workflow here (rather than carrying the
+                // window on `Entry`) so a freshly-updated workflow's
+                // window applies on the very next tick without the
+                // registry needing a refresh. One extra SQL read per
+                // due cron is well within the bounded-work envelope.
+                if let Some(skip) = active_hours_skip(&config, &workflow_id, Utc::now()) {
+                    publish_active_hours_skip(&workflow_id, &skip);
+                    return;
+                }
                 match executor::dispatch_run(&config, workflow_id.clone(), TriggerSource::Cron)
                     .await
                 {
@@ -294,6 +305,100 @@ pub async fn handle_run_now(
         .map_err(|err| RunNowError::Dispatch {
             reason: format!("{err:#}"),
         })
+}
+
+// ── F2-15: active_hours enforcement ────────────────────────────────────
+
+/// Computed skip detail for the active-hours gate. `start` / `end` are
+/// the configured window strings (verbatim); `now_hhmm` is the
+/// time-of-day in the trigger's `tz` at the moment of the check.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActiveHoursSkip {
+    pub start: String,
+    pub end: String,
+    pub now_hhmm: String,
+}
+
+/// Read the workflow + trigger's `active_hours` (if any) and decide
+/// whether the cron tick should be dropped. Returns `Some(skip)` when
+/// the dispatch path MUST skip + publish; `None` when the tick passes
+/// the gate (no `active_hours` configured, or `now` falls within the
+/// window).
+///
+/// Public so tests can drive the gate without a live tokio task. The
+/// signature takes `now: DateTime<Utc>` instead of calling `Utc::now`
+/// internally so tests can pin a specific instant.
+pub fn active_hours_skip(
+    config: &Config,
+    workflow_id: &WorkflowId,
+    now: DateTime<Utc>,
+) -> Option<ActiveHoursSkip> {
+    let workflow = match store::get_workflow(config, workflow_id) {
+        Ok(Some(w)) => w,
+        _ => return None,
+    };
+    let Trigger::Cron {
+        active_hours: Some(hours),
+        tz,
+        ..
+    } = &workflow.trigger
+    else {
+        return None;
+    };
+    let now_hhmm = current_hhmm_in_tz(now, tz.as_deref());
+    if is_within_hhmm_window(&now_hhmm, &hours.start, &hours.end) {
+        return None;
+    }
+    Some(ActiveHoursSkip {
+        start: hours.start.clone(),
+        end: hours.end.clone(),
+        now_hhmm,
+    })
+}
+
+/// Publish the `outside_active_hours` skip event. Pulled into its own
+/// helper so the dispatch path stays focused and tests can assert the
+/// exact event shape produced.
+pub fn publish_active_hours_skip(workflow_id: &WorkflowId, skip: &ActiveHoursSkip) {
+    let reason = SkippedReason::OutsideActiveHours {
+        start: skip.start.clone(),
+        end: skip.end.clone(),
+        now_hhmm: skip.now_hhmm.clone(),
+    };
+    crate::core::event_bus::publish_global(
+        crate::core::event_bus::DomainEvent::WorkflowRunSkipped {
+            workflow_id: workflow_id.clone(),
+            reason_json: serde_json::to_value(&reason).unwrap_or(serde_json::Value::Null),
+            attempted_trigger_source_json: serde_json::to_value(&TriggerSource::Cron)
+                .unwrap_or(serde_json::Value::Null),
+        },
+    );
+    tracing::info!(
+        target: "workflows-scheduler",
+        "[workflows-scheduler] cron tick skipped wf={workflow_id} outside_active_hours [{}, {}] now={}",
+        skip.start, skip.end, skip.now_hhmm
+    );
+}
+
+/// Format `now` as `"HH:MM"` in `tz` (an IANA timezone like
+/// `"America/Los_Angeles"`). When `tz` is `None` or fails to parse,
+/// falls back to UTC — same fallback the cron crate's
+/// `Schedule::after` path uses.
+fn current_hhmm_in_tz(now: DateTime<Utc>, tz: Option<&str>) -> String {
+    if let Some(name) = tz {
+        if let Ok(zone) = name.parse::<chrono_tz::Tz>() {
+            return now.with_timezone(&zone).format("%H:%M").to_string();
+        }
+    }
+    now.format("%H:%M").to_string()
+}
+
+/// Inclusive `start <= now < end` check on `"HH:MM"` strings.
+/// Validator (`validate_active_hours`) enforces `start < end` so this
+/// helper never has to deal with wraparound — `"22:00" - "02:00"`
+/// is a validator-time reject.
+fn is_within_hhmm_window(now_hhmm: &str, start: &str, end: &str) -> bool {
+    now_hhmm >= start && now_hhmm < end
 }
 
 // ── Test-only helpers ──────────────────────────────────────────────────

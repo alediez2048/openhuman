@@ -710,6 +710,15 @@ pub enum SkippedReason {
     AlreadyRunning,
     /// Workflow's persisted health was not `Ready` at dispatch time.
     HealthBlocked { health: WorkflowHealth },
+    /// F2-15: cron tick landed outside the `Trigger::Cron.active_hours`
+    /// window. `start` / `end` are the configured `HH:MM` strings (in
+    /// the trigger's `tz`); `now_hhmm` is the time-of-day the dispatch
+    /// path computed when the tick fired (in the trigger's `tz`).
+    OutsideActiveHours {
+        start: String,
+        end: String,
+        now_hhmm: String,
+    },
 }
 
 // ── Proposal types (chat-driven creation; consumed by F-11..F-14) ──────

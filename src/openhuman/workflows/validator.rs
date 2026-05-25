@@ -128,9 +128,15 @@ pub fn validate(
         });
     }
 
-    // ── Cron trigger parse ─────────────────────────────────────────────
-    if let Trigger::Cron { expr, .. } = &proposal.trigger {
+    // ── Cron trigger parse + active_hours (F2-15) ──────────────────────
+    if let Trigger::Cron {
+        expr, active_hours, ..
+    } = &proposal.trigger
+    {
         validate_cron_expr(expr)?;
+        if let Some(hours) = active_hours {
+            validate_active_hours(&hours.start, &hours.end)?;
+        }
     }
 
     // ── ChannelMessage trigger validation (F2-11) ──────────────────────
@@ -426,6 +432,54 @@ fn validate_cron_expr(expr: &str) -> Result<(), ProposalValidationError> {
         parse_error: err.to_string(),
     })?;
     Ok(())
+}
+
+/// F2-15: enforce `start` / `end` shape + ordering. Both must be
+/// `HH:MM` 24-hour strings (zero-padded), and `start` must be strictly
+/// less than `end`. Wraparound windows like `"22:00" - "02:00"` aren't
+/// supported — the user splits them into two workflows.
+fn validate_active_hours(start: &str, end: &str) -> Result<(), ProposalValidationError> {
+    let start_minutes =
+        parse_hhmm(start).ok_or_else(|| ProposalValidationError::InvalidNodeConfig {
+            node_id: "trigger".into(),
+            node_kind: crate::openhuman::workflows::types::NodeKind::AgentPrompt,
+            reason: format!("trigger.active_hours.start must be `HH:MM` 24-hour (got `{start}`)"),
+        })?;
+    let end_minutes =
+        parse_hhmm(end).ok_or_else(|| ProposalValidationError::InvalidNodeConfig {
+            node_id: "trigger".into(),
+            node_kind: crate::openhuman::workflows::types::NodeKind::AgentPrompt,
+            reason: format!("trigger.active_hours.end must be `HH:MM` 24-hour (got `{end}`)"),
+        })?;
+    if start_minutes >= end_minutes {
+        return Err(ProposalValidationError::InvalidNodeConfig {
+            node_id: "trigger".into(),
+            node_kind: crate::openhuman::workflows::types::NodeKind::AgentPrompt,
+            reason: format!(
+                "trigger.active_hours requires start ({start}) < end ({end}) — wraparound windows aren't supported; split into two workflows"
+            ),
+        });
+    }
+    Ok(())
+}
+
+/// Parse `HH:MM` (24-hour, zero-padded) → minutes-since-midnight.
+/// Returns `None` for any malformed input so the caller can render a
+/// clear validator error.
+fn parse_hhmm(s: &str) -> Option<u32> {
+    let parts: Vec<&str> = s.split(':').collect();
+    if parts.len() != 2 {
+        return None;
+    }
+    if parts[0].len() != 2 || parts[1].len() != 2 {
+        return None;
+    }
+    let h: u32 = parts[0].parse().ok()?;
+    let m: u32 = parts[1].parse().ok()?;
+    if h > 23 || m > 59 {
+        return None;
+    }
+    Some(h * 60 + m)
 }
 
 /// Up to 3 fuzzy matches for `unknown` against the user's actual

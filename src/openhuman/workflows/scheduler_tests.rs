@@ -8,6 +8,7 @@ use super::scheduler;
 use super::store;
 use super::types::*;
 use crate::openhuman::config::Config;
+use chrono::TimeZone;
 use std::sync::Mutex;
 use tempfile::TempDir;
 
@@ -261,4 +262,145 @@ async fn delete_deregisters_before_the_cascade() {
     ops::delete(&config, wf.id.clone()).await.unwrap();
     assert!(scheduler::registered_ids_for_test().is_empty());
     assert!(store::get_workflow(&config, &wf.id).unwrap().is_none());
+}
+
+// ── F2-15: active_hours gate ───────────────────────────────────────────
+
+fn cron_with_active_hours(start: &str, end: &str, tz: Option<&str>) -> Trigger {
+    Trigger::Cron {
+        expr: "* * * * *".into(),
+        tz: tz.map(str::to_string),
+        active_hours: Some(ActiveHours {
+            start: start.into(),
+            end: end.into(),
+        }),
+    }
+}
+
+#[test]
+fn active_hours_gate_returns_none_when_no_active_hours_configured() {
+    let _guard = scheduler_test_lock();
+    let (_dir, config) = config_with_temp_workspace();
+    let wf = workflow_with("wf-ah-none", true, cron_trigger(), WorkflowHealth::Ready);
+    store::insert_workflow(&config, &wf).unwrap();
+    // cron_trigger has active_hours = None; the gate MUST pass.
+    let now = chrono::Utc::now();
+    assert!(scheduler::active_hours_skip(&config, &wf.id, now).is_none());
+}
+
+#[test]
+fn active_hours_gate_passes_when_now_is_inside_the_window_utc() {
+    let _guard = scheduler_test_lock();
+    let (_dir, config) = config_with_temp_workspace();
+    let wf = workflow_with(
+        "wf-ah-utc-inside",
+        true,
+        cron_with_active_hours("09:00", "17:00", None),
+        WorkflowHealth::Ready,
+    );
+    store::insert_workflow(&config, &wf).unwrap();
+    // Pick a UTC instant that's 12:00 UTC — squarely inside the window.
+    let now = chrono::Utc.with_ymd_and_hms(2026, 5, 24, 12, 0, 0).unwrap();
+    assert!(scheduler::active_hours_skip(&config, &wf.id, now).is_none());
+}
+
+#[test]
+fn active_hours_gate_skips_when_now_is_outside_the_window_utc() {
+    let _guard = scheduler_test_lock();
+    let (_dir, config) = config_with_temp_workspace();
+    let wf = workflow_with(
+        "wf-ah-utc-outside",
+        true,
+        cron_with_active_hours("09:00", "17:00", None),
+        WorkflowHealth::Ready,
+    );
+    store::insert_workflow(&config, &wf).unwrap();
+    // 04:00 UTC — outside the [09:00, 17:00) window.
+    let now = chrono::Utc.with_ymd_and_hms(2026, 5, 24, 4, 0, 0).unwrap();
+    let skip = scheduler::active_hours_skip(&config, &wf.id, now)
+        .expect("dispatch outside window MUST be gated");
+    assert_eq!(skip.start, "09:00");
+    assert_eq!(skip.end, "17:00");
+    assert_eq!(skip.now_hhmm, "04:00");
+}
+
+#[test]
+fn active_hours_gate_resolves_now_in_the_configured_timezone() {
+    let _guard = scheduler_test_lock();
+    let (_dir, config) = config_with_temp_workspace();
+    let wf = workflow_with(
+        "wf-ah-tz",
+        true,
+        cron_with_active_hours("09:00", "17:00", Some("America/Los_Angeles")),
+        WorkflowHealth::Ready,
+    );
+    store::insert_workflow(&config, &wf).unwrap();
+
+    // 17:00 UTC on 2026-05-24 = 10:00 PT (PDT, UTC-7). Inside [09:00, 17:00) PT.
+    let pt_inside = chrono::Utc.with_ymd_and_hms(2026, 5, 24, 17, 0, 0).unwrap();
+    assert!(
+        scheduler::active_hours_skip(&config, &wf.id, pt_inside).is_none(),
+        "10:00 PT MUST be inside the [09:00, 17:00) window"
+    );
+
+    // 04:00 UTC = 21:00 prior-day PT — outside the window.
+    let pt_outside = chrono::Utc.with_ymd_and_hms(2026, 5, 25, 4, 0, 0).unwrap();
+    let skip =
+        scheduler::active_hours_skip(&config, &wf.id, pt_outside).expect("21:00 PT MUST be gated");
+    assert_eq!(skip.now_hhmm, "21:00");
+}
+
+#[tokio::test]
+async fn active_hours_publish_emits_skip_event_with_outside_active_hours_reason() {
+    use crate::core::event_bus::{init_global, subscribe_global, DomainEvent, EventHandler};
+    use std::sync::Arc;
+
+    struct Probe(tokio::sync::mpsc::UnboundedSender<DomainEvent>);
+    #[async_trait::async_trait]
+    impl EventHandler for Probe {
+        fn name(&self) -> &str {
+            "scheduler_active_hours_probe"
+        }
+        fn domains(&self) -> Option<&[&str]> {
+            Some(&["workflow"])
+        }
+        async fn handle(&self, event: &DomainEvent) {
+            let _ = self.0.send(event.clone());
+        }
+    }
+
+    let _guard = scheduler_test_lock();
+    init_global(crate::core::event_bus::DEFAULT_CAPACITY);
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let _handle = subscribe_global(Arc::new(Probe(tx)));
+
+    let skip = scheduler::ActiveHoursSkip {
+        start: "09:00".into(),
+        end: "17:00".into(),
+        now_hhmm: "04:00".into(),
+    };
+    scheduler::publish_active_hours_skip(&"wf-skip-evt".to_string(), &skip);
+
+    for _ in 0..20 {
+        if let Ok(Some(event)) =
+            tokio::time::timeout(std::time::Duration::from_millis(200), rx.recv()).await
+        {
+            if let DomainEvent::WorkflowRunSkipped {
+                workflow_id,
+                reason_json,
+                attempted_trigger_source_json,
+            } = event
+            {
+                if workflow_id == "wf-skip-evt" {
+                    assert_eq!(reason_json["kind"], "outside_active_hours");
+                    assert_eq!(reason_json["start"], "09:00");
+                    assert_eq!(reason_json["end"], "17:00");
+                    assert_eq!(reason_json["now_hhmm"], "04:00");
+                    assert_eq!(attempted_trigger_source_json["type"], "cron");
+                    return;
+                }
+            }
+        }
+    }
+    panic!("WorkflowRunSkipped event for wf-skip-evt never arrived");
 }

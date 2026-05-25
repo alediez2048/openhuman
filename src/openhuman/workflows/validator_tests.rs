@@ -205,6 +205,72 @@ fn validate_accepts_5_field_cron_via_normalize_expression() {
     assert!(validate(&proposal, &ConnectionsSnapshot::empty(), 1).is_ok());
 }
 
+// ── F2-15: active_hours validation ─────────────────────────────────────
+
+fn cron_with_active_hours(start: &str, end: &str) -> Trigger {
+    Trigger::Cron {
+        expr: "0 9 * * *".into(),
+        tz: None,
+        active_hours: Some(ActiveHours {
+            start: start.into(),
+            end: end.into(),
+        }),
+    }
+}
+
+#[test]
+fn validate_accepts_active_hours_with_valid_window() {
+    let mut proposal = valid_proposal();
+    proposal.trigger = cron_with_active_hours("09:00", "17:00");
+    assert!(validate(&proposal, &ConnectionsSnapshot::empty(), 1).is_ok());
+}
+
+#[test]
+fn validate_rejects_active_hours_with_start_greater_than_or_equal_to_end() {
+    let mut proposal = valid_proposal();
+    proposal.trigger = cron_with_active_hours("17:00", "09:00");
+    let err = validate(&proposal, &ConnectionsSnapshot::empty(), 1).unwrap_err();
+    match err {
+        ProposalValidationError::InvalidNodeConfig {
+            node_id, reason, ..
+        } => {
+            assert_eq!(node_id, "trigger");
+            assert!(
+                reason.contains("wraparound") || reason.contains("start"),
+                "reason must explain ordering; got: {reason}"
+            );
+        }
+        other => panic!("expected InvalidNodeConfig for active_hours order; got {other:?}"),
+    }
+}
+
+#[test]
+fn validate_rejects_active_hours_with_equal_start_and_end() {
+    let mut proposal = valid_proposal();
+    proposal.trigger = cron_with_active_hours("09:00", "09:00");
+    assert!(validate(&proposal, &ConnectionsSnapshot::empty(), 1).is_err());
+}
+
+#[test]
+fn validate_rejects_active_hours_with_malformed_time_strings() {
+    let mut proposal = valid_proposal();
+    proposal.trigger = cron_with_active_hours("9:00", "17:00"); // missing zero-pad
+    let err = validate(&proposal, &ConnectionsSnapshot::empty(), 1).unwrap_err();
+    assert!(
+        matches!(err, ProposalValidationError::InvalidNodeConfig { ref reason, .. }
+            if reason.contains("HH:MM")),
+        "expected HH:MM format reject; got {err:?}"
+    );
+
+    let mut proposal = valid_proposal();
+    proposal.trigger = cron_with_active_hours("25:00", "26:00"); // hour > 23
+    assert!(validate(&proposal, &ConnectionsSnapshot::empty(), 1).is_err());
+
+    let mut proposal = valid_proposal();
+    proposal.trigger = cron_with_active_hours("09:60", "17:00"); // minute > 59
+    assert!(validate(&proposal, &ConnectionsSnapshot::empty(), 1).is_err());
+}
+
 // ── F2-10: Composio trigger validation ─────────────────────────────────
 
 #[test]
