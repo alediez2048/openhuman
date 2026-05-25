@@ -1166,6 +1166,100 @@ const CAPABILITIES: &[Capability] = &[
         status: CapabilityStatus::Beta,
         privacy: None,
     },
+    // ── Phase 2 — Execution Depth (F2-1..F2-16) ────────────────────────────
+    Capability {
+        id: "automation.multi_node_chain",
+        name: "Multi-Node Workflow Chains",
+        domain: "automation",
+        category: CapabilityCategory::Automation,
+        description: "Chain multiple workflow nodes — mix `agent_prompt` with deterministic \
+                      `tool_call`, `http_request`, `channel_message`, `condition`, and `delay` \
+                      nodes. Inter-node templating (`{{node.<id>.output.<path>}}`) carries \
+                      structured outputs between steps; `condition` routes the run between \
+                      branches based on a `left op right` predicate.",
+        how_to: "Build via chat (\"build me a workflow that …\") or via a Phase 2 starter template (RU-5..RU-9). The drafter emits the multi-node JSON; the preview renders the chain.",
+        status: CapabilityStatus::Beta,
+        privacy: None,
+    },
+    Capability {
+        id: "automation.webhook_trigger",
+        name: "Webhook-Triggered Workflows",
+        domain: "automation",
+        category: CapabilityCategory::Automation,
+        description: "Workflows fire on inbound HTTP POSTs to a registered tunnel URL. The \
+                      request body lands in `{{trigger}}` so downstream nodes can template \
+                      against it. HMAC verification + 256 KB payload cap enforced by the \
+                      webhook bus.",
+        how_to: "Pick \"webhook\" as the trigger in chat (\"when GitHub fires a webhook for a new issue …\") or seed RU-7 / RU-9 from the catalog.",
+        status: CapabilityStatus::Beta,
+        privacy: None,
+    },
+    Capability {
+        id: "automation.composio_event_trigger",
+        name: "Composio Event Triggers",
+        domain: "automation",
+        category: CapabilityCategory::Automation,
+        description: "Workflows fire on Composio triggers from any of the ~250 supported \
+                      toolkits (Stripe, GitHub, Linear, Notion, Gmail, Slack, …). Composio \
+                      handles auth + signature verification on the user's behalf — workflows \
+                      just declare `{ toolkit, trigger_id }` and react.",
+        how_to: "Pick the toolkit + trigger in chat or seed RU-5 (Stripe payment thank-you) from the catalog.",
+        status: CapabilityStatus::Beta,
+        privacy: None,
+    },
+    Capability {
+        id: "automation.channel_message_trigger",
+        name: "Channel-Message-Triggered Workflows",
+        domain: "automation",
+        category: CapabilityCategory::Automation,
+        description: "Workflows fire on inbound chat messages from a connected channel \
+                      (Slack, Telegram, Discord, …). Optional filter narrows by `contains` \
+                      (case-insensitive substring), `direct_only` (DM-only), `from_user` \
+                      (exact sender id), or `regex` (validator-checked).",
+        how_to: "Pick \"channel_message\" with a `provider` + optional `filter` in chat, or seed RU-6 (Slack @mention triage) from the catalog.",
+        status: CapabilityStatus::Beta,
+        privacy: None,
+    },
+    Capability {
+        id: "automation.node_retry_policy",
+        name: "Per-Node Retry Policy + Exponential Backoff",
+        domain: "automation",
+        category: CapabilityCategory::Automation,
+        description: "Any node carries an optional `retry_policy` with `max_attempts ∈ [1,5]` \
+                      and exponential backoff (`initial_ms × 2^(attempt-1)` capped at \
+                      `max_ms`). `retry_on` filters which failure classes trigger a retry \
+                      (`http_status_5xx`, `timeout`, `rate_limited`, `any`). Workflow-level \
+                      `on_error: continue` lets the chain keep running past a fully-exhausted \
+                      retry budget.",
+        how_to: "Add `retry_policy` to any node in a chat-drafted workflow or seed RU-7..RU-9 from the catalog.",
+        status: CapabilityStatus::Beta,
+        privacy: None,
+    },
+    Capability {
+        id: "automation.workflow_soft_delete",
+        name: "30-Day Workflow Soft-Delete + Restore",
+        domain: "automation",
+        category: CapabilityCategory::Automation,
+        description: "Deleted workflows live in a 30-day retention window — the row + its run \
+                      history stay around so a misclick can be undone via `workflows_restore`. \
+                      A background sweep hard-deletes rows aged past the window.",
+        how_to: "`workflows_delete` soft-deletes; `workflows_restore` undoes within 30 days. After that the retention sweep purges the row + cascades the run history.",
+        status: CapabilityStatus::Beta,
+        privacy: None,
+    },
+    Capability {
+        id: "automation.active_hours_gate",
+        name: "Cron `active_hours` Window Enforcement",
+        domain: "automation",
+        category: CapabilityCategory::Automation,
+        description: "Cron-triggered workflows can declare an `active_hours { start, end }` \
+                      window in `HH:MM` 24-hour. The scheduler resolves \"now\" in the \
+                      trigger's `tz` (chrono-tz) at each tick and drops out-of-window fires \
+                      with a `WorkflowRunSkipped { reason: outside_active_hours }` event.",
+        how_to: "Add `active_hours` to a cron trigger via chat (\"every 30 minutes between 9 and 5\") — the drafter emits the field.",
+        status: CapabilityStatus::Beta,
+        privacy: None,
+    },
     // ── Proactive agents ─────────────────────────────────────────────────────
     Capability {
         id: "automation.morning_briefing",

@@ -5,9 +5,9 @@ trigger type and node kind, multi-node linear chains with on_error
 policy, the inter-node data-passing model, and RU-5..RU-9 starter
 templates.
 
-> **Status:** Drafted — not started. Phase 1 ships first; Phase 2
-> brainstorm + ticket lock happens after Phase 1 user feedback.
-> Per `prd.md §5.2`.
+> **Status:** 🟢 F2-1..F2-16 shipped to `main`. See
+> [`DEVLOG.md`](DEVLOG.md) for the commit-SHA mapping + the
+> deferred-follow-up tickets (F2-7b / F2-9b / F2-16b).
 
 ---
 

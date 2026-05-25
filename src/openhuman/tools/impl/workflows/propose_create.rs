@@ -26,10 +26,9 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use serde_json::{json, Value};
 use std::sync::Arc;
 
-/// Phase the propose tool drafts against. Hard-coded to 1 in Phase
-/// 1; F-15's surface (`about_app::current_phase()`) will replace
-/// this constant so a Phase 2 upgrade is a one-line swap.
-const CURRENT_PHASE: u32 = 1;
+/// Phase the propose tool drafts against. F2-16 bumped to 2 — the
+/// drafter validator now accepts every Phase 2 trigger + node kind.
+const CURRENT_PHASE: u32 = 2;
 
 pub struct WorkflowProposeCreateTool {
     config: Arc<Config>,

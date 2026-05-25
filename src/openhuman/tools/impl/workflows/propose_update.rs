@@ -25,7 +25,9 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 use std::sync::Arc;
 
-const CURRENT_PHASE: u32 = 1;
+/// F2-16: bumped to 2 alongside `propose_create` so update drafts
+/// accept the same Phase 2 surface as create drafts.
+const CURRENT_PHASE: u32 = 2;
 
 pub struct WorkflowProposeUpdateTool {
     config: Arc<Config>,

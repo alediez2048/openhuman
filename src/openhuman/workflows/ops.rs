@@ -28,12 +28,14 @@ use chrono::Utc;
 use std::collections::HashSet;
 use uuid::Uuid;
 
-/// Phase the workflows engine reports as "current". Hard-coded to 1
-/// for Phase 1; F-15 will surface this via `about_app::catalog` so the
-/// catalog filter doesn't require code-level edits to advance.
-///
-/// TODO(F-15): replace with `about_app::current_phase()`.
-const CURRENT_PHASE: u32 = 1;
+/// Phase the workflows engine reports as "current". F2-16 bumps to 2
+/// now that every Phase 2 trigger (webhook / composio_event /
+/// channel_message) + node kind (tool_call / http_request /
+/// channel_message / condition / delay) + the active_hours gate ships.
+/// The drafter validator (`workflow_propose_create` /
+/// `_update`) reads this constant so chat-driven proposals can now
+/// emit multi-node Phase 2 chains.
+const CURRENT_PHASE: u32 = 2;
 
 /// Wrap [`scheduler::register`] so a scheduler hiccup doesn't fail
 /// the surrounding RPC. The scheduler is a derived view of the
