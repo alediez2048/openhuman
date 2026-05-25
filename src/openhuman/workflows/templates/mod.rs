@@ -17,6 +17,12 @@ pub const RU_1_JSON: &str = include_str!("ru-1-founder-morning-digest.json");
 pub const RU_2_JSON: &str = include_str!("ru-2-linkedin-engagement-queue.json");
 pub const RU_3_JSON: &str = include_str!("ru-3-spotify-friday-five.json");
 pub const RU_4_JSON: &str = include_str!("ru-4-jira-sprint-retro.json");
+// F2-12: Phase 2 starter templates demoing the new triggers + node kinds.
+pub const RU_5_JSON: &str = include_str!("ru-5-stripe-payment-thank-you.json");
+pub const RU_6_JSON: &str = include_str!("ru-6-slack-mention-triage.json");
+pub const RU_7_JSON: &str = include_str!("ru-7-github-issue-summary.json");
+pub const RU_8_JSON: &str = include_str!("ru-8-daily-sales-rollup.json");
+pub const RU_9_JSON: &str = include_str!("ru-9-zapier-bridge.json");
 
 /// Ordered list of every bundled template as a `(label, json)` pair.
 /// Used by tests so the failure message names which file is broken,
@@ -26,6 +32,11 @@ pub const BUNDLED_JSON: &[(&str, &str)] = &[
     ("ru-2-linkedin-engagement-queue", RU_2_JSON),
     ("ru-3-spotify-friday-five", RU_3_JSON),
     ("ru-4-jira-sprint-retro", RU_4_JSON),
+    ("ru-5-stripe-payment-thank-you", RU_5_JSON),
+    ("ru-6-slack-mention-triage", RU_6_JSON),
+    ("ru-7-github-issue-summary", RU_7_JSON),
+    ("ru-8-daily-sales-rollup", RU_8_JSON),
+    ("ru-9-zapier-bridge", RU_9_JSON),
 ];
 
 /// Parse every bundled template into a typed [`StarterTemplate`].

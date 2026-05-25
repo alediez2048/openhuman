@@ -1,0 +1,71 @@
+{
+  "template_id": "ru-8-daily-sales-rollup",
+  "min_phase": 2,
+  "name": "Daily sales rollup",
+  "description": "Every weekday at 9am, fetch yesterday's sales totals from your internal HTTP API, narrate the highlights in your voice, and post the digest to your team's Slack #sales channel.",
+  "tags": ["sales", "rollup", "cron", "slack"],
+  "trigger": {
+    "type": "cron",
+    "expr": "0 9 * * 1-5",
+    "tz": null,
+    "active_hours": null
+  },
+  "nodes": [
+    {
+      "id": "fetch",
+      "kind": "http_request",
+      "config": {
+        "kind": "http_request",
+        "connection_id": "PLACEHOLDER",
+        "method": "GET",
+        "path_template": "/reports/sales/daily",
+        "headers": {},
+        "body_template": null,
+        "response_capture": { "kind": "body_and_status" }
+      },
+      "position": null
+    },
+    {
+      "id": "narrate",
+      "kind": "agent_prompt",
+      "config": {
+        "kind": "agent_prompt",
+        "prompt": "Yesterday's sales report: {{node.fetch.output.body_json}}.\n\nWrite a 3-4 sentence rollup in the user's voice:\n- Lead with the headline number (total revenue or units, whichever stands out).\n- Call out one positive deviation (top deal, fastest segment).\n- Name one risk or follow-up the user should know about.\n\nReturn ONLY the rollup text — no markdown headers.",
+        "allowed_connections": [],
+        "iteration_cap": 4,
+        "model_tier": null
+      },
+      "position": null
+    },
+    {
+      "id": "post",
+      "kind": "channel_message",
+      "config": {
+        "kind": "channel_message",
+        "connection_id": "PLACEHOLDER",
+        "channel_id": "",
+        "body_template": "Daily sales rollup\n\n{{node.narrate.output.text}}"
+      },
+      "position": null
+    }
+  ],
+  "edges": [
+    { "from": "fetch", "to": "narrate" },
+    { "from": "narrate", "to": "post" }
+  ],
+  "settings": {
+    "timeout_secs": 300,
+    "on_error": "halt"
+  },
+  "required_connections": [
+    { "type": "generic_http", "connection_id": "PLACEHOLDER" },
+    { "type": "channel", "provider": "slack", "channel_id": "" }
+  ],
+  "rationale_at_seed": [
+    "Cron `0 9 * * 1-5` fires weekdays at 9am — same shape RU-1 uses for the morning digest.",
+    "Three-node chain demoes the full Phase 2 surface: http_request (fetch) → agent_prompt (narrate) → channel_message (post).",
+    "response_capture=body_and_status so the narrate step can template against `body_json` directly.",
+    "on_error=halt because a failed fetch should not produce a hallucinated narrative — better to fail loudly and surface the upstream API outage.",
+    "Generic HTTP connection is left unbound at seed; the catalog [Add] step prompts the user for their internal sales API base_url."
+  ]
+}

@@ -1,0 +1,86 @@
+{
+  "template_id": "ru-6-slack-mention-triage",
+  "min_phase": 2,
+  "name": "Slack @mention triage",
+  "description": "When you're @mentioned in any Slack channel, classify the request as 'urgent' or 'background', then either DM you with a one-line summary (urgent) or quietly log it to a memory thread (background).",
+  "tags": ["slack", "triage", "focus"],
+  "trigger": {
+    "type": "channel_message",
+    "provider": "slack",
+    "filter": {
+      "contains": "@me",
+      "direct_only": false,
+      "from_user": null,
+      "regex": null
+    }
+  },
+  "nodes": [
+    {
+      "id": "classify",
+      "kind": "agent_prompt",
+      "config": {
+        "kind": "agent_prompt",
+        "prompt": "A Slack message just mentioned the user. The full event payload is at {{trigger}}. The message body is at {{trigger.content}}.\n\nClassify the message into exactly one of two labels:\n- `urgent` — needs the user's attention in the next hour (deadline, blocker, direct ask)\n- `background` — informational, ping, or non-blocking discussion\n\nReturn ONLY the lowercase label string. No prose, no JSON.",
+        "allowed_connections": [],
+        "iteration_cap": 3,
+        "model_tier": null
+      },
+      "position": null
+    },
+    {
+      "id": "route",
+      "kind": "condition",
+      "config": {
+        "kind": "condition",
+        "left": "{{node.classify.output.text}}",
+        "op": { "kind": "eq" },
+        "right": "urgent",
+        "then_node_id": "alert",
+        "else_node_id": "log"
+      },
+      "position": null
+    },
+    {
+      "id": "alert",
+      "kind": "channel_message",
+      "config": {
+        "kind": "channel_message",
+        "connection_id": "PLACEHOLDER",
+        "channel_id": "",
+        "body_template": "Urgent mention from {{trigger.sender}}: {{trigger.content}}"
+      },
+      "position": null
+    },
+    {
+      "id": "log",
+      "kind": "agent_prompt",
+      "config": {
+        "kind": "agent_prompt",
+        "prompt": "Append a single line to the user's memory under the topic 'slack-background-mentions'. Format: `[{{trigger.sender}}] {{trigger.content}}`. No reply, no notification.",
+        "allowed_connections": [],
+        "iteration_cap": 3,
+        "model_tier": null
+      },
+      "position": null
+    }
+  ],
+  "edges": [
+    { "from": "classify", "to": "route" },
+    { "from": "route", "to": "alert" },
+    { "from": "route", "to": "log" }
+  ],
+  "settings": {
+    "timeout_secs": 180,
+    "on_error": "continue"
+  },
+  "required_connections": [
+    { "type": "channel", "provider": "slack", "channel_id": "" }
+  ],
+  "rationale_at_seed": [
+    "channel_message trigger with contains:\"@me\" — Phase 2 filter substring is case-insensitive so any casing of the mention fires.",
+    "Two-arm chain: classify → condition → (alert | log). condition's op=`eq` is the cleanest predicate for a discrete label.",
+    "on_error=continue so a transient classify failure doesn't drop the message — the run still records the inbound event.",
+    "alert posts to the user's DM channel (channel_id left empty so seed prompts for it); log writes to memory only.",
+    "iteration_cap=3 because both LLM nodes are short prose tasks."
+  ]
+}

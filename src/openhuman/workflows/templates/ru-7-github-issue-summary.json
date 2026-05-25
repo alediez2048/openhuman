@@ -1,0 +1,55 @@
+{
+  "template_id": "ru-7-github-issue-summary",
+  "min_phase": 2,
+  "name": "GitHub issue summary to webhook",
+  "description": "When GitHub fires a webhook for a new issue, summarise the body in two sentences and POST the summary back to a downstream webhook (Make.com, n8n, Zapier, …).",
+  "tags": ["github", "webhook", "bridge", "summary"],
+  "trigger": {
+    "type": "webhook",
+    "tunnel_uuid": "00000000-0000-0000-0000-000000000000",
+    "target_path": "/github-issue"
+  },
+  "nodes": [
+    {
+      "id": "summarise",
+      "kind": "agent_prompt",
+      "config": {
+        "kind": "agent_prompt",
+        "prompt": "A GitHub `issues.opened` webhook just fired. The full payload is at {{trigger}}. Return a 2-sentence summary capturing:\n- The issue title + which repo it landed in.\n- The single most actionable detail from the body (bug repro, feature ask, blocker).\n\nReturn ONLY the summary text — no markdown, no headers.",
+        "allowed_connections": [],
+        "iteration_cap": 4,
+        "model_tier": null
+      },
+      "position": null
+    },
+    {
+      "id": "forward",
+      "kind": "http_request",
+      "config": {
+        "kind": "http_request",
+        "connection_id": "PLACEHOLDER",
+        "method": "POST",
+        "path_template": "/",
+        "headers": { "Content-Type": "application/json" },
+        "body_template": "{\"summary\":\"{{node.summarise.output.text}}\",\"issue\":{{trigger}}}",
+        "response_capture": { "kind": "status_only" }
+      },
+      "position": null
+    }
+  ],
+  "edges": [{ "from": "summarise", "to": "forward" }],
+  "settings": {
+    "timeout_secs": 300,
+    "on_error": "halt"
+  },
+  "required_connections": [
+    { "type": "generic_http", "connection_id": "PLACEHOLDER" }
+  ],
+  "rationale_at_seed": [
+    "Webhook trigger — tunnel_uuid is a placeholder (zero-uuid). The catalog [Add] flow rebinds it to a freshly registered tunnel at seed time.",
+    "target_path `/github-issue` keeps the downstream URL legible in the user's webhook list.",
+    "Two-node chain stays under the 2 KiB JSON budget. The agent does prose; the http_request does the deterministic forward.",
+    "response_capture=status_only because downstream consumers care that the POST landed, not what they returned.",
+    "on_error=halt so a failed forward surfaces as a clear `Failed` run instead of a silent partial — webhook flows are typically integration glue and silent partials are the worst failure mode."
+  ]
+}

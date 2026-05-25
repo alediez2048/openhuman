@@ -1,0 +1,53 @@
+{
+  "template_id": "ru-5-stripe-payment-thank-you",
+  "min_phase": 2,
+  "name": "Stripe payment thank-you",
+  "description": "When Stripe reports a successful payment, draft a personalised thank-you in your voice and post it to your team's Slack #wins channel so the whole team sees the customer love.",
+  "tags": ["sales", "stripe", "slack", "celebrations"],
+  "trigger": {
+    "type": "composio_event",
+    "toolkit": "stripe",
+    "trigger_id": "STRIPE_PAYMENT_SUCCEEDED"
+  },
+  "nodes": [
+    {
+      "id": "draft",
+      "kind": "agent_prompt",
+      "config": {
+        "kind": "agent_prompt",
+        "prompt": "A Stripe payment just succeeded. The trigger payload is at {{trigger}}. Draft a 2-3 sentence Slack message in the user's voice celebrating the payment. Include:\n- The customer name (or email if name is missing)\n- The amount paid (formatted with currency)\n- One line of warmth that matches the user's tone in memory.\n\nReturn ONLY the message text — no markdown headers, no preamble.",
+        "allowed_connections": [],
+        "iteration_cap": 4,
+        "model_tier": null
+      },
+      "position": null
+    },
+    {
+      "id": "post",
+      "kind": "channel_message",
+      "config": {
+        "kind": "channel_message",
+        "connection_id": "PLACEHOLDER",
+        "channel_id": "",
+        "body_template": "{{node.draft.output.text}}"
+      },
+      "position": null
+    }
+  ],
+  "edges": [{ "from": "draft", "to": "post" }],
+  "settings": {
+    "timeout_secs": 120,
+    "on_error": "halt"
+  },
+  "required_connections": [
+    { "type": "composio", "toolkit_id": "stripe" },
+    { "type": "channel", "provider": "slack", "channel_id": "" }
+  ],
+  "rationale_at_seed": [
+    "Composio's STRIPE_PAYMENT_SUCCEEDED trigger fires once per successful charge — no polling on the user's side.",
+    "Two-node chain: agent drafts the message, channel_message posts it. Keeps the LLM focused on tone, leaves the send to a deterministic node.",
+    "iteration_cap=4 is plenty: there are no tool calls inside the draft step — pure prose.",
+    "Slack target channel_id is left empty so the catalog UI prompts the user to pick which channel (#wins, #sales, etc.) at seed time.",
+    "Timeout 120s is generous — the bottleneck is the LLM draft, not the channel send."
+  ]
+}

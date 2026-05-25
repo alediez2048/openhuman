@@ -1,0 +1,56 @@
+{
+  "template_id": "ru-9-zapier-bridge",
+  "min_phase": 2,
+  "name": "Zapier inbound → outbound bridge",
+  "description": "Receive a Zap webhook payload, transform it via a project tool, and forward the result to a downstream HTTP endpoint. Pure no-LLM bridge — deterministic glue between two webhook-shaped systems.",
+  "tags": ["zapier", "bridge", "deterministic"],
+  "trigger": {
+    "type": "webhook",
+    "tunnel_uuid": "00000000-0000-0000-0000-000000000000",
+    "target_path": "/zapier-in"
+  },
+  "nodes": [
+    {
+      "id": "transform",
+      "kind": "tool_call",
+      "config": {
+        "kind": "tool_call",
+        "tool_name": "passthrough",
+        "arguments_template": {
+          "payload": "{{trigger}}",
+          "source": "zapier"
+        }
+      },
+      "position": null
+    },
+    {
+      "id": "forward",
+      "kind": "http_request",
+      "config": {
+        "kind": "http_request",
+        "connection_id": "PLACEHOLDER",
+        "method": "POST",
+        "path_template": "/",
+        "headers": { "Content-Type": "application/json" },
+        "body_template": "{{node.transform.output}}",
+        "response_capture": { "kind": "status_only" }
+      },
+      "position": null
+    }
+  ],
+  "edges": [{ "from": "transform", "to": "forward" }],
+  "settings": {
+    "timeout_secs": 60,
+    "on_error": "halt"
+  },
+  "required_connections": [
+    { "type": "generic_http", "connection_id": "PLACEHOLDER" }
+  ],
+  "rationale_at_seed": [
+    "Inbound webhook on `/zapier-in` → tool_call passthrough → outbound POST. Zero LLM calls — the bridge is deterministic.",
+    "tool_name `passthrough` is the canonical no-op tool the F2-3 registry exposes (echoes its arguments back). Demonstrates the tool_call node without depending on a heavy integration.",
+    "tunnel_uuid is the zero-uuid placeholder; catalog [Add] rebinds at seed time.",
+    "Timeout 60s is tight on purpose — bridges should fail fast so upstream retries kick in.",
+    "Zero `required_connections` from Composio / channels — only the downstream HTTP connection. Highlights that webhook-bridge workflows can ship without any chat-channel coupling."
+  ]
+}
