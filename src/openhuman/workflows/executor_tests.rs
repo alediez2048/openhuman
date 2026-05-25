@@ -1238,20 +1238,9 @@ fn dispatch_test_node(kind: NodeKind, config: NodeConfig) -> Node {
 // integration tests at the bottom of this file cover the new
 // dispatch + routing path end-to-end.
 
-#[tokio::test]
-async fn dispatch_node_returns_not_implemented_for_delay() {
-    let (_dir, config) = config_with_temp_workspace();
-    let run = dispatch_test_run();
-    let node = dispatch_test_node(
-        NodeKind::Delay,
-        NodeConfig::Delay(DelayConfig { seconds: 60 }),
-    );
-    let ctx = crate::openhuman::workflows::templating::NodeContext::default();
-    let err = executor::dispatch_node(&config, &run, &node, &ctx)
-        .await
-        .unwrap_err();
-    assert!(err.to_string().contains("Delay"));
-}
+// F2-7 replaced F2-1's NotImplementedYet stub for `Delay`. The
+// integration tests at the bottom of this file cover the new
+// dispatch path end-to-end (via the test-only sleep override).
 
 // ── F2-2: topological_sort ─────────────────────────────────────────────
 
@@ -2835,5 +2824,160 @@ async fn condition_with_invalid_regex_fails_step_cleanly() {
     assert!(
         err.contains("invalid regex"),
         "terminal_error must name the regex issue; got: {err}"
+    );
+}
+
+// ── F2-7: delay node ───────────────────────────────────────────────────
+
+/// Serialize tests installing the process-wide `DELAY_OVERRIDE`.
+static DELAY_TEST_LOCK: once_cell::sync::Lazy<parking_lot::Mutex<()>> =
+    once_cell::sync::Lazy::new(|| parking_lot::Mutex::new(()));
+
+#[tokio::test]
+async fn delay_node_pauses_then_continues() {
+    use crate::openhuman::workflows::executor::{
+        clear_test_delay_override, set_test_delay_override,
+    };
+    let _lock = DELAY_TEST_LOCK.lock();
+    // Test override skips the real sleep so the suite stays fast.
+    let observed_seconds: Arc<parking_lot::Mutex<Option<u64>>> =
+        Arc::new(parking_lot::Mutex::new(None));
+    let writer = Arc::clone(&observed_seconds);
+    set_test_delay_override(move |seconds| {
+        let writer = Arc::clone(&writer);
+        async move {
+            *writer.lock() = Some(seconds);
+        }
+    });
+
+    let (_dir, config) = config_with_temp_workspace();
+    // 3-node chain: agent_a → delay → agent_b. Delay's body must
+    // record the requested seconds and yield to agent_b cleanly.
+    let workflow = f2_2_workflow(
+        &format!("wf-delay-{}", uuid::Uuid::new_v4()),
+        vec![
+            f2_2_agent_node("a", "first"),
+            Node {
+                id: "wait".into(),
+                kind: NodeKind::Delay,
+                config: NodeConfig::Delay(DelayConfig { seconds: 30 }),
+                position: None,
+            },
+            f2_2_agent_node("b", "last"),
+        ],
+        vec![
+            Edge {
+                from: "a".into(),
+                to: "wait".into(),
+            },
+            Edge {
+                from: "wait".into(),
+                to: "b".into(),
+            },
+        ],
+    );
+    store::insert_workflow(&config, &workflow).expect("insert_workflow");
+
+    executor::dispatch_run(
+        &config,
+        workflow.id.clone(),
+        TriggerSource::Manual {
+            initiator: "test".into(),
+        },
+    )
+    .await
+    .expect("dispatch_run");
+    let run = wait_for_terminal_run(&config, &workflow.id).await;
+    clear_test_delay_override();
+
+    assert!(
+        matches!(run.status, RunStatus::Succeeded),
+        "delay chain must succeed; got {:?} (err: {:?})",
+        run.status,
+        run.error
+    );
+    // Override observed the requested duration.
+    assert_eq!(
+        observed_seconds.lock().clone(),
+        Some(30),
+        "delay override must receive the configured seconds"
+    );
+    // All three steps persisted.
+    let (_run, steps) = store::get_run(&config, &run.id).unwrap().expect("run row");
+    let step_ids: Vec<&str> = steps.iter().map(|s| s.node_id.as_str()).collect();
+    assert!(step_ids.contains(&"a"));
+    assert!(step_ids.contains(&"wait"));
+    assert!(step_ids.contains(&"b"));
+    // The delay step recorded its slept_seconds in output_json.
+    let wait_step = steps
+        .iter()
+        .find(|s| s.node_id == "wait")
+        .expect("wait step");
+    assert!(
+        wait_step
+            .output_json
+            .as_deref()
+            .unwrap_or("")
+            .contains("\"slept_seconds\":30"),
+        "delay step output_json must record slept_seconds"
+    );
+}
+
+#[tokio::test]
+async fn delay_short_real_sleep_does_not_block_forever() {
+    // No override → real `tokio::time::sleep` path fires. Use a
+    // 1-second delay to keep the test snappy. The point is to
+    // verify the real-path doesn't panic / hang.
+    let _lock = DELAY_TEST_LOCK.lock();
+    // Defensive clear: if a prior test installed an override,
+    // wipe it so THIS test exercises the real sleep path.
+    crate::openhuman::workflows::executor::clear_test_delay_override();
+
+    let (_dir, config) = config_with_temp_workspace();
+    let workflow = f2_2_workflow(
+        &format!("wf-delay-real-{}", uuid::Uuid::new_v4()),
+        vec![Node {
+            id: "wait".into(),
+            kind: NodeKind::Delay,
+            config: NodeConfig::Delay(DelayConfig { seconds: 1 }),
+            position: None,
+        }],
+        vec![],
+    );
+    store::insert_workflow(&config, &workflow).expect("insert_workflow");
+
+    let started = std::time::Instant::now();
+    executor::dispatch_run(
+        &config,
+        workflow.id.clone(),
+        TriggerSource::Manual {
+            initiator: "test".into(),
+        },
+    )
+    .await
+    .expect("dispatch_run");
+    // Bump the poll timeout for this test since the run takes
+    // ~1 second of actual wall-clock sleep.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let run = loop {
+        let runs =
+            store::list_runs(&config, &workflow.id, Pagination::default()).expect("list_runs");
+        if let Some(r) = runs.first() {
+            if !matches!(r.status, RunStatus::Pending | RunStatus::Running) {
+                break r.clone();
+            }
+        }
+        if std::time::Instant::now() > deadline {
+            panic!("delay run never terminated within 5s");
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    };
+    let elapsed = started.elapsed();
+
+    assert!(matches!(run.status, RunStatus::Succeeded));
+    // The delay was real — the run must have taken >= ~1s.
+    assert!(
+        elapsed >= std::time::Duration::from_millis(900),
+        "real sleep must produce a real wait; got elapsed {elapsed:?}"
     );
 }

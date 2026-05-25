@@ -1077,7 +1077,7 @@ pub(crate) async fn dispatch_node(
         NodeConfig::HttpRequest(_) => execute_http_request(config, run, node, ctx).await,
         NodeConfig::ChannelMessage(_) => execute_channel_message(config, run, node, ctx).await,
         NodeConfig::Condition(_) => execute_condition(config, run, node, ctx).await,
-        NodeConfig::Delay(_) => Err(NodeDispatchError::NotImplementedYet(NodeKind::Delay).into()),
+        NodeConfig::Delay(_) => execute_delay(config, run, node, ctx).await,
     }
 }
 
@@ -2127,6 +2127,149 @@ fn evaluate_condition(
     );
     body.insert(ROUTING_KEY.into(), route_value);
     Ok(serde_json::Value::Object(body))
+}
+
+// ── execute_delay (F2-7) ───────────────────────────────────────────────
+
+/// F2-7 node body for `NodeKind::Delay`.
+///
+/// Pauses the run for `cfg.seconds` via `tokio::time::sleep`. The
+/// validator already caps `seconds` at 86 400 (24 h) so a runaway
+/// workflow can't sleep forever; the per-run `settings.timeout_secs`
+/// wraps the whole walk via `execute_inner`'s shared deadline,
+/// further bounding the total wait.
+///
+/// Persistent resume across core restarts is the bigger half of the
+/// F2-7 spec and is **deferred to F2-7b**. Today an in-process
+/// restart loses any delayed run; cron-triggered workflows are
+/// re-scheduled on the next tick, manual runs need to be re-fired.
+/// Acceptable for the Phase-2 MVP since the 24h cap bounds the
+/// exposure window.
+///
+/// Steps:
+///   1. Persist a `RunStep` row (Running), publish `WorkflowRunStepStarted`.
+///   2. Sleep for `cfg.seconds` (test stub may bypass).
+///   3. Re-check soft-cancel after the sleep — if set, mark step
+///      Cancelled and bail.
+///   4. Mark step Succeeded with `{ slept_seconds: u64 }` body.
+async fn execute_delay(
+    config: &Config,
+    run: &Run,
+    node: &Node,
+    _ctx: &crate::openhuman::workflows::templating::NodeContext,
+) -> Result<serde_json::Value> {
+    let delay_cfg = match &node.config {
+        NodeConfig::Delay(cfg) => cfg,
+        other => anyhow::bail!(
+            "execute_delay invoked on non-Delay node config: {:?}",
+            std::mem::discriminant(other)
+        ),
+    };
+
+    let step_id: RunStepId = Uuid::new_v4().to_string();
+    let started_at = Utc::now();
+    let step = RunStep {
+        id: step_id.clone(),
+        run_id: run.id.clone(),
+        node_id: node.id.clone(),
+        status: RunStatus::Running,
+        started_at,
+        completed_at: None,
+        output_json: None,
+        error: None,
+    };
+    if let Err(err) = store::insert_run_step(config, &step) {
+        anyhow::bail!("insert_run_step failed: {err:#}");
+    }
+    publish_global(DomainEvent::WorkflowRunStepStarted {
+        run_id: run.id.clone(),
+        node_id: node.id.clone(),
+    });
+
+    // Sleep — test override may short-circuit so tests don't wait.
+    let seconds = delay_cfg.seconds;
+    if let Some(stub) = test_delay_override() {
+        stub(seconds).await;
+    } else {
+        tokio::time::sleep(std::time::Duration::from_secs(seconds)).await;
+    }
+
+    // Post-sleep cancel check — if a cancel landed during the
+    // pause, upgrade the step to Cancelled rather than Succeeded
+    // (matches F-9's between-nodes cooperative cancel pattern;
+    // execute_inner will read this on the next iteration too).
+    if cancellation_observed(config, &run.workflow_id, &run.id) {
+        if let Err(err) = store::update_run_step_terminal(
+            config,
+            &step_id,
+            RunStatus::Cancelled,
+            Utc::now(),
+            None,
+            Some("cancelled during delay".into()),
+        ) {
+            anyhow::bail!("update_run_step_terminal failed: {err:#}");
+        }
+        publish_global(DomainEvent::WorkflowRunStepCompleted {
+            run_id: run.id.clone(),
+            node_id: node.id.clone(),
+            status_json: serde_json::to_value(RunStatus::Cancelled)
+                .unwrap_or(serde_json::Value::Null),
+        });
+        anyhow::bail!("delay step cancelled");
+    }
+
+    let body = serde_json::json!({ "slept_seconds": seconds });
+    let payload = serde_json::to_string(&body).unwrap_or_else(|_| "{}".into());
+    if let Err(err) = store::update_run_step_terminal(
+        config,
+        &step_id,
+        RunStatus::Succeeded,
+        Utc::now(),
+        Some(payload),
+        None,
+    ) {
+        anyhow::bail!("update_run_step_terminal failed: {err:#}");
+    }
+    publish_global(DomainEvent::WorkflowRunStepCompleted {
+        run_id: run.id.clone(),
+        node_id: node.id.clone(),
+        status_json: serde_json::to_value(RunStatus::Succeeded).unwrap_or(serde_json::Value::Null),
+    });
+    Ok(body)
+}
+
+// ── Test-only delay override (F2-7) ────────────────────────────────────
+
+type DelayStubFn = Box<
+    dyn Fn(u64) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> + Send + Sync,
+>;
+
+static DELAY_OVERRIDE: OnceLock<Mutex<Option<Arc<DelayStubFn>>>> = OnceLock::new();
+
+/// Test-only hook: replaces the real `tokio::time::sleep` with a
+/// caller-supplied async fn (typically `|_| async {}` for instant
+/// resolution). Same shape as F2-3..F2-5 overrides — last-writer-
+/// wins; serialize tests on `DELAY_TEST_LOCK` in `executor_tests`.
+#[cfg(any(test, feature = "e2e-test-support"))]
+pub fn set_test_delay_override<F, Fut>(stub: F)
+where
+    F: Fn(u64) -> Fut + Send + Sync + 'static,
+    Fut: std::future::Future<Output = ()> + Send + 'static,
+{
+    let boxed: DelayStubFn = Box::new(move |seconds| Box::pin(stub(seconds)));
+    let slot = DELAY_OVERRIDE.get_or_init(|| Mutex::new(None));
+    *slot.lock() = Some(Arc::new(boxed));
+}
+
+#[cfg(any(test, feature = "e2e-test-support"))]
+pub fn clear_test_delay_override() {
+    if let Some(slot) = DELAY_OVERRIDE.get() {
+        *slot.lock() = None;
+    }
+}
+
+fn test_delay_override() -> Option<Arc<DelayStubFn>> {
+    DELAY_OVERRIDE.get().and_then(|slot| slot.lock().clone())
 }
 
 // ── execute_agent_prompt ───────────────────────────────────────────────
