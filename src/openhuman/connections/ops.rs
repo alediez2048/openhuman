@@ -40,6 +40,45 @@ fn secret_store_for_config(config: &Config) -> SecretStore {
     SecretStore::new(&data_dir, true)
 }
 
+/// F2-4: runtime-side resolver. Loads the `GenericHttpConnection` row
+/// AND decrypts its credential (if any) into cleartext so the workflow
+/// executor's `http_request` node can build the outbound request
+/// without re-implementing the lookup + decrypt dance the existing
+/// `test_generic_http` probe does inline.
+///
+/// Returns `Ok(None)` when no row matches `id` — caller renders as a
+/// structured "connection not found" step failure. Returns
+/// `Ok(Some((row, None)))` when the connection has `AuthKind::None`
+/// (no credential to decrypt). On decrypt failure surfaces the error
+/// so the caller can render a structured "credential decrypt failed"
+/// step.
+///
+/// **Caller obligation:** treat the returned cleartext as poison —
+/// embed it directly into the `Authorization` header / query param
+/// and drop it; NEVER include it in a `tracing::*` event field. NFR-2.4.4.
+pub fn resolve_generic_http_for_runtime(
+    config: &Config,
+    id: &str,
+) -> Result<
+    Option<(
+        crate::openhuman::connections::types::GenericHttpConnection,
+        Option<String>,
+    )>,
+> {
+    let Some(row) = store::get_generic_http(config, id)? else {
+        return Ok(None);
+    };
+    let cleartext = match row.secret_ref.as_ref() {
+        Some(secret_ref) => Some(
+            secret_store_for_config(config)
+                .decrypt(&secret_ref.ciphertext)
+                .context("failed to decrypt Generic HTTP credential for runtime use")?,
+        ),
+        None => None,
+    };
+    Ok(Some((row, cleartext)))
+}
+
 /// Validates + normalizes a `base_url` (no trailing slash, must have scheme).
 fn validate_base_url(raw: &str) -> Result<String> {
     let trimmed = raw.trim();

@@ -918,9 +918,7 @@ pub(crate) async fn dispatch_node(
     match &node.config {
         NodeConfig::AgentPrompt(_) => execute_agent_prompt(config, run, node, ctx).await,
         NodeConfig::ToolCall(_) => execute_tool_call(config, run, node, ctx).await,
-        NodeConfig::HttpRequest(_) => {
-            Err(NodeDispatchError::NotImplementedYet(NodeKind::HttpRequest).into())
-        }
+        NodeConfig::HttpRequest(_) => execute_http_request(config, run, node, ctx).await,
         NodeConfig::ChannelMessage(_) => {
             Err(NodeDispatchError::NotImplementedYet(NodeKind::ChannelMessage).into())
         }
@@ -1250,6 +1248,388 @@ pub fn clear_test_tool_call_override() {
 
 fn test_tool_call_override() -> Option<Arc<ToolCallStubFn>> {
     TOOL_CALL_OVERRIDE
+        .get()
+        .and_then(|slot| slot.lock().clone())
+}
+
+// ── execute_http_request (F2-4) ────────────────────────────────────────
+
+/// F2-4 node body for `NodeKind::HttpRequest`.
+///
+/// Steps:
+///   1. Resolve the `GenericHttpConnection` row + decrypted credential
+///      via `connections::ops::resolve_generic_http_for_runtime`.
+///   2. Run `substitute` on `path_template`, `body_template`, and
+///      every header value against the live `NodeContext`. Object
+///      keys are NOT templated (OQ-7 lock).
+///   3. Build the request: `<base_url><resolved_path>`, attach
+///      `default_headers` + templated headers + per-`AuthKind`
+///      Authorization, with a 30s timeout (FR-1.6.5 default; the
+///      run-level `settings.timeout_secs` already wraps this).
+///   4. Send via reqwest. Read status + headers + body bytes.
+///   5. Render the response body to UTF-8 (lossy on non-text).
+///      Attempt JSON parse; `body_json: None` on parse failure.
+///   6. Honour `response_capture`:
+///      - `BodyAndStatus` → full `{status, headers, body_text, body_json?}`
+///      - `StatusOnly` → `{status}`
+///      - `JsonPath{path}` → `{status, captured: <path-walked value>}`
+///   7. Map HTTP 4xx/5xx to a Failed step so the workflow-level Halt
+///      policy fires; the response is still persisted so the run-history
+///      view shows what came back.
+///   8. NEVER log the decrypted credential or the resolved
+///      Authorization header (NFR-2.4.4). Only field-key names + URL
+///      base + status make it into `tracing::*` events.
+async fn execute_http_request(
+    config: &Config,
+    run: &Run,
+    node: &Node,
+    ctx: &crate::openhuman::workflows::templating::NodeContext,
+) -> Result<serde_json::Value> {
+    let http_cfg = match &node.config {
+        NodeConfig::HttpRequest(cfg) => cfg,
+        other => anyhow::bail!(
+            "execute_http_request invoked on non-HttpRequest node config: {:?}",
+            std::mem::discriminant(other)
+        ),
+    };
+
+    let step_id: RunStepId = Uuid::new_v4().to_string();
+    let started_at = Utc::now();
+    let step = RunStep {
+        id: step_id.clone(),
+        run_id: run.id.clone(),
+        node_id: node.id.clone(),
+        status: RunStatus::Running,
+        started_at,
+        completed_at: None,
+        output_json: None,
+        error: None,
+    };
+    if let Err(err) = store::insert_run_step(config, &step) {
+        anyhow::bail!("insert_run_step failed: {err:#}");
+    }
+    publish_global(DomainEvent::WorkflowRunStepStarted {
+        run_id: run.id.clone(),
+        node_id: node.id.clone(),
+    });
+
+    let (terminal_status, output_json, error, body_value) =
+        match dispatch_http_request_inner(config, http_cfg, ctx).await {
+            Ok(body) => {
+                let payload = serde_json::to_string(&body).unwrap_or_else(|_| "{}".into());
+                (RunStatus::Succeeded, Some(payload), None, body)
+            }
+            Err((reason, partial_body)) => {
+                tracing::warn!(
+                    target: "workflows-run",
+                    run = %run.id,
+                    node = %node.id,
+                    "[workflows-run] http_request failed: {reason}"
+                );
+                let payload = serde_json::to_string(&partial_body).unwrap_or_else(|_| "{}".into());
+                (RunStatus::Failed, Some(payload), Some(reason), partial_body)
+            }
+        };
+
+    if let Err(err) = store::update_run_step_terminal(
+        config,
+        &step_id,
+        terminal_status,
+        Utc::now(),
+        output_json,
+        error.clone(),
+    ) {
+        anyhow::bail!("update_run_step_terminal failed: {err:#}");
+    }
+    let status_json = serde_json::to_value(&terminal_status).unwrap_or(serde_json::Value::Null);
+    publish_global(DomainEvent::WorkflowRunStepCompleted {
+        run_id: run.id.clone(),
+        node_id: node.id.clone(),
+        status_json,
+    });
+
+    if matches!(terminal_status, RunStatus::Failed) {
+        if let Some(reason) = error {
+            anyhow::bail!("http_request step failed: {reason}");
+        }
+        anyhow::bail!("http_request step failed");
+    }
+    Ok(body_value)
+}
+
+/// Inner runner — returns `Err((reason, partial_body))` so the caller
+/// can persist the response body (status/headers/body_text) into the
+/// step's `output_json` even when the HTTP call surfaced a 4xx/5xx.
+/// This lets the run-history view show what came back from the
+/// server alongside the terminal failure reason.
+async fn dispatch_http_request_inner(
+    config: &Config,
+    http_cfg: &crate::openhuman::workflows::types::HttpRequestConfig,
+    ctx: &crate::openhuman::workflows::templating::NodeContext,
+) -> Result<serde_json::Value, (String, serde_json::Value)> {
+    // Build a resolved view with templating applied. Both branches
+    // (real send + test stub) consume the same shape so the stub
+    // can assert on substituted values, not raw template tokens.
+    use crate::openhuman::workflows::templating::substitute;
+    let resolved_path = substitute(&http_cfg.path_template, ctx).resolved;
+    let resolved_body = http_cfg
+        .body_template
+        .as_deref()
+        .map(|t| substitute(t, ctx).resolved);
+    let resolved_headers: std::collections::BTreeMap<String, String> = http_cfg
+        .headers
+        .iter()
+        .map(|(k, v)| (k.clone(), substitute(v, ctx).resolved))
+        .collect();
+    let resolved_cfg = crate::openhuman::workflows::types::HttpRequestConfig {
+        connection_id: http_cfg.connection_id.clone(),
+        method: http_cfg.method,
+        path_template: resolved_path.clone(),
+        headers: resolved_headers,
+        body_template: resolved_body.clone(),
+        response_capture: http_cfg.response_capture.clone(),
+    };
+
+    if let Some(stub) = test_http_request_override() {
+        return stub(&resolved_cfg, ctx).await;
+    }
+
+    // Resolve the connection + decrypted credential.
+    let (row, cleartext) =
+        match crate::openhuman::connections::ops::resolve_generic_http_for_runtime(
+            config,
+            &http_cfg.connection_id,
+        ) {
+            Ok(Some(pair)) => pair,
+            Ok(None) => {
+                return Err((
+                    format!(
+                        "generic_http connection `{}` not found",
+                        http_cfg.connection_id
+                    ),
+                    serde_json::Value::Null,
+                ));
+            }
+            Err(e) => {
+                return Err((
+                    format!(
+                        "generic_http resolve failed for `{}`: {e:#}",
+                        http_cfg.connection_id
+                    ),
+                    serde_json::Value::Null,
+                ));
+            }
+        };
+
+    // Path / headers / body already substituted above; use the
+    // `resolved_*` locals.
+    let mut url = row.base_url.clone();
+    if !resolved_path.is_empty() {
+        if !resolved_path.starts_with('/') && !url.ends_with('/') {
+            url.push('/');
+        }
+        url.push_str(&resolved_path);
+    }
+
+    // Query-param auth — must land in the URL before reqwest gets it.
+    if let crate::openhuman::connections::types::AuthKind::QueryParam { name } = &row.auth_kind {
+        if let Some(value) = cleartext.as_deref() {
+            let sep = if url.contains('?') { '&' } else { '?' };
+            url = format!(
+                "{url}{sep}{n}={v}",
+                n = urlencoding::encode(name),
+                v = urlencoding::encode(value)
+            );
+        }
+    }
+
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            return Err((
+                format!("reqwest build failed: {e:#}"),
+                serde_json::Value::Null,
+            ));
+        }
+    };
+
+    let method = match http_cfg.method {
+        crate::openhuman::workflows::types::HttpMethod::Get => reqwest::Method::GET,
+        crate::openhuman::workflows::types::HttpMethod::Post => reqwest::Method::POST,
+        crate::openhuman::workflows::types::HttpMethod::Put => reqwest::Method::PUT,
+        crate::openhuman::workflows::types::HttpMethod::Delete => reqwest::Method::DELETE,
+    };
+    let mut req = client.request(method.clone(), &url);
+
+    // default_headers first (overridable by node-config headers).
+    for (k, v) in &row.default_headers {
+        req = req.header(k, v);
+    }
+    // Per-node headers (already templated into `resolved_cfg.headers`
+    // above, but we have them at-hand via the resolved_headers local).
+    for (k, v) in &resolved_cfg.headers {
+        req = req.header(k, v);
+    }
+
+    // Auth header — NEVER log the resolved value.
+    match (&row.auth_kind, cleartext.as_deref()) {
+        (crate::openhuman::connections::types::AuthKind::Bearer, Some(token)) => {
+            req = req.header("Authorization", format!("Bearer {token}"));
+        }
+        (crate::openhuman::connections::types::AuthKind::Basic, Some(creds)) => {
+            req = req.header("Authorization", format!("Basic {creds}"));
+        }
+        (crate::openhuman::connections::types::AuthKind::ApiKeyHeader { name }, Some(value)) => {
+            req = req.header(name, value);
+        }
+        _ => {}
+    }
+
+    // Body — already templated above.
+    if let Some(body) = resolved_body.as_ref() {
+        req = req.body(body.clone());
+    }
+
+    // Cleartext credential is no longer needed once headers/URL are
+    // built. Drop it explicitly so the rest of the function never has
+    // it in scope.
+    drop(cleartext);
+
+    tracing::debug!(
+        target: "workflows-run",
+        url = %url,
+        method = %method,
+        "[workflows-run] http_request dispatching"
+    );
+
+    let resp = match req.send().await {
+        Ok(r) => r,
+        Err(e) => {
+            return Err((
+                format!("http_request send failed: {e}"),
+                serde_json::Value::Null,
+            ));
+        }
+    };
+
+    let status_u16 = resp.status().as_u16();
+    let header_map: serde_json::Map<String, serde_json::Value> = resp
+        .headers()
+        .iter()
+        .map(|(k, v)| {
+            (
+                k.as_str().to_string(),
+                serde_json::Value::String(v.to_str().unwrap_or("").to_string()),
+            )
+        })
+        .collect();
+    let body_bytes = resp.bytes().await.unwrap_or_default();
+    let body_text = String::from_utf8_lossy(&body_bytes).to_string();
+    let body_json: Option<serde_json::Value> = serde_json::from_str(&body_text).ok();
+
+    let full_response = serde_json::json!({
+        "status": status_u16,
+        "headers": serde_json::Value::Object(header_map),
+        "body_text": body_text,
+        "body_json": body_json,
+    });
+
+    // Shape the body_value per `response_capture`.
+    let captured = match &http_cfg.response_capture {
+        crate::openhuman::workflows::types::ResponseCapture::BodyAndStatus => full_response.clone(),
+        crate::openhuman::workflows::types::ResponseCapture::StatusOnly => {
+            serde_json::json!({ "status": status_u16 })
+        }
+        crate::openhuman::workflows::types::ResponseCapture::JsonPath { path } => {
+            let walked = walk_dotted_path(
+                full_response
+                    .get("body_json")
+                    .unwrap_or(&serde_json::Value::Null),
+                path,
+            );
+            serde_json::json!({
+                "status": status_u16,
+                "captured": walked.unwrap_or(serde_json::Value::Null),
+            })
+        }
+    };
+
+    if !(200..400).contains(&status_u16) {
+        return Err((
+            format!("http_request returned status {status_u16}"),
+            captured,
+        ));
+    }
+    Ok(captured)
+}
+
+/// Walk `value` through a dotted path. Mirrors `templating::walk_path`
+/// but is local to the executor since the templating module's helper
+/// is private. Object key access only — array indexing via `[N]` is
+/// deferred (same OQ-7 scope as the templating walker).
+fn walk_dotted_path(value: &serde_json::Value, path: &str) -> Option<serde_json::Value> {
+    let mut cursor = value;
+    for segment in path.split('.') {
+        if segment.is_empty() {
+            return None;
+        }
+        cursor = cursor.get(segment)?;
+    }
+    Some(cursor.clone())
+}
+
+// ── Test-only http_request override (F2-4) ─────────────────────────────
+
+type HttpRequestStubFn = Box<
+    dyn Fn(
+            &crate::openhuman::workflows::types::HttpRequestConfig,
+            &crate::openhuman::workflows::templating::NodeContext,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<
+                        Output = Result<serde_json::Value, (String, serde_json::Value)>,
+                    > + Send,
+            >,
+        > + Send
+        + Sync,
+>;
+
+static HTTP_REQUEST_OVERRIDE: OnceLock<Mutex<Option<Arc<HttpRequestStubFn>>>> = OnceLock::new();
+
+/// Test-only hook: replaces `dispatch_http_request_inner`'s real
+/// connection-resolve + send path with a caller-supplied stub.
+/// Same shape as `set_test_tool_call_override`.
+#[cfg(any(test, feature = "e2e-test-support"))]
+pub fn set_test_http_request_override<F, Fut>(stub: F)
+where
+    F: Fn(
+            &crate::openhuman::workflows::types::HttpRequestConfig,
+            &crate::openhuman::workflows::templating::NodeContext,
+        ) -> Fut
+        + Send
+        + Sync
+        + 'static,
+    Fut: std::future::Future<Output = Result<serde_json::Value, (String, serde_json::Value)>>
+        + Send
+        + 'static,
+{
+    let boxed: HttpRequestStubFn = Box::new(move |cfg, ctx| Box::pin(stub(cfg, ctx)));
+    let slot = HTTP_REQUEST_OVERRIDE.get_or_init(|| Mutex::new(None));
+    *slot.lock() = Some(Arc::new(boxed));
+}
+
+#[cfg(any(test, feature = "e2e-test-support"))]
+pub fn clear_test_http_request_override() {
+    if let Some(slot) = HTTP_REQUEST_OVERRIDE.get() {
+        *slot.lock() = None;
+    }
+}
+
+fn test_http_request_override() -> Option<Arc<HttpRequestStubFn>> {
+    HTTP_REQUEST_OVERRIDE
         .get()
         .and_then(|slot| slot.lock().clone())
 }

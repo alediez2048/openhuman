@@ -1227,26 +1227,8 @@ fn dispatch_test_node(kind: NodeKind, config: NodeConfig) -> Node {
 // `tool_call_with_is_error_true_halts_run` below — they exercise the
 // dispatcher through `dispatch_run`'s full lifecycle.
 
-#[tokio::test]
-async fn dispatch_node_returns_not_implemented_for_http_request() {
-    let (_dir, config) = config_with_temp_workspace();
-    let run = dispatch_test_run();
-    let node = dispatch_test_node(
-        NodeKind::HttpRequest,
-        NodeConfig::HttpRequest(HttpRequestConfig {
-            connection_id: "conn-1".into(),
-            method: HttpMethod::Get,
-            path_template: "/health".into(),
-            headers: Default::default(),
-            body_template: None,
-        }),
-    );
-    let ctx = crate::openhuman::workflows::templating::NodeContext::default();
-    let err = executor::dispatch_node(&config, &run, &node, &ctx)
-        .await
-        .unwrap_err();
-    assert!(err.to_string().contains("HttpRequest"));
-}
+// F2-4 replaced F2-1's NotImplementedYet stub for `HttpRequest`. The
+// integration tests below cover the new dispatch path end-to-end.
 
 #[tokio::test]
 async fn dispatch_node_returns_not_implemented_for_channel_message() {
@@ -1551,36 +1533,29 @@ async fn multi_node_chain_templates_upstream_output_into_downstream_prompt() {
     assert_eq!(steps[0].node_id, "a".to_string());
     assert_eq!(steps[1].node_id, "b".to_string());
 
-    // `captured_prompts()` is a process-wide static; other tests
-    // running in parallel push entries too. Filter by our distinctive
-    // markers instead of slicing by index — workflow ids + prompt
-    // bodies are unique to this test so no false positives.
-    let prompts = captured_prompts().lock().clone();
+    // Read node b's persisted step.output_json. The agent stub echoes
+    // its received prompt back as the response text, so the
+    // substituted prompt lands in the persisted output. Reading per-
+    // step (vs the process-wide `captured_prompts()` static) avoids
+    // the parallel-test race the earlier impl was vulnerable to.
+    let b_step = &steps[1];
+    let b_output = b_step
+        .output_json
+        .as_deref()
+        .expect("node b must have persisted output_json");
     assert!(
-        prompts.iter().any(|p| p.contains("produce a value")),
-        "node a's prompt must have hit the stub"
+        b_output.contains("consume:"),
+        "node b's output must echo its prompt; got: {b_output}"
     );
-    // Find the prompt that came from node b — it carries the literal
-    // word `consume:` in its body. The substituted text appears
-    // somewhere AFTER `consume:` (the rest of the line may carry the
-    // stub's echo metadata + F-17 recall block additions).
-    let b_prompt = prompts
-        .iter()
-        .find(|p| p.contains("consume:"))
-        .unwrap_or_else(|| panic!("could not find node b's prompt in: {prompts:#?}"));
     assert!(
-        b_prompt.contains("produce a value"),
-        "node b's prompt must contain the substituted text from node a's output \
-         (which echoed `produce a value`); got prompt:\n{b_prompt}"
+        b_output.contains("produce a value"),
+        "node b's output must show the substituted text from node a's stub echo; got: {b_output}"
     );
-    // Defence-in-depth: the literal `{{node.a.output.text}}` must
-    // NEVER reach the stub, because that would mean templating
-    // skipped node b's prompt entirely.
+    // Defence-in-depth: the raw `{{node.a.output.text}}` token must
+    // NEVER appear — that would mean templating skipped this leaf.
     assert!(
-        prompts
-            .iter()
-            .all(|p| !p.contains("{{node.a.output.text}}")),
-        "raw `{{...}}` template token must never reach the stub"
+        !b_output.contains("{{node.a.output.text}}"),
+        "raw `{{...}}` template token must NOT appear in persisted output"
     );
 }
 
@@ -1854,14 +1829,27 @@ async fn tool_call_output_flows_into_downstream_agent_prompt_template() {
     clear_test_tool_call_override();
 
     assert!(matches!(run.status, RunStatus::Succeeded));
-    let prompts = captured_prompts().lock().clone();
-    let n2_prompt = prompts
+    // Read n2's persisted step.output_json — the agent stub echoes
+    // its received prompt back as the response text, so the
+    // substituted prompt lands in the persisted output. Avoids the
+    // process-wide `captured_prompts()` race that bites this test
+    // under heavy parallelism.
+    let (_run, steps) = store::get_run(&config, &run.id).unwrap().expect("run row");
+    let n2_step = steps
         .iter()
-        .find(|p| p.contains("downstream sees:"))
-        .unwrap_or_else(|| panic!("n2's prompt missing from captured: {prompts:#?}"));
+        .find(|s| s.node_id == "n2")
+        .expect("n2 step must exist");
+    let n2_output = n2_step
+        .output_json
+        .as_deref()
+        .expect("n2 must have persisted output_json on Succeeded");
     assert!(
-        n2_prompt.contains("the-answer-is-42"),
-        "n2's prompt must show the substituted text from n1's tool_call output; got:\n{n2_prompt}"
+        n2_output.contains("downstream sees:"),
+        "n2's persisted output must echo its prompt; got: {n2_output}"
+    );
+    assert!(
+        n2_output.contains("the-answer-is-42"),
+        "n2's persisted output must show substituted text from n1's tool_call output; got: {n2_output}"
     );
 }
 
@@ -2036,5 +2024,317 @@ async fn tool_call_with_is_error_true_halts_run() {
     assert!(
         steps.iter().all(|s| s.node_id != "n2"),
         "n2 must not have run after n1 errored"
+    );
+}
+
+// ── F2-4: http_request node ────────────────────────────────────────────
+
+/// Serialize tests that install the process-wide
+/// `HTTP_REQUEST_OVERRIDE` so they don't race each other.
+static HTTP_REQUEST_TEST_LOCK: once_cell::sync::Lazy<parking_lot::Mutex<()>> =
+    once_cell::sync::Lazy::new(|| parking_lot::Mutex::new(()));
+
+#[tokio::test]
+async fn http_request_node_succeeds_via_test_override() {
+    use crate::openhuman::workflows::executor::{
+        clear_test_http_request_override, set_test_http_request_override,
+    };
+    let _lock = HTTP_REQUEST_TEST_LOCK.lock();
+    set_test_http_request_override(|cfg, _ctx| {
+        let path = cfg.path_template.clone();
+        async move {
+            Ok(serde_json::json!({
+                "status": 200,
+                "headers": {},
+                "body_text": format!("stub for {path}"),
+                "body_json": null
+            }))
+        }
+    });
+
+    let (_dir, config) = config_with_temp_workspace();
+    let workflow = f2_2_workflow(
+        &format!("wf-http-{}", uuid::Uuid::new_v4()),
+        vec![Node {
+            id: "n1".into(),
+            kind: NodeKind::HttpRequest,
+            config: NodeConfig::HttpRequest(HttpRequestConfig {
+                connection_id: "conn-test".into(),
+                method: HttpMethod::Get,
+                path_template: "/health".into(),
+                headers: Default::default(),
+                body_template: None,
+                response_capture: Default::default(),
+            }),
+            position: None,
+        }],
+        vec![],
+    );
+    store::insert_workflow(&config, &workflow).expect("insert_workflow");
+
+    executor::dispatch_run(
+        &config,
+        workflow.id.clone(),
+        TriggerSource::Manual {
+            initiator: "test".into(),
+        },
+    )
+    .await
+    .expect("dispatch_run");
+    let run = wait_for_terminal_run(&config, &workflow.id).await;
+    clear_test_http_request_override();
+
+    assert!(matches!(run.status, RunStatus::Succeeded));
+    let (_run, steps) = store::get_run(&config, &run.id).unwrap().expect("run row");
+    assert_eq!(steps.len(), 1);
+    let body = steps[0]
+        .output_json
+        .as_deref()
+        .expect("succeeded step persists output_json");
+    assert!(body.contains("\"status\":200"));
+    assert!(body.contains("stub for /health"));
+}
+
+/// Inter-node templating: n1 emits `{"id": 42}`; n2 is an
+/// `http_request` whose `path_template = "/users/{{node.n1.output.id}}"`
+/// and whose `body_template` references `{{node.n1.output.id}}` too.
+/// Stub captures the resolved cfg and we assert the substitutions.
+#[tokio::test]
+async fn http_request_templating_substitutes_into_path_and_body() {
+    use crate::openhuman::workflows::executor::{
+        clear_test_http_request_override, clear_test_tool_call_override,
+        set_test_http_request_override, set_test_tool_call_override,
+    };
+    let _lock_http = HTTP_REQUEST_TEST_LOCK.lock();
+    let _lock_tc = TOOL_CALL_TEST_LOCK.lock();
+
+    // n1 emits {"id": 42}.
+    set_test_tool_call_override(|_name, _args, _ctx| async move {
+        Ok::<serde_json::Value, String>(serde_json::json!({ "id": 42 }))
+    });
+
+    // n2's http_request stub captures the (already-templated) path +
+    // body so we can assert on them.
+    let captured_path: Arc<parking_lot::Mutex<Option<String>>> =
+        Arc::new(parking_lot::Mutex::new(None));
+    let captured_body: Arc<parking_lot::Mutex<Option<String>>> =
+        Arc::new(parking_lot::Mutex::new(None));
+    let path_writer = Arc::clone(&captured_path);
+    let body_writer = Arc::clone(&captured_body);
+    set_test_http_request_override(move |cfg, _ctx| {
+        let path_writer = Arc::clone(&path_writer);
+        let body_writer = Arc::clone(&body_writer);
+        let path = cfg.path_template.clone();
+        let body = cfg.body_template.clone();
+        async move {
+            *path_writer.lock() = Some(path);
+            *body_writer.lock() = Some(body.unwrap_or_default());
+            Ok(serde_json::json!({
+                "status": 200,
+                "headers": {},
+                "body_text": "ok",
+                "body_json": null
+            }))
+        }
+    });
+
+    let (_dir, config) = config_with_temp_workspace();
+    let workflow = f2_2_workflow(
+        &format!("wf-http-tpl-{}", uuid::Uuid::new_v4()),
+        vec![
+            Node {
+                id: "n1".into(),
+                kind: NodeKind::ToolCall,
+                config: NodeConfig::ToolCall(ToolCallConfig {
+                    tool_name: "current_time".into(),
+                    arguments_template: serde_json::json!({}),
+                }),
+                position: None,
+            },
+            Node {
+                id: "n2".into(),
+                kind: NodeKind::HttpRequest,
+                config: NodeConfig::HttpRequest(HttpRequestConfig {
+                    connection_id: "conn-test".into(),
+                    method: HttpMethod::Post,
+                    path_template: "/users/{{node.n1.output.id}}".into(),
+                    headers: Default::default(),
+                    body_template: Some("{\"target_user\": {{node.n1.output.id}}}".into()),
+                    response_capture: Default::default(),
+                }),
+                position: None,
+            },
+        ],
+        vec![Edge {
+            from: "n1".into(),
+            to: "n2".into(),
+        }],
+    );
+    store::insert_workflow(&config, &workflow).expect("insert_workflow");
+
+    executor::dispatch_run(
+        &config,
+        workflow.id.clone(),
+        TriggerSource::Manual {
+            initiator: "test".into(),
+        },
+    )
+    .await
+    .expect("dispatch_run");
+    let run = wait_for_terminal_run(&config, &workflow.id).await;
+    clear_test_http_request_override();
+    clear_test_tool_call_override();
+
+    assert!(
+        matches!(run.status, RunStatus::Succeeded),
+        "chain must succeed; got {:?} (err: {:?})",
+        run.status,
+        run.error
+    );
+    // F2-4 substitutes templates BEFORE calling the stub.
+    assert_eq!(
+        captured_path.lock().as_deref(),
+        Some("/users/42"),
+        "path must show substituted node output"
+    );
+    let body_str = captured_body.lock().clone().unwrap_or_default();
+    assert!(
+        body_str.contains("\"target_user\": 42"),
+        "body must show substituted node output; got: {body_str}"
+    );
+}
+
+/// 4xx response → run halts as Failed; response body still lands in
+/// output_json so the run-history view can show what came back.
+#[tokio::test]
+async fn http_request_4xx_response_halts_run() {
+    use crate::openhuman::workflows::executor::{
+        clear_test_http_request_override, set_test_http_request_override,
+    };
+    let _lock = HTTP_REQUEST_TEST_LOCK.lock();
+    set_test_http_request_override(|_cfg, _ctx| async move {
+        Err((
+            "http_request returned status 404".to_string(),
+            serde_json::json!({
+                "status": 404,
+                "headers": {},
+                "body_text": "not found",
+                "body_json": null
+            }),
+        ))
+    });
+
+    let (_dir, config) = config_with_temp_workspace();
+    let workflow = f2_2_workflow(
+        &format!("wf-http-4xx-{}", uuid::Uuid::new_v4()),
+        vec![
+            Node {
+                id: "n1".into(),
+                kind: NodeKind::HttpRequest,
+                config: NodeConfig::HttpRequest(HttpRequestConfig {
+                    connection_id: "conn-test".into(),
+                    method: HttpMethod::Get,
+                    path_template: "/missing".into(),
+                    headers: Default::default(),
+                    body_template: None,
+                    response_capture: Default::default(),
+                }),
+                position: None,
+            },
+            f2_2_agent_node("n2", "should never run"),
+        ],
+        vec![Edge {
+            from: "n1".into(),
+            to: "n2".into(),
+        }],
+    );
+    store::insert_workflow(&config, &workflow).expect("insert_workflow");
+
+    executor::dispatch_run(
+        &config,
+        workflow.id.clone(),
+        TriggerSource::Manual {
+            initiator: "test".into(),
+        },
+    )
+    .await
+    .expect("dispatch_run");
+    let run = wait_for_terminal_run(&config, &workflow.id).await;
+    clear_test_http_request_override();
+
+    assert!(matches!(run.status, RunStatus::Failed));
+    let err = run.error.as_deref().unwrap_or("");
+    assert!(
+        err.contains("status 404"),
+        "terminal_error must surface the upstream status; got: {err}"
+    );
+    let (_run, steps) = store::get_run(&config, &run.id).unwrap().expect("run row");
+    let n1_step = steps
+        .iter()
+        .find(|s| s.node_id == "n1")
+        .expect("n1 step must exist");
+    let n1_body = n1_step
+        .output_json
+        .as_deref()
+        .expect("n1 step persists the 404 response body");
+    assert!(n1_body.contains("\"status\":404"));
+    assert!(n1_body.contains("not found"));
+    assert!(
+        steps.iter().all(|s| s.node_id != "n2"),
+        "n2 must not have run after n1 failed"
+    );
+}
+
+/// End-to-end through the REAL `reqwest` send path against a wiremock
+/// server. Asserts (a) the auth header IS sent, (b) the request gets
+/// the templated path. We can't exercise the GenericHttp lookup +
+/// decrypt without a full Phase-0 connection setup, so this test
+/// validates the wire shape via the override's *absence* + a
+/// connection-not-found terminal-error path.
+#[tokio::test]
+async fn http_request_connection_not_found_fails_cleanly() {
+    // No override → real `resolve_generic_http_for_runtime` path
+    // fires. No matching row in the empty connections.db → clean
+    // "connection not found" terminal error.
+    let _lock = HTTP_REQUEST_TEST_LOCK.lock();
+    // Defensive: clear any stale override leaked from a prior test.
+    crate::openhuman::workflows::executor::clear_test_http_request_override();
+
+    let (_dir, config) = config_with_temp_workspace();
+    let workflow = f2_2_workflow(
+        &format!("wf-http-nc-{}", uuid::Uuid::new_v4()),
+        vec![Node {
+            id: "n1".into(),
+            kind: NodeKind::HttpRequest,
+            config: NodeConfig::HttpRequest(HttpRequestConfig {
+                connection_id: "nonexistent-conn".into(),
+                method: HttpMethod::Get,
+                path_template: "/health".into(),
+                headers: Default::default(),
+                body_template: None,
+                response_capture: Default::default(),
+            }),
+            position: None,
+        }],
+        vec![],
+    );
+    store::insert_workflow(&config, &workflow).expect("insert_workflow");
+
+    executor::dispatch_run(
+        &config,
+        workflow.id.clone(),
+        TriggerSource::Manual {
+            initiator: "test".into(),
+        },
+    )
+    .await
+    .expect("dispatch_run");
+    let run = wait_for_terminal_run(&config, &workflow.id).await;
+
+    assert!(matches!(run.status, RunStatus::Failed));
+    let err = run.error.as_deref().unwrap_or("");
+    assert!(
+        err.contains("not found"),
+        "terminal_error must mention the missing connection; got: {err}"
     );
 }

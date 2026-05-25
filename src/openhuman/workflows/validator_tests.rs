@@ -523,6 +523,7 @@ fn validate_phase_2_rejects_http_request_missing_connection_id() {
             path_template: "/health".into(),
             headers: Default::default(),
             body_template: None,
+            response_capture: Default::default(),
         }),
     );
     let snapshot = ConnectionsSnapshot::empty();
@@ -546,6 +547,7 @@ fn validate_phase_2_rejects_http_request_missing_path_template() {
             path_template: "".into(),
             headers: Default::default(),
             body_template: None,
+            response_capture: Default::default(),
         }),
     );
     let snapshot = ConnectionsSnapshot::empty();
@@ -680,6 +682,7 @@ fn node_config_http_request_round_trips_through_serde() {
         path_template: "/users".into(),
         headers,
         body_template: Some("{\"x\": 1}".into()),
+        response_capture: Default::default(),
     });
     let json = serde_json::to_string(&original).unwrap();
     assert!(json.contains("\"kind\":\"http_request\""));

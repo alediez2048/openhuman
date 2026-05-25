@@ -359,9 +359,10 @@ pub struct ToolCallConfig {
 /// Configuration for a [`NodeKind::HttpRequest`] node (F2-4).
 ///
 /// Hits a Phase-0 `GenericHttp` connection. `path_template`, headers,
-/// and `body_template` are all subject to OQ-7 templating. F2-4 will
-/// resolve the `connection_id` against the encrypted-credential store
-/// at dispatch and assemble the final request.
+/// and `body_template` are all subject to OQ-7 templating. The
+/// executor resolves the `connection_id` against the encrypted-
+/// credential store at dispatch time and assembles the final request
+/// with the connection's `AuthKind` baked into the headers.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct HttpRequestConfig {
     /// Generic-HTTP connection id (Phase 0 surface).
@@ -381,6 +382,34 @@ pub struct HttpRequestConfig {
     /// `headers["Content-Type"]` if the user provided one.
     #[serde(default)]
     pub body_template: Option<String>,
+    /// What to capture into the node's output body. Defaults to
+    /// `BodyAndStatus` so downstream nodes get both shape pieces
+    /// without an explicit choice.
+    #[serde(default)]
+    pub response_capture: ResponseCapture,
+}
+
+/// How an `http_request` node captures its response into the node
+/// output body. The executor always records the full response, but
+/// `body_value` (the field downstream nodes template against) is
+/// shaped by this enum.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ResponseCapture {
+    /// Default. Output body = `{ status, headers, body_text,
+    /// body_json? }`. Downstream nodes template against any field.
+    #[default]
+    BodyAndStatus,
+    /// Only the HTTP status code lands in the output body —
+    /// `{ status }`. Useful when downstream nodes only need to
+    /// branch on success/failure without parsing the body.
+    StatusOnly,
+    /// Pull a JSON-path slice out of the response body and place it
+    /// at `body_value.captured`. The walker is the same dotted-path
+    /// resolver `substitute_json` uses — F2-7 follow-up may extend
+    /// to bracketed-array indexing if a concrete use case appears.
+    /// Path is dotted (`data.user.id`), no `$.` prefix.
+    JsonPath { path: String },
 }
 
 /// HTTP methods exposed to `NodeKind::HttpRequest`. Phase 2 starts
