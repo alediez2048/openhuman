@@ -249,6 +249,99 @@ fn validate_accepts_composio_event_with_populated_fields() {
     assert!(validate(&proposal, &ConnectionsSnapshot::empty(), 2).is_ok());
 }
 
+// ── F2-11: ChannelMessage trigger validation ───────────────────────────
+
+#[test]
+fn validate_rejects_channel_message_with_empty_provider() {
+    let mut proposal = valid_proposal();
+    proposal.trigger = Trigger::ChannelMessage {
+        provider: "   ".into(),
+        filter: None,
+    };
+    let err = validate(&proposal, &ConnectionsSnapshot::empty(), 2).unwrap_err();
+    match err {
+        ProposalValidationError::MissingRequiredField { field } => {
+            assert_eq!(field, "trigger.provider");
+        }
+        other => panic!("expected MissingRequiredField {{ trigger.provider }}, got {other:?}"),
+    }
+}
+
+#[test]
+fn validate_rejects_channel_message_filter_with_empty_from_user() {
+    let mut proposal = valid_proposal();
+    proposal.trigger = Trigger::ChannelMessage {
+        provider: "slack".into(),
+        filter: Some(MessageFilter {
+            from_user: Some("   ".into()),
+            ..Default::default()
+        }),
+    };
+    let err = validate(&proposal, &ConnectionsSnapshot::empty(), 2).unwrap_err();
+    match err {
+        ProposalValidationError::MissingRequiredField { field } => {
+            assert_eq!(field, "trigger.filter.from_user");
+        }
+        other => {
+            panic!("expected MissingRequiredField {{ trigger.filter.from_user }}, got {other:?}")
+        }
+    }
+}
+
+#[test]
+fn validate_rejects_channel_message_filter_with_invalid_regex() {
+    let mut proposal = valid_proposal();
+    proposal.trigger = Trigger::ChannelMessage {
+        provider: "slack".into(),
+        filter: Some(MessageFilter {
+            // Unclosed group — guaranteed to fail to compile.
+            regex: Some("(unbalanced".into()),
+            ..Default::default()
+        }),
+    };
+    let err = validate(&proposal, &ConnectionsSnapshot::empty(), 2).unwrap_err();
+    match err {
+        ProposalValidationError::InvalidNodeConfig {
+            node_id,
+            node_kind,
+            reason,
+        } => {
+            assert_eq!(node_id, "trigger");
+            assert_eq!(node_kind, NodeKind::ChannelMessage);
+            assert!(
+                reason.contains("regex"),
+                "reason must mention regex; got: {reason}"
+            );
+        }
+        other => panic!("expected InvalidNodeConfig for trigger regex; got {other:?}"),
+    }
+}
+
+#[test]
+fn validate_accepts_channel_message_with_valid_filter() {
+    let mut proposal = valid_proposal();
+    proposal.trigger = Trigger::ChannelMessage {
+        provider: "slack".into(),
+        filter: Some(MessageFilter {
+            contains: Some("urgent".into()),
+            direct_only: true,
+            from_user: Some("U42".into()),
+            regex: Some(r"^@bot help".into()),
+        }),
+    };
+    assert!(validate(&proposal, &ConnectionsSnapshot::empty(), 2).is_ok());
+}
+
+#[test]
+fn validate_accepts_channel_message_with_no_filter() {
+    let mut proposal = valid_proposal();
+    proposal.trigger = Trigger::ChannelMessage {
+        provider: "telegram".into(),
+        filter: None,
+    };
+    assert!(validate(&proposal, &ConnectionsSnapshot::empty(), 2).is_ok());
+}
+
 // ── EdgeIntegrity ──────────────────────────────────────────────────────
 
 #[test]

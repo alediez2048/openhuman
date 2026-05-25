@@ -73,6 +73,7 @@ impl EventHandler for ConversationPersistenceSubscriber {
                 reply_target,
                 content,
                 thread_ts,
+                is_direct: _,
             } => {
                 if let Err(error) = persist_channel_turn(
                     &self.workspace_dir,
@@ -283,6 +284,7 @@ mod tests {
                 reply_target: "general".into(),
                 content: "hello".into(),
                 thread_ts: Some("thread-1".into()),
+                is_direct: false,
             })
             .await;
         subscriber
@@ -327,6 +329,7 @@ mod tests {
                 reply_target: "chat-1".into(),
                 content: "hello".into(),
                 thread_ts: Some("100".into()),
+                is_direct: false,
             })
             .await;
         subscriber
@@ -337,6 +340,7 @@ mod tests {
                 reply_target: "chat-1".into(),
                 content: "follow-up".into(),
                 thread_ts: Some("200".into()),
+                is_direct: false,
             })
             .await;
 
@@ -357,6 +361,7 @@ mod tests {
             reply_target: "room-1".into(),
             content: "hello".into(),
             thread_ts: None,
+            is_direct: false,
         };
 
         subscriber.handle(&event).await;

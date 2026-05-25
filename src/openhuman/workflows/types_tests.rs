@@ -90,6 +90,8 @@ fn trigger_phase_two_stubs_round_trip() {
         filter: Some(MessageFilter {
             contains: Some("urgent".into()),
             direct_only: true,
+            from_user: Some("U42".into()),
+            regex: Some(r"^@bot help".into()),
         }),
     };
     assert_round_trip(&channel);

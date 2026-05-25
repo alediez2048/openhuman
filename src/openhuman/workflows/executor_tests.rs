@@ -3699,3 +3699,344 @@ async fn composio_event_skips_non_matching_workflow() {
         runs.len()
     );
 }
+
+// ── F2-11: channel_message trigger fan-out ─────────────────────────────
+
+/// Build a workflow with `Trigger::ChannelMessage`. Bypasses validator.
+fn f2_11_channel_workflow(
+    id: &str,
+    provider: &str,
+    filter: Option<MessageFilter>,
+    enabled: bool,
+    nodes: Vec<Node>,
+    edges: Vec<Edge>,
+) -> Workflow {
+    Workflow {
+        id: id.into(),
+        schema_version: 1,
+        name: format!("F2-11 {id}"),
+        description: None,
+        enabled,
+        origin: WorkflowOrigin::UserChat,
+        health: WorkflowHealth::Ready,
+        trigger: Trigger::ChannelMessage {
+            provider: provider.into(),
+            filter,
+        },
+        nodes,
+        edges,
+        settings: WorkflowSettings::default(),
+        created_at: chrono::Utc::now(),
+        updated_at: chrono::Utc::now(),
+        last_run_at: None,
+    }
+}
+
+fn f2_11_tool_node(arguments_template: serde_json::Value) -> Node {
+    Node {
+        id: "n1".into(),
+        kind: NodeKind::ToolCall,
+        config: NodeConfig::ToolCall(ToolCallConfig {
+            tool_name: "consume".into(),
+            arguments_template,
+        }),
+        position: None,
+        retry_policy: None,
+    }
+}
+
+/// `filter_passes` unit tests — pure logic, no DB / dispatch.
+#[test]
+fn channel_filter_none_passes_every_message() {
+    use crate::openhuman::workflows::bus::filter_passes;
+    assert!(filter_passes(None, "anything", "alice", false));
+    assert!(filter_passes(None, "", "bob", true));
+}
+
+#[test]
+fn channel_filter_contains_is_case_insensitive_substring() {
+    use crate::openhuman::workflows::bus::filter_passes;
+    let f = MessageFilter {
+        contains: Some("URGENT".into()),
+        ..Default::default()
+    };
+    assert!(filter_passes(Some(&f), "this is urgent stuff", "x", false));
+    assert!(filter_passes(Some(&f), "URGENT now", "x", false));
+    assert!(!filter_passes(Some(&f), "calm message", "x", false));
+}
+
+#[test]
+fn channel_filter_direct_only_blocks_group_messages() {
+    use crate::openhuman::workflows::bus::filter_passes;
+    let f = MessageFilter {
+        direct_only: true,
+        ..Default::default()
+    };
+    assert!(filter_passes(Some(&f), "hi", "x", true));
+    assert!(!filter_passes(Some(&f), "hi", "x", false));
+}
+
+#[test]
+fn channel_filter_from_user_matches_exact_sender() {
+    use crate::openhuman::workflows::bus::filter_passes;
+    let f = MessageFilter {
+        from_user: Some("U42".into()),
+        ..Default::default()
+    };
+    assert!(filter_passes(Some(&f), "hi", "U42", false));
+    assert!(!filter_passes(Some(&f), "hi", "U99", false));
+}
+
+#[test]
+fn channel_filter_regex_matches_pattern() {
+    use crate::openhuman::workflows::bus::filter_passes;
+    let f = MessageFilter {
+        regex: Some(r"^@bot help".into()),
+        ..Default::default()
+    };
+    assert!(filter_passes(Some(&f), "@bot help me", "x", false));
+    assert!(!filter_passes(Some(&f), "help @bot", "x", false));
+}
+
+#[test]
+fn channel_filter_combines_all_populated_checks() {
+    use crate::openhuman::workflows::bus::filter_passes;
+    let f = MessageFilter {
+        contains: Some("urgent".into()),
+        direct_only: true,
+        from_user: Some("U42".into()),
+        regex: Some(r"\burgent\b".into()),
+    };
+    assert!(filter_passes(Some(&f), "this is urgent", "U42", true));
+    // Wrong sender.
+    assert!(!filter_passes(Some(&f), "this is urgent", "U99", true));
+    // Not direct.
+    assert!(!filter_passes(Some(&f), "this is urgent", "U42", false));
+    // Missing keyword.
+    assert!(!filter_passes(Some(&f), "this is fine", "U42", true));
+}
+
+/// `dispatch_matching_channel_message` end-to-end: enabled workflow
+/// with a matching provider and a `contains` filter dispatches when
+/// the body matches.
+#[tokio::test]
+async fn channel_message_contains_filter_dispatches_matching_message() {
+    use crate::openhuman::workflows::bus::dispatch_matching_channel_message;
+    use crate::openhuman::workflows::executor::{
+        clear_test_tool_call_override, set_test_tool_call_override,
+    };
+    let _lock = TOOL_CALL_TEST_LOCK.lock();
+
+    let captured: Arc<parking_lot::Mutex<Option<serde_json::Value>>> =
+        Arc::new(parking_lot::Mutex::new(None));
+    let writer = Arc::clone(&captured);
+    set_test_tool_call_override(move |_name, args, _ctx| {
+        let writer = Arc::clone(&writer);
+        let args = args.clone();
+        async move {
+            *writer.lock() = Some(args.clone());
+            Ok(serde_json::json!({ "text": "ok", "is_error": false }))
+        }
+    });
+
+    let (_dir, config) = config_with_temp_workspace();
+    let workflow = f2_11_channel_workflow(
+        &format!("wf-chan-contains-{}", uuid::Uuid::new_v4()),
+        "slack",
+        Some(MessageFilter {
+            contains: Some("URGENT".into()),
+            ..Default::default()
+        }),
+        true,
+        vec![f2_11_tool_node(serde_json::json!({
+            "msg": "{{trigger.content}}",
+            "from": "{{trigger.sender}}"
+        }))],
+        vec![],
+    );
+    store::insert_workflow(&config, &workflow).expect("insert");
+
+    dispatch_matching_channel_message(
+        &config,
+        "slack",
+        "m1",
+        "alice",
+        "general",
+        "this is URGENT please",
+        None,
+        false,
+    )
+    .await;
+    let run = wait_for_terminal_run(&config, &workflow.id).await;
+    clear_test_tool_call_override();
+
+    assert!(
+        matches!(run.status, RunStatus::Succeeded),
+        "matching message MUST drive run to Succeeded; got {:?} err={:?}",
+        run.status,
+        run.error
+    );
+    assert_eq!(run.trigger_source, TriggerSource::ChannelMessage);
+    let captured_args = captured.lock().clone().expect("stub invoked");
+    assert_eq!(captured_args["msg"], "this is URGENT please");
+    assert_eq!(captured_args["from"], "alice");
+}
+
+/// Non-matching `contains` filter MUST NOT dispatch.
+#[tokio::test]
+async fn channel_message_contains_filter_skips_non_matching() {
+    use crate::openhuman::workflows::bus::dispatch_matching_channel_message;
+    use crate::openhuman::workflows::executor::{
+        clear_test_tool_call_override, set_test_tool_call_override,
+    };
+    let _lock = TOOL_CALL_TEST_LOCK.lock();
+    let called = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let called_w = Arc::clone(&called);
+    set_test_tool_call_override(move |_name, _args, _ctx| {
+        let called_w = Arc::clone(&called_w);
+        async move {
+            called_w.store(true, std::sync::atomic::Ordering::SeqCst);
+            Ok(serde_json::json!({ "text": "ok", "is_error": false }))
+        }
+    });
+
+    let (_dir, config) = config_with_temp_workspace();
+    let workflow = f2_11_channel_workflow(
+        &format!("wf-chan-skip-{}", uuid::Uuid::new_v4()),
+        "slack",
+        Some(MessageFilter {
+            contains: Some("URGENT".into()),
+            ..Default::default()
+        }),
+        true,
+        vec![f2_11_tool_node(serde_json::json!({"x": 1}))],
+        vec![],
+    );
+    store::insert_workflow(&config, &workflow).expect("insert");
+
+    dispatch_matching_channel_message(
+        &config,
+        "slack",
+        "m1",
+        "alice",
+        "general",
+        "totally calm message",
+        None,
+        false,
+    )
+    .await;
+    tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+    clear_test_tool_call_override();
+
+    assert!(
+        !called.load(std::sync::atomic::Ordering::SeqCst),
+        "filter mismatch MUST NOT dispatch"
+    );
+    let runs = store::list_runs(&config, &workflow.id, Pagination::default()).expect("list_runs");
+    assert!(runs.is_empty(), "no runs expected; got {}", runs.len());
+}
+
+/// `direct_only: true` skips when `is_direct = false`.
+#[tokio::test]
+async fn channel_message_direct_only_skips_group_message() {
+    use crate::openhuman::workflows::bus::dispatch_matching_channel_message;
+    let (_dir, config) = config_with_temp_workspace();
+    let workflow = f2_11_channel_workflow(
+        &format!("wf-chan-dm-{}", uuid::Uuid::new_v4()),
+        "slack",
+        Some(MessageFilter {
+            direct_only: true,
+            ..Default::default()
+        }),
+        true,
+        vec![f2_11_tool_node(serde_json::json!({"x": 1}))],
+        vec![],
+    );
+    store::insert_workflow(&config, &workflow).expect("insert");
+
+    // is_direct = false → must NOT fire.
+    dispatch_matching_channel_message(
+        &config, "slack", "m1", "alice", "general", "hello", None, false,
+    )
+    .await;
+    tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+    let runs = store::list_runs(&config, &workflow.id, Pagination::default()).expect("list_runs");
+    assert!(
+        runs.is_empty(),
+        "group message MUST NOT dispatch when direct_only=true"
+    );
+}
+
+/// Two workflows on the SAME provider both fire on a single message
+/// that passes both filters (fan-out).
+#[tokio::test]
+async fn channel_message_fans_out_to_multiple_workflows() {
+    use crate::openhuman::workflows::bus::dispatch_matching_channel_message;
+    use crate::openhuman::workflows::executor::{
+        clear_test_tool_call_override, set_test_tool_call_override,
+    };
+    let _lock = TOOL_CALL_TEST_LOCK.lock();
+    set_test_tool_call_override(move |_name, _args, _ctx| async move {
+        Ok(serde_json::json!({ "text": "ok", "is_error": false }))
+    });
+
+    let (_dir, config) = config_with_temp_workspace();
+    let wf_a = f2_11_channel_workflow(
+        &format!("wf-chan-a-{}", uuid::Uuid::new_v4()),
+        "telegram",
+        None,
+        true,
+        vec![f2_11_tool_node(serde_json::json!({"who": "a"}))],
+        vec![],
+    );
+    let wf_b = f2_11_channel_workflow(
+        &format!("wf-chan-b-{}", uuid::Uuid::new_v4()),
+        "telegram",
+        None,
+        true,
+        vec![f2_11_tool_node(serde_json::json!({"who": "b"}))],
+        vec![],
+    );
+    store::insert_workflow(&config, &wf_a).expect("insert a");
+    store::insert_workflow(&config, &wf_b).expect("insert b");
+
+    dispatch_matching_channel_message(
+        &config, "telegram", "m1", "alice", "chat-1", "hi", None, true,
+    )
+    .await;
+
+    let run_a = wait_for_terminal_run(&config, &wf_a.id).await;
+    let run_b = wait_for_terminal_run(&config, &wf_b.id).await;
+    clear_test_tool_call_override();
+
+    assert!(matches!(run_a.status, RunStatus::Succeeded));
+    assert!(matches!(run_b.status, RunStatus::Succeeded));
+}
+
+/// A disabled workflow with the matching provider MUST NOT fire.
+#[tokio::test]
+async fn channel_message_skips_disabled_workflow() {
+    use crate::openhuman::workflows::bus::dispatch_matching_channel_message;
+    let (_dir, config) = config_with_temp_workspace();
+    let workflow = f2_11_channel_workflow(
+        &format!("wf-chan-disabled-{}", uuid::Uuid::new_v4()),
+        "discord",
+        None,
+        false, // disabled
+        vec![f2_11_tool_node(serde_json::json!({"x": 1}))],
+        vec![],
+    );
+    store::insert_workflow(&config, &workflow).expect("insert");
+
+    dispatch_matching_channel_message(
+        &config, "discord", "m1", "alice", "room", "hello", None, false,
+    )
+    .await;
+    tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+    let runs = store::list_runs(&config, &workflow.id, Pagination::default()).expect("list_runs");
+    assert!(
+        runs.is_empty(),
+        "disabled workflow MUST NOT dispatch; got {} runs",
+        runs.len()
+    );
+}

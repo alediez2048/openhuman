@@ -21,7 +21,7 @@ use crate::openhuman::connections::types::ConnectionRef;
 use crate::openhuman::workflows::executor;
 use crate::openhuman::workflows::health::{self, ConnectionsSnapshot};
 use crate::openhuman::workflows::store;
-use crate::openhuman::workflows::types::TriggerSource;
+use crate::openhuman::workflows::types::{MessageFilter, Trigger, TriggerSource};
 use async_trait::async_trait;
 use std::sync::Arc;
 
@@ -416,4 +416,215 @@ pub async fn dispatch_matching_workflows(
             }
         });
     }
+}
+
+// ── F2-11: channel_message trigger subscriber ─────────────────────────
+
+/// Boot-time registration helper for [`ChannelMessageSubscriber`].
+pub fn register_channel_message_subscriber(config: Arc<Config>) {
+    let subscriber = Arc::new(ChannelMessageSubscriber::new(config));
+    match subscribe_global(subscriber) {
+        Some(handle) => {
+            tracing::info!(
+                target: "workflows-bus",
+                "[workflows-bus] registered channel-message subscriber"
+            );
+            std::mem::forget(handle);
+        }
+        None => {
+            log::warn!(
+                "[event_bus] failed to register workflows channel-message subscriber — bus not initialized"
+            );
+        }
+    }
+}
+
+/// Listens for [`DomainEvent::ChannelMessageReceived`] and dispatches
+/// every enabled workflow whose `Trigger::ChannelMessage { provider }`
+/// matches the event's `channel` field (the provider name the channel
+/// trait emits via `Channel::name()`) AND whose `filter` accepts the
+/// message body.
+pub struct ChannelMessageSubscriber {
+    config: Arc<Config>,
+}
+
+impl ChannelMessageSubscriber {
+    pub fn new(config: Arc<Config>) -> Self {
+        Self { config }
+    }
+}
+
+#[async_trait]
+impl EventHandler for ChannelMessageSubscriber {
+    fn name(&self) -> &str {
+        "workflow::channel_message"
+    }
+
+    fn domains(&self) -> Option<&[&str]> {
+        Some(&["channel"])
+    }
+
+    async fn handle(&self, event: &DomainEvent) {
+        let DomainEvent::ChannelMessageReceived {
+            channel,
+            message_id,
+            sender,
+            reply_target,
+            content,
+            thread_ts,
+            is_direct,
+        } = event
+        else {
+            return;
+        };
+
+        dispatch_matching_channel_message(
+            &self.config,
+            channel,
+            message_id,
+            sender,
+            reply_target,
+            content,
+            thread_ts.as_deref(),
+            *is_direct,
+        )
+        .await;
+    }
+}
+
+/// Resolve workflows matching `(provider == channel)`, apply each one's
+/// optional `MessageFilter`, and fan out a dispatch per pass. Public so
+/// tests can drive it directly.
+#[allow(clippy::too_many_arguments)]
+pub async fn dispatch_matching_channel_message(
+    config: &Config,
+    channel: &str,
+    message_id: &str,
+    sender: &str,
+    reply_target: &str,
+    content: &str,
+    thread_ts: Option<&str>,
+    is_direct: bool,
+) {
+    tracing::debug!(
+        target: "workflows-bus",
+        "[workflows-bus] channel_message fan-out provider={channel} sender={sender} len={}",
+        content.len()
+    );
+
+    let matches = match store::list_workflows_matching_channel(config, channel) {
+        Ok(rows) => rows,
+        Err(err) => {
+            tracing::error!(
+                target: "workflows-bus",
+                "[workflows-bus] list_workflows_matching_channel failed: {err:#}"
+            );
+            return;
+        }
+    };
+    if matches.is_empty() {
+        return;
+    }
+
+    // Build the payload once — passed by clone into each spawned dispatch.
+    let payload = serde_json::json!({
+        "provider": channel,
+        "message_id": message_id,
+        "sender": sender,
+        "reply_target": reply_target,
+        "content": content,
+        "thread_ts": thread_ts,
+        "is_direct": is_direct,
+    });
+
+    for wf in matches {
+        // Pull the filter out of the matched trigger; `list_workflows_…`
+        // already guarantees the variant.
+        let filter_ref = match &wf.trigger {
+            Trigger::ChannelMessage { filter, .. } => filter.as_ref(),
+            _ => continue,
+        };
+        if !filter_passes(filter_ref, content, sender, is_direct) {
+            tracing::debug!(
+                target: "workflows-bus",
+                "[workflows-bus] channel_message wf={} filtered out",
+                wf.id
+            );
+            continue;
+        }
+
+        let wf_id = wf.id.clone();
+        let payload_clone = payload.clone();
+        let cfg = config.clone();
+        tokio::spawn(async move {
+            match executor::dispatch_run_with_payload(
+                &cfg,
+                wf_id.clone(),
+                TriggerSource::ChannelMessage,
+                Some(payload_clone),
+            )
+            .await
+            {
+                Ok(run_id) => {
+                    tracing::info!(
+                        target: "workflows-bus",
+                        "[workflows-bus] channel_message fan-out wf={wf_id} run={run_id} dispatched"
+                    );
+                }
+                Err(err) => {
+                    let msg = format!("{err:#}");
+                    if msg.contains("AlreadyRunning") {
+                        tracing::debug!(
+                            target: "workflows-bus",
+                            "[workflows-bus] channel_message fan-out wf={wf_id} skipped (already running)"
+                        );
+                    } else {
+                        tracing::warn!(
+                            target: "workflows-bus",
+                            "[workflows-bus] channel_message fan-out wf={wf_id} dispatch failed: {msg}"
+                        );
+                    }
+                }
+            }
+        });
+    }
+}
+
+/// Apply a [`MessageFilter`] to one event. `None` filter accepts every
+/// message; otherwise every populated check must pass. Validator
+/// already guaranteed the regex compiles, so a compile failure here is
+/// treated as fail-closed (the filter rejects).
+pub fn filter_passes(
+    filter: Option<&MessageFilter>,
+    content: &str,
+    sender: &str,
+    is_direct: bool,
+) -> bool {
+    let Some(f) = filter else {
+        return true;
+    };
+    if f.direct_only && !is_direct {
+        return false;
+    }
+    if let Some(needle) = &f.contains {
+        if !content.to_lowercase().contains(&needle.to_lowercase()) {
+            return false;
+        }
+    }
+    if let Some(expected) = &f.from_user {
+        if sender != expected.as_str() {
+            return false;
+        }
+    }
+    if let Some(pattern) = &f.regex {
+        match regex::Regex::new(pattern) {
+            Ok(re) => {
+                if !re.is_match(content) {
+                    return false;
+                }
+            }
+            Err(_) => return false,
+        }
+    }
+    true
 }

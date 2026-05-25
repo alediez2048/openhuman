@@ -133,6 +133,42 @@ pub fn validate(
         validate_cron_expr(expr)?;
     }
 
+    // ── ChannelMessage trigger validation (F2-11) ──────────────────────
+    //
+    // Provider is required; the filter (when present) is structurally
+    // checked: regex compiles via the `regex` crate, `from_user` is
+    // non-empty when set. Matching the channel/event provider against
+    // the live channels snapshot is intentionally OUT — the validator
+    // stays I/O-free; an unknown provider becomes a fail-soft no-fire
+    // (no events ever match) rather than a synchronous reject.
+    if let Trigger::ChannelMessage { provider, filter } = &proposal.trigger {
+        if provider.trim().is_empty() {
+            return Err(ProposalValidationError::MissingRequiredField {
+                field: "trigger.provider".into(),
+            });
+        }
+        if let Some(f) = filter {
+            if let Some(ref user) = f.from_user {
+                if user.trim().is_empty() {
+                    return Err(ProposalValidationError::MissingRequiredField {
+                        field: "trigger.filter.from_user".into(),
+                    });
+                }
+            }
+            if let Some(ref pattern) = f.regex {
+                if let Err(err) = regex::Regex::new(pattern) {
+                    return Err(ProposalValidationError::InvalidNodeConfig {
+                        // No NodeId — borrow the trigger label so the
+                        // error stays distinct from per-node failures.
+                        node_id: "trigger".into(),
+                        node_kind: NodeKind::ChannelMessage,
+                        reason: format!("trigger.filter.regex does not compile: {err}"),
+                    });
+                }
+            }
+        }
+    }
+
     // ── Composio trigger non-empty (F2-10) ─────────────────────────────
     //
     // Validating against the live Composio trigger catalog would require

@@ -744,6 +744,11 @@ pub(crate) async fn process_channel_message(
         reply_target: msg.reply_target.clone(),
         content: msg.content.clone(),
         thread_ts: msg.thread_ts.clone(),
+        // F2-11: providers don't yet derive direct-vs-group from the
+        // transport layer. Defaulting to false makes `direct_only`
+        // filters a no-op for now; per-provider population lands as
+        // the channels domain grows the signal.
+        is_direct: false,
     });
 
     let target_channel = ctx.channels_by_name.get(&msg.channel).cloned();

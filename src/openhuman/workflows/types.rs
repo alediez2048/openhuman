@@ -299,17 +299,31 @@ pub struct ActiveHours {
     pub end: String,
 }
 
-/// Phase-2 placeholder filter for `Trigger::ChannelMessage`. The exact
-/// shape lands when channel triggers ship; declared here so the type
-/// universe is locked.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+/// Phase-2 filter for `Trigger::ChannelMessage`. Optional — when set
+/// only messages passing every populated check fire the workflow.
+///
+/// F2-11 extends the F-1 placeholder with `from_user` + `regex`. All
+/// fields are `#[serde(default)]` so existing persisted workflows
+/// continue to deserialize.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct MessageFilter {
-    /// Substring match against the message body (case-insensitive).
+    /// Case-insensitive substring match against the message body.
     #[serde(default)]
     pub contains: Option<String>,
-    /// Match only direct messages (vs. channel/group messages).
+    /// Match only direct messages (vs. channel/group messages). Relies
+    /// on the publisher populating `ChannelMessageReceived.is_direct`;
+    /// providers that don't yet emit the signal will see this filter
+    /// as a no-op.
     #[serde(default)]
     pub direct_only: bool,
+    /// Match only messages from this sender id (provider-specific —
+    /// e.g. Slack `U…` user id, Telegram numeric chat id).
+    #[serde(default)]
+    pub from_user: Option<String>,
+    /// Optional regex against the message body. Validator rejects
+    /// patterns that don't compile via the `regex` crate.
+    #[serde(default)]
+    pub regex: Option<String>,
 }
 
 /// The full set of node kinds across all 3 phases. Phase 1 only supports

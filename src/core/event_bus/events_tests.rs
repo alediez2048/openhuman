@@ -91,6 +91,7 @@ fn all_variants_have_correct_domain() {
                 reply_target: "r".into(),
                 content: "hi".into(),
                 thread_ts: None,
+                is_direct: false,
             },
             "channel",
         ),

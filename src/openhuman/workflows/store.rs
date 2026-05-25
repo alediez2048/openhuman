@@ -877,6 +877,51 @@ pub fn list_workflows_matching_composio_event(
         .collect())
 }
 
+/// F2-11: every enabled workflow whose trigger is
+/// `Trigger::ChannelMessage { provider, .. }` for the given provider.
+/// LIKE pre-filter on the provider substring, then strict re-check on
+/// the trigger variant. The `MessageFilter` is NOT applied here — the
+/// subscriber runs it in-process on each candidate so the SQL stays
+/// trivial and the filter logic lives in one place.
+pub fn list_workflows_matching_channel(config: &Config, provider: &str) -> Result<Vec<Workflow>> {
+    let provider_pattern = format!("%{}%", escape_like(provider));
+
+    let rows = with_connection(config, |db| {
+        let mut stmt = db
+            .prepare(
+                "SELECT id, schema_version, name, description, enabled, origin, health, \
+                 trigger_json, nodes_json, edges_json, settings_json, \
+                 created_at, updated_at, last_run_at \
+                 FROM workflows \
+                 WHERE enabled = 1 \
+                   AND trigger_json LIKE ?1 ESCAPE '\\' \
+                 ORDER BY updated_at DESC",
+            )
+            .context("Failed to prepare list_workflows_matching_channel")?;
+        let rows = stmt
+            .query_map(rusqlite::params![provider_pattern], |row| {
+                Ok(row_to_workflow(row))
+            })
+            .context("Failed to query list_workflows_matching_channel")?
+            .collect::<Result<Vec<_>, _>>()
+            .context("Failed to materialise list_workflows_matching_channel row")?
+            .into_iter()
+            .collect::<Result<Vec<Workflow>>>()?;
+        Ok(rows)
+    })?;
+
+    use crate::openhuman::workflows::types::Trigger;
+    Ok(rows
+        .into_iter()
+        .filter(|wf| {
+            matches!(
+                &wf.trigger,
+                Trigger::ChannelMessage { provider: p, .. } if p == provider
+            )
+        })
+        .collect())
+}
+
 /// Replace ONLY the `health` column (plus bump `updated_at`). Used by
 /// F-3's bus subscriber so the bounded UPDATE doesn't churn unrelated
 /// fields. Returns `false` when no row matched.

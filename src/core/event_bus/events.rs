@@ -106,6 +106,12 @@ pub enum DomainEvent {
         reply_target: String,
         content: String,
         thread_ts: Option<String>,
+        /// True if this is a direct/private message (vs. a group /
+        /// channel-wide post). Provider-derived; F2-11 added the
+        /// field so `Trigger::ChannelMessage` filters can enforce
+        /// `direct_only`. Providers that don't yet derive the bit
+        /// publish `false` (effectively a no-op for the filter).
+        is_direct: bool,
     },
     /// A channel message was fully processed (LLM response sent or error).
     ChannelMessageProcessed {
