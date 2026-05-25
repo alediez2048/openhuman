@@ -71,20 +71,26 @@ This Ticket".
 
 ---
 
-## Pre-Phase-2 brainstorm (do this before starting F2-1)
+## Pre-Phase-2 brainstorm (LOCKED 2026-05-24)
 
-Five OQs need resolution before F2-1 commits to an architecture:
+All five OQs resolved + dropped into `requirements.md §8`. Summary
+below; the canonical text + rationale live in §8.
 
-| OQ | Question | Lean |
+| OQ (canonical) | Question | Resolution |
 |---|---|---|
-| OQ-4 | Phase 2 triggers beyond webhook + composio + channel_message? | None — these 3 cover the immediate needs |
-| OQ-5 | Run-history retention default? | 30 days (FR-1.3.4 already references this) |
-| OQ-7 | Inter-node data passing: literal / templating / expressions? | Templating: `{{node.<id>.output.<jsonpath>}}` |
-| OQ-13 | Per-node retry policy shape? | `{ max_attempts: u32, backoff: Exponential { initial_ms, max_ms } }` |
-| OQ-14 | Webhook payload available to `agent_prompt` nodes? | Yes — inject as `{{trigger.payload}}` in the prompt context |
+| OQ-4 | Phase 2 triggers beyond webhook + composio + channel_message? | **No more in Phase 2.** New triggers require their own ADR + ticket. |
+| OQ-5 | Run-history retention default? | **30 days.** Soft-delete sweep in F2-14 per FR-1.3.4. |
+| OQ-7 | Inter-node data passing | **Templating:** `{{node.<id>.output.<jsonpath>}}` + `{{trigger.<jsonpath>}}`. Full expression engine deferred. |
+| OQ-21 | Per-node retry policy shape | **`{ max_attempts: u32, backoff: Backoff::Exponential { initial_ms, max_ms } }`.** Default `max_attempts = 1`. `on_error: Halt` wins over an exhausted budget. |
+| OQ-22 | Webhook payload available to `agent_prompt` nodes? | **Yes — `{{trigger.payload}}`.** 256 KB cap; oversize truncates with marker. |
 
-Lock each OQ in the brainstorm, drop the resolution into
-`requirements.md §8`, then commit F2-1.
+> **Numbering note:** earlier drafts of this README labelled the retry +
+> webhook-payload questions `OQ-13` / `OQ-14`. Those numbers were already
+> taken in `requirements.md §8` (drafting sub-agent discovery + chat
+> confirmation mechanism, both resolved). The Phase 2 ones are now
+> `OQ-21` / `OQ-22` in the canonical numbering.
+
+With these locked, F2-1 can commit.
 
 ---
 
