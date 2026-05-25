@@ -4,8 +4,9 @@ Phase 1 of the Workflows & Automations initiative. Lands the
 `/workflows` tab, the chat-driven creation pipeline, the executor
 + scheduler runtime, and the four bundled starter templates.
 
-> **Status:** Shipped 2026-05-21. All 15 tickets merged to
-> `alediez2048/main` (the user's fork). The upstream rollup PR
+> **Status:** Shipped 2026-05-21 (core 15 tickets), with F-16..F-21
+> Phase-1.5 hardening landed locally through 2026-05-24. All 21 tickets
+> merged to `alediez2048/main` (the user's fork). The upstream rollup PR
 > against `tinyhumansai/openhuman:main` opens once the Phase 1
 > bring-up live test passes on `alediez2048/main`.
 
@@ -50,7 +51,7 @@ The four bundled starter templates (`Automations/Templates/`):
 
 ---
 
-## The 15 tickets
+## The 21 tickets
 
 | Ticket | Commit | Subject |
 |---|---|---|
@@ -73,7 +74,8 @@ The four bundled starter templates (`Automations/Templates/`):
 | F-17 | _landed local_ | wire workflows into the Memory Tree (pre-run recall + post-run store + entity_tags) |
 | F-18 | _landed local_ | MCP server registration is user-isolation safe (stale-handle guard + orphan scanner + migration RPCs; frontend banner deferred) |
 | F-19 | _landed local_ | MCP UX hardening — Parts 1+2 landed (structured tool errors + endpoint auto-probe on add); Part 3 catalog deferred |
-| F-20 | _in flight_ | integrations_agent hardening — slug-shape validation + structured Composio tool errors + prompt sharpening (mirror F-19 for Composio) |
+| F-20 | `9f65be25` | integrations_agent hardening — slug-shape validation + structured Composio tool errors + prompt sharpening (mirror F-19 for Composio) |
+| F-21 | `29e662f5` | F-19/F-20 hardening trio — probe-then-auth in MCP auto-probe + shared verbatim-render prompt fragment with loader enforcement + classifier-drift telemetry |
 
 ### Phase 1.5 polish (post-F-15)
 

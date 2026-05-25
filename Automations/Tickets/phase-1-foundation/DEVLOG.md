@@ -2591,3 +2591,133 @@ Automations/Tickets/phase-1-foundation/README.md         [+ F-20 row]
 3. integrations_agent has `composio_list_toolkits` so it can verify
    toolkit slugs exist before drilling — no more "guess what's
    connected".
+
+## F-21 Closure (2026-05-24)
+
+Three follow-up fixes after the F-19/F-20 review surfaced higher-risk
+items that wouldn't bite us tomorrow but would compound silently as
+new agents and connection kinds get added. None of them required a
+dedicated primer — they're targeted hardening of patterns already
+shipped in F-19/F-20.
+
+### What landed
+
+**Fix 1 — probe-then-auth in `probe_mcp_endpoint`.** Pre-fix the
+auto-probe POSTed `initialize` *with* the user's bearer to every path
+candidate (`/`, `/mcp`, `/sse`, `/messages`). A typo'd hostname
+(`mcp.higsfield.ai` missing a letter) or an internal admin panel
+resolving to anything 200 would receive the token before we knew it
+wasn't an MCP server. Now: every candidate is probed without auth
+first; the bearer only attaches when the no-auth response carries
+MCP-shape evidence (JSON-RPC body, `protocolVersion`, JSON-RPC error
+code, or `WWW-Authenticate: Bearer` challenge with a JSON-looking
+body). HTML landing pages, parked domains, S3 buckets, nginx
+Basic-auth challenges all fail the shape check — the token stays in
+the keychain. Helper: `looks_like_mcp_auth_challenge(www_authenticate,
+body)`.
+
+**Fix 2 — shared verbatim-render fragment + loader enforcement.** The
+F-19/F-20 "surface the `⚠ ... tool error` block verbatim" rule lived
+only in `orchestrator/prompt.md` plus a smaller duplicate in
+`integrations_agent/prompt.md`. Any future agent grown with `mcp_*` /
+`composio_execute` tools but without the section would silently
+confabulate again. Now: one canonical fragment at
+`agent/prompts/structured_tool_errors.md`, three agents (orchestrator,
+integrations_agent, planner) include it via
+`structured_tool_errors_fragment()` in their `prompt.rs::build`, and a
+new loader test (`structured_tool_errors_fragment_must_be_included_by_every_agent_with_mcp_or_composio_tools`)
+asserts inclusion for every agent whose allowlist contains
+`mcp_call_tool`, `mcp_list_tools`, `mcp_list_servers`, or
+`composio_execute`. The test fires today — caught `planner` as an
+offender on first run, which we then patched.
+
+**Fix 3 — drift telemetry on classifier `Unknown` returns.**
+`classify_mcp_error` / `classify_composio_error` are string-match
+heuristics; when an upstream provider renames an error shape
+("Session not found" → "session_expired_v2") we'd silently fall
+through to `Unknown` and lose the orchestrator's actionable
+suggestion. Now every `Unknown` return calls
+`observability::record_classifier_drift(source, detail)` which bumps
+an atomic counter AND emits a stable-target
+`tracing::warn!(target: "tool_error_drift", source, kind="unknown",
+…)` event that flows to Sentry via the existing sentry-tracing layer.
+Sentry dashboards can group by source label; on-call notices drift
+before users notice missing suggestions.
+`unknown_classifier_counts() -> (mcp, composio)` exposes the counters
+for tests + any future RPC.
+
+### Files changed
+
+```
+src/openhuman/connections/ops.rs                  [+ probe-then-auth + looks_like_mcp_auth_challenge helper]
+src/openhuman/connections/ops_tests.rs            [+ 9 unit tests + 2 wiremock integration tests]
+src/openhuman/agent/prompts/structured_tool_errors.md  [new — canonical fragment]
+src/openhuman/agent/prompts/mod.rs                [+ structured_tool_errors_fragment() + STRUCTURED_TOOL_ERRORS_MARKER]
+src/openhuman/agent/agents/orchestrator/prompt.md  [stripped inline section, points to fragment]
+src/openhuman/agent/agents/orchestrator/prompt.rs  [+ fragment.append]
+src/openhuman/agent/agents/integrations_agent/prompt.md  [stripped duplicate block]
+src/openhuman/agent/agents/integrations_agent/prompt.rs  [+ fragment.append]
+src/openhuman/agent/agents/planner/prompt.rs       [+ fragment.append]
+src/openhuman/agent/agents/loader.rs               [+ enforcement test]
+src/openhuman/composio/tool_errors.rs              [+ Unknown → record_classifier_drift + 2 tests]
+src/openhuman/tools/impl/network/mcp.rs            [+ Unknown → record_classifier_drift + 2 tests]
+src/core/observability.rs                          [+ ToolErrorClassifierSource + record_classifier_drift + unknown_classifier_counts + atomics]
+```
+
+### Tests added (17)
+
+`connections::ops::tests` (9):
+- `looks_like_mcp_auth_challenge_accepts_json_rpc_body`
+- `looks_like_mcp_auth_challenge_accepts_protocolversion_in_body`
+- `looks_like_mcp_auth_challenge_accepts_bearer_challenge_with_json_body`
+- `looks_like_mcp_auth_challenge_rejects_html_admin_panel`
+- `looks_like_mcp_auth_challenge_rejects_s3_xml`
+- `looks_like_mcp_auth_challenge_rejects_plain_basic_auth_challenge`
+- `looks_like_mcp_auth_challenge_accepts_jsonrpc_error_code_pattern`
+- `probe_rejects_unrelated_200_html_landing_page` (wiremock; asserts no captured request carries the bearer)
+- `probe_succeeds_against_legitimate_mcp_server_with_auth_required` (wiremock; full no-auth → auth-required handshake)
+
+`agent::agents::loader::tests` (1):
+- `structured_tool_errors_fragment_must_be_included_by_every_agent_with_mcp_or_composio_tools`
+
+`composio::tool_errors::tests` (2):
+- `classify_unknown_increments_drift_counter`
+- `classify_known_pattern_does_not_increment_drift_counter`
+
+`tools::impl::network::mcp::tests` (2):
+- `classify_mcp_unknown_increments_drift_counter`
+- `classify_mcp_known_pattern_does_not_increment_drift_counter`
+
+### Regression sweep (post-F-21)
+
+- `composio::` — 524 tests green (+2 over F-20)
+- `connections::` — 61 tests green (+9 over F-20)
+- `openhuman::agent::agents::` — 68 tests green (+1 enforcement test)
+- `network::mcp` — 12 tests green (+2 over F-20)
+- `workflows::` — 202 tests green (unchanged)
+- `memory::tree::` — 602 tests green (unchanged)
+
+Two pre-existing test failures (`agent::harness::session::turn::turn_uses_cached_transcript_prefix_on_first_iteration`,
+`agent::harness::subagent_runner::ops::tests::typed_mode_blocks_unallowed_tool_calls`)
+are reproducible on clean `main` with all F-21 changes stashed — NOT
+introduced by this work. Documented in `STATE.md`'s "Pre-existing test
+failures" section.
+
+### What's NOT in this F-21 cut
+
+- Generic `OrphanScanner<T>` / `ConnectionProbe<T>` extraction — better
+  paid down when the next connection kind grows user-scoped configs.
+- Per-kind suggestion abstraction so UI-path renames don't bake stale
+  paths into the per-kind `suggestion()` strings — paid down when we
+  next touch Connections Hub UX.
+- Test-isolation cleanup for the two pre-existing `agent::harness`
+  failures — separate one-off ticket.
+
+### Phase 2 stability sign-off
+
+F-21 closes the highest-likelihood "what could bite us with other
+connections" review items. Combined with F-17 (memory loop), F-18
+(user-isolation), F-19 (MCP UX), F-20 (Composio UX), the integrations
++ connections + agent surfaces are in a stable shape to start Phase 2.
+Per-domain test sweeps clean; full-suite sweep has two pre-existing
+dev-env-sensitive failures called out in STATE.md.

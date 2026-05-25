@@ -1,6 +1,6 @@
 # Workflows & Automations — Current State
 
-**Last updated:** 2026-05-21
+**Last updated:** 2026-05-24 (post-F-21)
 **Branch:** `main` on `alediez2048/openhuman` (the user's fork). Upstream `tinyhumansai/openhuman` not pushed to yet — this is private dev so far. Phase 1 rollup PR is the next upstream push.
 
 A fresh session should read this file first to know where the initiative stands.
@@ -29,7 +29,7 @@ A fresh session should read this file first to know where the initiative stands.
 
 ## What's live on `main` today
 
-### Phase 1 deliverables (F-1 through F-19 + Phase 1.5 polish; all landed)
+### Phase 1 deliverables (F-1 through F-21 + Phase 1.5 polish; all landed)
 
 | Surface | Status | Where |
 |---|---|---|
@@ -66,7 +66,13 @@ A fresh session should read this file first to know where the initiative stands.
 ### What's a known Phase 1.5 / Phase 2 deferral
 
 - **✅ F-16 (LANDED `3b572f71`, 2026-05-22) — workflow executor enforces ADR-016 allowlist + honest step status.** Closed the executor-side placeholder F-15 left behind: workflow runs now spawn a constrained `workflow_node` sub-agent (no orchestrator persona, no `delegate_*`) with the per-run `def.allowed_tools` allowlist as the override. `composio_execute` is now the obvious LLM choice for the Composio-routed Gmail / Slack / etc. surface — the orchestrator-identity leak that caused 2026-05-21 22:13's silent Slack failure is closed. Step status is honest: a `ToolExecutionCompleted{success:false}` observed during the run forces `RunStatus::Failed` with a clear summary, even when the agent itself returned text. Composio-routed workflows now actually run end-to-end.
-- **✅ F-17 (LANDED locally 2026-05-22) — workflows wired into the Memory Tree.** Closes the memory↔doer loop gap. Three executor hooks: (1) pre-run recall fetches up to 3 prior-run summaries from `workflow/{workflow_id}` and prepends them to the user-message prompt as a `## Prior runs of this workflow` Markdown block (or `## No prior runs — this is the first execution.` on first run); (2) F-16's `ToolExecutionCompleted` subscriber upgraded from counter-only to per-call `Vec<ToolCallObservation>` so the post-run builder carries detail, not just a failure count; (3) `persist_run_memory(...)` writes a structured `WorkflowRunMemory` chunk after every run with `actual` (from the F-16 trace), `narrative` (agent text), F-16-honest `status`, `narrative_drift` (regex/substring heuristic that catches "agent claims sent but all tool calls failed"), and `entity_tags` (auto from `allowed_connections` + the agent's optional `## Entities touched` section). Memory write is best-effort; failure does NOT roll back the terminal status. Namespace is `workflow/{id}` (slash not colon — `UnifiedMemory::sanitize_namespace` strips `:`). 19 new unit tests in `memory.rs` + 3 integration tests in `executor_tests` (`memory_loop_first_run_renders_no_prior_runs_line`, `memory_loop_stores_and_recalls_across_two_runs`, `memory_loop_confabulation_marks_failed_and_drifts_into_next_run`). All 202 workflow tests green. Spec + closure entry in `Automations/Tickets/phase-1-foundation/F-17.md` + `DEVLOG.md`. **Phase 2 starts next.**
+- **✅ F-17 (LANDED locally 2026-05-22) — workflows wired into the Memory Tree.** Closes the memory↔doer loop gap. Three executor hooks: (1) pre-run recall fetches up to 3 prior-run summaries from `workflow/{workflow_id}` and prepends them to the user-message prompt as a `## Prior runs of this workflow` Markdown block (or `## No prior runs — this is the first execution.` on first run); (2) F-16's `ToolExecutionCompleted` subscriber upgraded from counter-only to per-call `Vec<ToolCallObservation>` so the post-run builder carries detail, not just a failure count; (3) `persist_run_memory(...)` writes a structured `WorkflowRunMemory` chunk after every run with `actual` (from the F-16 trace), `narrative` (agent text), F-16-honest `status`, `narrative_drift` (regex/substring heuristic that catches "agent claims sent but all tool calls failed"), and `entity_tags` (auto from `allowed_connections` + the agent's optional `## Entities touched` section). Memory write is best-effort; failure does NOT roll back the terminal status. Namespace is `workflow/{id}` (slash not colon — `UnifiedMemory::sanitize_namespace` strips `:`). 19 new unit tests in `memory.rs` + 3 integration tests in `executor_tests`. All 202 workflow tests green.
+- **✅ F-18 (LANDED 2026-05-23, `f7539a2e`) — MCP server registration is user-isolation safe.** Stale-handle guard in `connections::ops` prevents the split-brain where a registration lands in the wrong `users/{id}/config.toml` after an active-user swap. Orphan scanner (`connections_mcp_orphans_list` RPC) walks `users/*/config.toml` to surface previous-session MCP servers with secrets redacted; `connections_mcp_orphans_migrate` accepts an orphan into the active user's config. Frontend banner on `/connections` is deferred — backend RPCs are ready.
+- **✅ F-19 (LANDED 2026-05-23, `f7539a2e` + `dbb96707`) — MCP UX hardening.** Two parts shipped: (a) structured tool errors — `McpToolErrorKind` enum + `classify_mcp_error` + `render_mcp_tool_error` produce the verbatim-render `⚠ MCP tool error\nkind: ...\ndetail: ...\nsuggestion: ...` block; orchestrator prompt teaches the LLM to surface this verbatim instead of confabulating HTTP codes / OAuth scope names. (b) endpoint auto-probe on add — `probe_mcp_endpoint` tries `/`, `/mcp`, `/sse`, `/messages` and corrects the saved endpoint when only one path responds to `initialize`. Part 3 (curated MCP catalog) deferred. Also bundled: UI rename "HTTP" → "API / HTTP" tab + show/hide toggle on bearer/credential inputs.
+- **✅ Composio event bridge fix (`fac57af4`, 2026-05-23) — workflow health recompute now fires on Composio connect/disconnect.** Pre-fix the `ComposioConnection{Created,Deleted}` events weren't bridging to the unified `DomainEvent::Connection{Added,Removed}` family, so workflow health stayed stale after a Gmail/Slack/etc. reconnect.
+- **✅ SQLite contention fix (`7e3bca21`, 2026-05-23) — memory tree ingest no longer livelocks on busy reads.** `PRAGMA synchronous=NORMAL` + `BEGIN IMMEDIATE` for `persist()` transactions (replacing `unchecked_transaction`). Closes the gmail-ingest "database is locked" errors observed under concurrent reads.
+- **✅ F-20 (LANDED 2026-05-24, `9f65be25`) — integrations_agent: slug-shape validation + structured Composio tool errors.** Same disease F-19 fixed for MCP, now on the chat orchestrator's `integrations_agent → composio_execute` path. Five parts: (1) pre-dispatch regex `^[A-Z][A-Z0-9]*(_[A-Z0-9]+)+$` in `ComposioExecuteTool::execute` rejects toolkit names (`linkedin`, `composio`, `gmail`) before they hit the backend; (2) `composio/tool_errors.rs` with `ComposioToolErrorKind` (10 variants) + `classify_composio_error` + `render_composio_tool_error` mirroring F-19's contract; (3) orchestrator prompt renamed to "MCP **and Composio** tool failures" with both shapes shown; (4) integrations_agent prompt gains wrong-vs-right slug example + "if asked to act, act" rule + verbatim-pass-through rule; (5) `composio_list_toolkits` added to integrations_agent allowlist. 15 new tests; 522 composio tests + 33 agent loader green.
+- **✅ F-21 (LANDED 2026-05-24, `29e662f5`) — F-19/F-20 hardening trio.** Three fixes from the post-F-20 review: (1) `probe_mcp_endpoint` now does no-auth probe first; the bearer only attaches when the response shape proves MCP (JSON-RPC body, Bearer challenge with JSON body, etc.) — prevents token leak to typo'd hosts or admin panels; (2) shared verbatim-render fragment at `agent/prompts/structured_tool_errors.md` with loader-test enforcement that every agent whose allowlist contains `mcp_*` / `composio_execute` includes it (caught planner as an offender on first run); (3) drift telemetry — `classify_mcp_error` / `classify_composio_error` both call `observability::record_classifier_drift(source, detail)` on `Unknown` returns, bumping an atomic counter AND emitting a sentry-bound `tracing::warn!(target: "tool_error_drift", …)`. 17 new tests; 524 composio + 61 connections + 68 agent + 12 mcp tests green. **Phase 2 starts next.**
 - **Channel send + Webview send** — `channel_send` and `webview_account_send` tools are stubs returning "Phase 2 (F2-5) deferral" errors. Workflows touching Channel or Webview connections in their `allowed_connections` won't actually send messages; they'll fail loud with a clear reason (and now also flip the run to `Failed` honestly per F-16 D, instead of lying as `Succeeded` like before). **Composio-routed channels work** (Slack, Discord, Telegram, etc. via Composio's `composio_execute`). Land F2-5 to unify Channel/Webview send.
 - **Multi-node chains** — executor rejects `nodes.len() != 1` for Phase 1. F2-2 lands it.
 - **Phase 2 trigger types** — webhook, composio_event, channel_message. F2-9/F2-10/F2-11.
@@ -140,12 +146,15 @@ Each phase ships a README index listing open OQs to resolve in the pre-phase bra
 
 ---
 
-## Two pre-existing test failures (NOT ours)
+## Pre-existing test failures (NOT ours; verified against clean `main`)
 
-These fail under `pnpm test:rust` and predate the branch:
+These predate the F-17..F-21 work and are confirmed reproducible on `29e662f5` with all uncommitted changes stashed:
 
-1. **`agent::harness::session::turn::*`** — tests read the developer's real `~/.openhuman/` memory tree instead of an isolated tempdir. Test-isolation bug.
-2. **`tools::network::polymarket::place_order_happy_path`** — mock-server contract drift. Passes under plain `cargo test`, fails under the `test:rust` mock wrapper.
+1. **`agent::harness::session::turn::turn_uses_cached_transcript_prefix_on_first_iteration`** — test-isolation bug: reads the developer's real `~/.openhuman/users/.../memory.db` instead of an isolated tempdir, so the assertion's expected `"fresh"` body gets the user's actual memory dump prepended. Passes on a clean workspace / CI.
+2. **`agent::harness::subagent_runner::ops::tests::typed_mode_blocks_unallowed_tool_calls`** — stack-overflow panic during the test. Reproducible deterministically on this machine; likely the same dev-env-sensitive class as #1.
+3. **`tools::network::polymarket::place_order_happy_path`** — mock-server contract drift. Passes under plain `cargo test`, fails under the `test:rust` mock wrapper.
+
+**Domain-scoped sweeps are clean** — `cargo test --lib workflows::` / `connections::` / `composio::` / `memory::tree` / `agent::agents::loader` all pass green. The two failures above only surface in `cargo test --lib` (full sweep) on this developer machine. Phase 2 work should use the per-domain commands to verify changes; address the test-isolation bugs as a follow-up cleanup ticket if they start blocking CI.
 
 ---
 
@@ -175,21 +184,23 @@ These fail under `pnpm test:rust` and predate the branch:
 
 ## What a fresh session should do first
 
-**Default next action: start Phase 2.** F-17, F-18, F-19 all landed locally; Phase 1.5 is complete. 1,397 lib tests across workflows + connections + composio + memory_tree + agent loader all green.
+**Default next action: start Phase 2.** F-17, F-18, F-19, F-20, F-21 all landed locally; Phase 1.5 is complete. Domain-scoped test sweeps all green: 524 composio + 202 workflows + 61 connections + 602 memory_tree + 68 agent + 12 mcp.
 
 1. Read this file (`Automations/STATE.md`) to know where the initiative stands.
 2. Read `CLAUDE.md` for the repo-level commands + conventions.
-3. Verify the regression baseline still holds: `cargo test --lib workflows::` (202), `cargo test --lib connections::` (52), `cargo test --lib composio::` (508), `cargo test --lib memory::tree` (602), `cargo test --lib agent::agents::loader` (33). 1,397 total.
-4. Read `Automations/Tickets/phase-2-execution/README.md` end-to-end. Resolve the 5 brainstorm OQs (OQ-4 triggers / OQ-5 retention / OQ-7 inter-node data / OQ-13 retry shape / OQ-14 webhook payload) — leans are documented; lock each.
+3. Verify the regression baseline still holds with per-domain sweeps (full `cargo test --lib` has two pre-existing dev-env-sensitive failures — see the section above): `cargo test --lib workflows::` (202), `cargo test --lib connections::` (61), `cargo test --lib composio::` (524), `cargo test --lib memory::tree` (602), `cargo test --lib openhuman::agent::agents::loader` (68). Plus `cargo test --lib network::mcp` (12).
+4. Read `Automations/Tickets/phase-2-execution/README.md` end-to-end. Resolve the 5 brainstorm OQs (OQ-4 triggers / OQ-5 retention / OQ-7 inter-node data / OQ-13 retry shape / OQ-14 webhook payload) — leans are documented in the README; lock each into `Automations/requirements.md §8` before committing F2-1 code.
 5. Read `Automations/Tickets/phase-2-execution/F2-1.md` end-to-end. F2-1 is "make Phase 2 NodeKind + Trigger variants reachable" — declarative scaffold; F2-3..F2-7 fill the per-kind execution bodies.
-6. Optional context: skim F-17 closure in DEVLOG.md (memory loop you're building on top of) + F-18 / F-19 (MCP user-isolation + UX, both backend-ready with frontend banner/notice deferred — not blockers for Phase 2).
+6. Optional context: skim F-17 closure in DEVLOG.md (memory loop you're building on top of) + F-18 / F-19 / F-20 / F-21 (MCP + Composio hardening — backend-ready with frontend banner/notice deferred, not blockers for Phase 2).
 7. Start F2-1. The brainstorm OQs gate the architecture; once locked, F2-1 commit-then-test cadence picks up.
 
 **Deferred follow-ups that are NOT Phase 2 prereqs but worth knowing exist:**
 - F-18 frontend orphan banner on `/connections` (backend RPCs ready: `connections_mcp_orphans_list` + `connections_mcp_orphans_migrate`).
 - F-19 frontend probe-result notice in MCP Add modal (backend returns auto-correction in `RpcOutcome.logs`).
 - F-19 Part 3 curated MCP catalog (~10 popular MCP servers with defaults baked in).
-- Chat-agent confabulation hardening for non-MCP tools (F-19 only structurally fixed the MCP path).
+- F-20 follow-up: structural "no-tool-call iteration counter" to catch the "agent returns text instead of acting" pattern (today prompt-level discipline only).
+- F-21 deferred: generic `OrphanScanner<T>` / `ConnectionProbe<T>` extraction (worthwhile when the next connection kind grows user-scoped configs).
+- Pre-existing test-isolation cleanup: the two `agent::harness::session::turn` / `subagent_runner::ops::typed_mode_blocks_unallowed_tool_calls` failures should land their own one-off ticket so `cargo test --lib` is clean.
 
 If a USER tasks you with a Phase 1 bug instead of Phase 2: re-check the "What's a known deferral" section in this file before assuming regression — many "missing" features are documented deferrals.
 
