@@ -32,6 +32,7 @@ fn sample_create(origin: WorkflowOrigin) -> CreateWorkflowRequest {
                 model_tier: None,
             }),
             position: None,
+            retry_policy: None,
         }],
         edges: vec![],
         settings: None,

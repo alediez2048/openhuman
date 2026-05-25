@@ -75,6 +75,64 @@ pub struct Node {
     /// the JSON round-trip is stable, even when Phase 1's UI ignores it.
     #[serde(default)]
     pub position: Option<CanvasPosition>,
+    /// F2-8 per-node retry policy. `None` = no retry (single attempt).
+    /// Additive — pre-F2-8 workflows persist + deserialise unchanged.
+    #[serde(default)]
+    pub retry_policy: Option<RetryPolicy>,
+}
+
+/// Per-node retry policy. Wraps each `dispatch_node` call in a retry
+/// loop with exponential backoff. The shape is locked by OQ-21 in
+/// `requirements.md §8`:
+///
+///   { max_attempts: u32, backoff: Exponential { initial_ms, max_ms } }
+///
+/// Default behaviour (when `Node.retry_policy = None`): single
+/// attempt, no retry. `on_error: Halt` (workflow-level) wins over an
+/// exhausted retry budget — the run terminates Failed when retries
+/// run out.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RetryPolicy {
+    /// Maximum number of attempts INCLUDING the first one. `1` = no
+    /// retry (the F2-2 default). Validator enforces `1 <= max_attempts <= 5`.
+    pub max_attempts: u32,
+    /// Backoff schedule between attempts. Today only `Exponential`
+    /// is supported; `Fixed` / `Linear` can land later if needed.
+    pub backoff: BackoffSpec,
+    /// Which error kinds trigger a retry. Empty = retry every error.
+    /// Today the executor passes through `Unknown` for all errors —
+    /// callers wanting strict per-kind retry policies wait for a
+    /// future ticket that surfaces structured error kinds from
+    /// dispatch_node.
+    #[serde(default)]
+    pub retry_on: Vec<RetryableError>,
+}
+
+/// Backoff schedule. `Exponential { initial_ms, max_ms }`:
+///   attempt 1 → no wait (this IS the first attempt)
+///   attempt 2 → wait `initial_ms`
+///   attempt 3 → wait `min(2 * initial_ms, max_ms)`
+///   attempt N → wait `min(initial_ms * 2^(N-2), max_ms)`
+///
+/// Validator enforces `100 <= initial_ms <= 10_000`, `max_ms <= 60_000`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum BackoffSpec {
+    Exponential { initial_ms: u32, max_ms: u32 },
+}
+
+/// Classes of error a `RetryPolicy.retry_on` can target. Reserved
+/// for a future ticket that surfaces structured kinds from
+/// `dispatch_node` — today the executor's retry loop treats every
+/// dispatch error as retryable (subject to `max_attempts`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum RetryableError {
+    HttpStatus5xx,
+    Timeout,
+    RateLimited,
+    /// Any error — escape hatch / default surface today.
+    Any,
 }
 
 /// Directional edge between two nodes. Phase 1 workflows have at most one

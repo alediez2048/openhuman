@@ -77,6 +77,7 @@ fn valid_proposal() -> WorkflowProposal {
                 model_tier: None,
             }),
             position: None,
+            retry_policy: None,
         }],
         edges: vec![],
         settings: WorkflowSettings::default(),

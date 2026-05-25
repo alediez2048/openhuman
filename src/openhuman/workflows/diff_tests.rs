@@ -29,6 +29,7 @@ fn sample_workflow(name: &str) -> Workflow {
                 model_tier: None,
             }),
             position: None,
+            retry_policy: None,
         }],
         edges: vec![],
         settings: WorkflowSettings::default(),

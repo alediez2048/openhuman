@@ -113,6 +113,7 @@ fn create_request(prompt: &str) -> CreateWorkflowRequest {
                 model_tier: None,
             }),
             position: None,
+            retry_policy: None,
         }],
         edges: vec![],
         settings: None,
@@ -1215,6 +1216,7 @@ fn dispatch_test_node(kind: NodeKind, config: NodeConfig) -> Node {
         kind,
         config,
         position: None,
+        retry_policy: None,
     }
 }
 
@@ -1256,6 +1258,7 @@ fn topological_sort_single_node_no_edges() {
             model_tier: None,
         }),
         position: None,
+        retry_policy: None,
     }];
     let order = executor::topological_sort(&"wf".to_string(), &nodes, &[]).unwrap();
     assert_eq!(order, vec!["n1".to_string()]);
@@ -1274,6 +1277,7 @@ fn topological_sort_linear_chain_three_nodes() {
                 model_tier: None,
             }),
             position: None,
+            retry_policy: None,
         },
         Node {
             id: "b".into(),
@@ -1285,6 +1289,7 @@ fn topological_sort_linear_chain_three_nodes() {
                 model_tier: None,
             }),
             position: None,
+            retry_policy: None,
         },
         Node {
             id: "c".into(),
@@ -1296,6 +1301,7 @@ fn topological_sort_linear_chain_three_nodes() {
                 model_tier: None,
             }),
             position: None,
+            retry_policy: None,
         },
     ];
     let edges = vec![
@@ -1328,6 +1334,7 @@ fn topological_sort_rejects_cycle() {
                 model_tier: None,
             }),
             position: None,
+            retry_policy: None,
         },
         Node {
             id: "b".into(),
@@ -1339,6 +1346,7 @@ fn topological_sort_rejects_cycle() {
                 model_tier: None,
             }),
             position: None,
+            retry_policy: None,
         },
     ];
     // a → b → a cycle.
@@ -1374,6 +1382,7 @@ fn topological_sort_orphan_nodes_appear_in_declaration_order() {
                 model_tier: None,
             }),
             position: None,
+            retry_policy: None,
         },
         Node {
             id: "b".into(),
@@ -1385,6 +1394,7 @@ fn topological_sort_orphan_nodes_appear_in_declaration_order() {
                 model_tier: None,
             }),
             position: None,
+            retry_policy: None,
         },
         Node {
             id: "c".into(),
@@ -1396,6 +1406,7 @@ fn topological_sort_orphan_nodes_appear_in_declaration_order() {
                 model_tier: None,
             }),
             position: None,
+            retry_policy: None,
         },
     ];
     let edges = vec![Edge {
@@ -1447,6 +1458,7 @@ fn f2_2_agent_node(id: &str, prompt: &str) -> Node {
             model_tier: None,
         }),
         position: None,
+        retry_policy: None,
     }
 }
 
@@ -1699,6 +1711,7 @@ async fn tool_call_node_runs_via_test_override() {
                 arguments_template: serde_json::json!({}),
             }),
             position: None,
+            retry_policy: None,
         }],
         vec![],
     );
@@ -1767,6 +1780,7 @@ async fn tool_call_output_flows_into_downstream_agent_prompt_template() {
                     arguments_template: serde_json::json!({}),
                 }),
                 position: None,
+                retry_policy: None,
             },
             f2_2_agent_node("n2", "downstream sees: {{node.n1.output.text}}"),
         ],
@@ -1876,6 +1890,7 @@ async fn tool_call_arguments_template_substitutes_upstream_output() {
                     arguments_template: serde_json::json!({}),
                 }),
                 position: None,
+                retry_policy: None,
             },
             Node {
                 id: "n2".into(),
@@ -1888,6 +1903,7 @@ async fn tool_call_arguments_template_substitutes_upstream_output() {
                     }),
                 }),
                 position: None,
+                retry_policy: None,
             },
         ],
         vec![Edge {
@@ -1953,6 +1969,7 @@ async fn tool_call_with_is_error_true_halts_run() {
                     arguments_template: serde_json::json!({}),
                 }),
                 position: None,
+                retry_policy: None,
             },
             f2_2_agent_node("n2", "should never run"),
         ],
@@ -2028,6 +2045,7 @@ async fn http_request_node_succeeds_via_test_override() {
                 response_capture: Default::default(),
             }),
             position: None,
+            retry_policy: None,
         }],
         vec![],
     );
@@ -2111,6 +2129,7 @@ async fn http_request_templating_substitutes_into_path_and_body() {
                     arguments_template: serde_json::json!({}),
                 }),
                 position: None,
+                retry_policy: None,
             },
             Node {
                 id: "n2".into(),
@@ -2124,6 +2143,7 @@ async fn http_request_templating_substitutes_into_path_and_body() {
                     response_capture: Default::default(),
                 }),
                 position: None,
+                retry_policy: None,
             },
         ],
         vec![Edge {
@@ -2201,6 +2221,7 @@ async fn http_request_4xx_response_halts_run() {
                     response_capture: Default::default(),
                 }),
                 position: None,
+                retry_policy: None,
             },
             f2_2_agent_node("n2", "should never run"),
         ],
@@ -2276,6 +2297,7 @@ async fn http_request_connection_not_found_fails_cleanly() {
                 response_capture: Default::default(),
             }),
             position: None,
+            retry_policy: None,
         }],
         vec![],
     );
@@ -2338,6 +2360,7 @@ async fn channel_message_node_runs_via_test_override() {
                 body_template: "hello, world".into(),
             }),
             position: None,
+            retry_policy: None,
         }],
         vec![],
     );
@@ -2418,6 +2441,7 @@ async fn channel_message_body_templates_upstream_node_output() {
                     arguments_template: serde_json::json!({}),
                 }),
                 position: None,
+                retry_policy: None,
             },
             Node {
                 id: "n2".into(),
@@ -2428,6 +2452,7 @@ async fn channel_message_body_templates_upstream_node_output() {
                     body_template: "daily: {{node.n1.output.text}}".into(),
                 }),
                 position: None,
+                retry_policy: None,
             },
         ],
         vec![Edge {
@@ -2488,6 +2513,7 @@ async fn channel_message_send_failure_halts_run() {
                     body_template: "test".into(),
                 }),
                 position: None,
+                retry_policy: None,
             },
             f2_2_agent_node("n2", "should never run"),
         ],
@@ -2540,6 +2566,7 @@ fn cond_workflow(id: &str, cond_cfg: ConditionConfig) -> Workflow {
                 kind: NodeKind::Condition,
                 config: NodeConfig::Condition(cond_cfg),
                 position: None,
+                retry_policy: None,
             },
             f2_2_agent_node("then_node", "ran the THEN branch"),
             f2_2_agent_node("else_node", "ran the ELSE branch"),
@@ -2652,6 +2679,7 @@ async fn condition_contains_with_templated_left_routes_correctly() {
                     arguments_template: serde_json::json!({}),
                 }),
                 position: None,
+                retry_policy: None,
             },
             Node {
                 id: "cond".into(),
@@ -2664,6 +2692,7 @@ async fn condition_contains_with_templated_left_routes_correctly() {
                     else_node_id: Some("queue".into()),
                 }),
                 position: None,
+                retry_policy: None,
             },
             f2_2_agent_node("alarm", "FIRE THE ALARM"),
             f2_2_agent_node("queue", "queue for tomorrow"),
@@ -2757,6 +2786,7 @@ async fn condition_halt_on_false_when_no_else_branch() {
                     else_node_id: None,
                 }),
                 position: None,
+                retry_policy: None,
             },
             f2_2_agent_node("then_node", "should not run"),
         ],
@@ -2862,6 +2892,7 @@ async fn delay_node_pauses_then_continues() {
                 kind: NodeKind::Delay,
                 config: NodeConfig::Delay(DelayConfig { seconds: 30 }),
                 position: None,
+                retry_policy: None,
             },
             f2_2_agent_node("b", "last"),
         ],
@@ -2941,6 +2972,7 @@ async fn delay_short_real_sleep_does_not_block_forever() {
             kind: NodeKind::Delay,
             config: NodeConfig::Delay(DelayConfig { seconds: 1 }),
             position: None,
+            retry_policy: None,
         }],
         vec![],
     );
@@ -2979,5 +3011,239 @@ async fn delay_short_real_sleep_does_not_block_forever() {
     assert!(
         elapsed >= std::time::Duration::from_millis(900),
         "real sleep must produce a real wait; got elapsed {elapsed:?}"
+    );
+}
+
+// ── F2-8: retry + on_error policy ──────────────────────────────────────
+
+/// Serialize tests that install the process-wide
+/// `RETRY_BACKOFF_OVERRIDE` AND the `TOOL_CALL_OVERRIDE` (most
+/// F2-8 tests use both — tool_call fails then succeeds, or fails
+/// every time, and retry backoff is short-circuited).
+static RETRY_TEST_LOCK: once_cell::sync::Lazy<parking_lot::Mutex<()>> =
+    once_cell::sync::Lazy::new(|| parking_lot::Mutex::new(()));
+
+#[tokio::test]
+async fn retry_policy_succeeds_on_third_attempt_after_two_failures() {
+    use crate::openhuman::workflows::executor::{
+        clear_test_retry_backoff_override, clear_test_tool_call_override,
+        set_test_retry_backoff_override, set_test_tool_call_override,
+    };
+    let _lock_retry = RETRY_TEST_LOCK.lock();
+    let _lock_tc = TOOL_CALL_TEST_LOCK.lock();
+
+    // Stub the tool: fail attempts 1 + 2, succeed on attempt 3.
+    let attempt_counter: Arc<std::sync::atomic::AtomicU32> =
+        Arc::new(std::sync::atomic::AtomicU32::new(0));
+    let counter = Arc::clone(&attempt_counter);
+    set_test_tool_call_override(move |_name, _args, _ctx| {
+        let counter = Arc::clone(&counter);
+        async move {
+            let n = counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+            if n < 3 {
+                Err::<serde_json::Value, String>(format!("synthetic transient failure #{n}"))
+            } else {
+                Ok(serde_json::json!({ "text": "ok on attempt 3", "is_error": false }))
+            }
+        }
+    });
+
+    // Skip the real backoff sleep — record requested ms for assertion.
+    let waits: Arc<parking_lot::Mutex<Vec<u64>>> = Arc::new(parking_lot::Mutex::new(Vec::new()));
+    let waits_writer = Arc::clone(&waits);
+    set_test_retry_backoff_override(move |ms| {
+        let waits_writer = Arc::clone(&waits_writer);
+        async move {
+            waits_writer.lock().push(ms);
+        }
+    });
+
+    let (_dir, config) = config_with_temp_workspace();
+    let workflow = f2_2_workflow(
+        &format!("wf-retry-ok-{}", uuid::Uuid::new_v4()),
+        vec![Node {
+            id: "n1".into(),
+            kind: NodeKind::ToolCall,
+            config: NodeConfig::ToolCall(ToolCallConfig {
+                tool_name: "current_time".into(),
+                arguments_template: serde_json::json!({}),
+            }),
+            position: None,
+            retry_policy: Some(RetryPolicy {
+                max_attempts: 3,
+                backoff: BackoffSpec::Exponential {
+                    initial_ms: 100,
+                    max_ms: 60_000,
+                },
+                retry_on: vec![],
+            }),
+        }],
+        vec![],
+    );
+    store::insert_workflow(&config, &workflow).expect("insert_workflow");
+
+    executor::dispatch_run(
+        &config,
+        workflow.id.clone(),
+        TriggerSource::Manual {
+            initiator: "test".into(),
+        },
+    )
+    .await
+    .expect("dispatch_run");
+    let run = wait_for_terminal_run(&config, &workflow.id).await;
+    clear_test_tool_call_override();
+    clear_test_retry_backoff_override();
+
+    assert!(
+        matches!(run.status, RunStatus::Succeeded),
+        "retry must succeed on attempt 3; got {:?} (err: {:?})",
+        run.status,
+        run.error
+    );
+    assert_eq!(
+        attempt_counter.load(std::sync::atomic::Ordering::SeqCst),
+        3,
+        "stub must have fired exactly 3 times"
+    );
+    // Two backoffs (before attempts 2 + 3).
+    let observed_waits = waits.lock().clone();
+    assert_eq!(observed_waits.len(), 2, "two backoff sleeps");
+    // Exponential schedule: 100ms before attempt 2, 200ms before attempt 3.
+    assert_eq!(observed_waits[0], 100);
+    assert_eq!(observed_waits[1], 200);
+}
+
+#[tokio::test]
+async fn retry_policy_exhaustion_then_halt_on_error_fails_run() {
+    use crate::openhuman::workflows::executor::{
+        clear_test_retry_backoff_override, clear_test_tool_call_override,
+        set_test_retry_backoff_override, set_test_tool_call_override,
+    };
+    let _lock_retry = RETRY_TEST_LOCK.lock();
+    let _lock_tc = TOOL_CALL_TEST_LOCK.lock();
+    set_test_tool_call_override(|_name, _args, _ctx| async move {
+        Err::<serde_json::Value, String>("synthetic permanent failure".into())
+    });
+    set_test_retry_backoff_override(|_ms| async move {});
+
+    let (_dir, config) = config_with_temp_workspace();
+    // Default workflow.settings.on_error = Halt.
+    let workflow = f2_2_workflow(
+        &format!("wf-retry-halt-{}", uuid::Uuid::new_v4()),
+        vec![
+            Node {
+                id: "n1".into(),
+                kind: NodeKind::ToolCall,
+                config: NodeConfig::ToolCall(ToolCallConfig {
+                    tool_name: "current_time".into(),
+                    arguments_template: serde_json::json!({}),
+                }),
+                position: None,
+                retry_policy: Some(RetryPolicy {
+                    max_attempts: 3,
+                    backoff: BackoffSpec::Exponential {
+                        initial_ms: 100,
+                        max_ms: 60_000,
+                    },
+                    retry_on: vec![],
+                }),
+            },
+            f2_2_agent_node("n2", "should never run under Halt"),
+        ],
+        vec![Edge {
+            from: "n1".into(),
+            to: "n2".into(),
+        }],
+    );
+    store::insert_workflow(&config, &workflow).expect("insert_workflow");
+
+    executor::dispatch_run(
+        &config,
+        workflow.id.clone(),
+        TriggerSource::Manual {
+            initiator: "test".into(),
+        },
+    )
+    .await
+    .expect("dispatch_run");
+    let run = wait_for_terminal_run(&config, &workflow.id).await;
+    clear_test_tool_call_override();
+    clear_test_retry_backoff_override();
+
+    assert!(matches!(run.status, RunStatus::Failed));
+    let err = run.error.as_deref().unwrap_or("");
+    assert!(err.contains("node `n1` failed"));
+    let (_run, steps) = store::get_run(&config, &run.id).unwrap().expect("run row");
+    assert!(
+        steps.iter().all(|s| s.node_id != "n2"),
+        "n2 must not run under Halt policy"
+    );
+}
+
+#[tokio::test]
+async fn on_error_continue_advances_past_failed_step() {
+    use crate::openhuman::workflows::executor::{
+        clear_test_retry_backoff_override, clear_test_tool_call_override,
+        set_test_retry_backoff_override, set_test_tool_call_override,
+    };
+    let _lock_retry = RETRY_TEST_LOCK.lock();
+    let _lock_tc = TOOL_CALL_TEST_LOCK.lock();
+    // n1 (tool_call) fails; n2 (agent_prompt via stub) succeeds.
+    set_test_tool_call_override(|_name, _args, _ctx| async move {
+        Err::<serde_json::Value, String>("n1 always fails".into())
+    });
+    set_test_retry_backoff_override(|_ms| async move {});
+
+    let (_dir, config) = config_with_temp_workspace();
+    // settings.on_error = Continue.
+    let mut workflow = f2_2_workflow(
+        &format!("wf-continue-{}", uuid::Uuid::new_v4()),
+        vec![
+            Node {
+                id: "n1".into(),
+                kind: NodeKind::ToolCall,
+                config: NodeConfig::ToolCall(ToolCallConfig {
+                    tool_name: "current_time".into(),
+                    arguments_template: serde_json::json!({}),
+                }),
+                position: None,
+                retry_policy: None,
+            },
+            f2_2_agent_node("n2", "I run even when n1 failed"),
+        ],
+        vec![Edge {
+            from: "n1".into(),
+            to: "n2".into(),
+        }],
+    );
+    workflow.settings.on_error = OnErrorPolicy::Continue;
+    store::insert_workflow(&config, &workflow).expect("insert_workflow");
+
+    executor::dispatch_run(
+        &config,
+        workflow.id.clone(),
+        TriggerSource::Manual {
+            initiator: "test".into(),
+        },
+    )
+    .await
+    .expect("dispatch_run");
+    let run = wait_for_terminal_run(&config, &workflow.id).await;
+    clear_test_tool_call_override();
+    clear_test_retry_backoff_override();
+
+    // Overall run is Failed (a step failed) but n2 STILL RAN.
+    assert!(
+        matches!(run.status, RunStatus::Failed),
+        "Continue policy still marks the run Failed when any step failed; got {:?}",
+        run.status
+    );
+    let (_run, steps) = store::get_run(&config, &run.id).unwrap().expect("run row");
+    let step_ids: Vec<&str> = steps.iter().map(|s| s.node_id.as_str()).collect();
+    assert!(step_ids.contains(&"n1"));
+    assert!(
+        step_ids.contains(&"n2"),
+        "n2 MUST have run under Continue policy; got steps: {step_ids:?}"
     );
 }

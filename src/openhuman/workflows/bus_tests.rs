@@ -43,6 +43,7 @@ fn workflow_referencing(id: &str, r#ref: ConnectionRef, initial: WorkflowHealth)
                 model_tier: None,
             }),
             position: None,
+            retry_policy: None,
         }],
         edges: vec![],
         settings: WorkflowSettings::default(),

@@ -46,6 +46,7 @@ fn workflow_with(allowed: Vec<ConnectionRef>) -> Workflow {
                 model_tier: None,
             }),
             position: None,
+            retry_policy: None,
         }],
         edges: vec![],
         settings: WorkflowSettings::default(),
@@ -251,6 +252,7 @@ fn referenced_connections_walks_all_agent_prompt_nodes() {
             model_tier: None,
         }),
         position: None,
+        retry_policy: None,
     });
 
     let refs = referenced_connections(&wf);

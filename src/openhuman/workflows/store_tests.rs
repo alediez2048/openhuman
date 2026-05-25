@@ -189,6 +189,7 @@ fn insert_minimal_workflow_with_ref(config: &Config, id: &str, r#ref: Connection
                 model_tier: None,
             }),
             position: None,
+            retry_policy: None,
         }],
         edges: vec![],
         settings: WorkflowSettings::default(),

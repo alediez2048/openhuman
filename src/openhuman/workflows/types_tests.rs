@@ -32,6 +32,7 @@ fn sample_workflow(origin: WorkflowOrigin) -> Workflow {
                 model_tier: None,
             }),
             position: None,
+            retry_policy: None,
         }],
         edges: vec![],
         settings: WorkflowSettings::default(),

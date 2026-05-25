@@ -45,7 +45,7 @@ use crate::openhuman::connections::types::ConnectionRef;
 use crate::openhuman::cron::normalize_expression;
 use crate::openhuman::workflows::health::ConnectionsSnapshot;
 use crate::openhuman::workflows::types::{
-    NodeConfig, NodeKind, ProposalValidationError, Trigger, WorkflowProposal,
+    BackoffSpec, NodeConfig, NodeKind, ProposalValidationError, Trigger, WorkflowProposal,
 };
 use cron::Schedule as CronSchedule;
 use std::collections::HashSet;
@@ -181,6 +181,54 @@ pub fn validate(
     // resolution against the encrypted-credential store) live in the
     // per-kind executor bodies (F2-3..F2-7) so the validator stays
     // I/O-free per NFR-2.1.5.
+    //
+    // F2-8 also validates the per-node `retry_policy` bounds: OQ-21
+    // locks the surface (`requirements.md §8`).
+    for node in &proposal.nodes {
+        if let Some(retry) = &node.retry_policy {
+            if retry.max_attempts < 1 || retry.max_attempts > 5 {
+                return Err(ProposalValidationError::InvalidNodeConfig {
+                    node_id: node.id.clone(),
+                    node_kind: node.kind,
+                    reason: format!(
+                        "retry_policy.max_attempts must be in [1, 5]; got {}",
+                        retry.max_attempts
+                    ),
+                });
+            }
+            match &retry.backoff {
+                BackoffSpec::Exponential { initial_ms, max_ms } => {
+                    if *initial_ms < 100 || *initial_ms > 10_000 {
+                        return Err(ProposalValidationError::InvalidNodeConfig {
+                            node_id: node.id.clone(),
+                            node_kind: node.kind,
+                            reason: format!(
+                                "retry_policy.backoff.initial_ms must be in [100, 10000]; got {initial_ms}"
+                            ),
+                        });
+                    }
+                    if *max_ms > 60_000 {
+                        return Err(ProposalValidationError::InvalidNodeConfig {
+                            node_id: node.id.clone(),
+                            node_kind: node.kind,
+                            reason: format!(
+                                "retry_policy.backoff.max_ms must be ≤ 60000; got {max_ms}"
+                            ),
+                        });
+                    }
+                    if *max_ms < *initial_ms {
+                        return Err(ProposalValidationError::InvalidNodeConfig {
+                            node_id: node.id.clone(),
+                            node_kind: node.kind,
+                            reason: format!(
+                                "retry_policy.backoff.max_ms ({max_ms}) must be ≥ initial_ms ({initial_ms})"
+                            ),
+                        });
+                    }
+                }
+            }
+        }
+    }
     for node in &proposal.nodes {
         match &node.config {
             NodeConfig::AgentPrompt(cfg) => {

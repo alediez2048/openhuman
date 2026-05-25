@@ -865,8 +865,14 @@ async fn execute_inner(config: Config, workflow: Workflow, run: Run) {
             break;
         }
 
-        let outcome =
-            tokio::time::timeout(remaining, dispatch_node(&config, &run, node, &ctx)).await;
+        // F2-8: wrap dispatch in the per-node retry loop. The wrapper
+        // honours `node.retry_policy` (None = single attempt) and
+        // shares the per-run wall-clock budget.
+        let outcome = tokio::time::timeout(
+            remaining,
+            dispatch_node_with_retry(&config, &run, node, &ctx),
+        )
+        .await;
 
         match outcome {
             Ok(Ok(body)) => {
@@ -938,12 +944,38 @@ async fn execute_inner(config: Config, workflow: Workflow, run: Run) {
                 }
             }
             Ok(Err(err)) => {
-                // F2-2 `on_error: Halt` (workflow-level default) —
-                // first failure terminates. F2-8 will branch here on
-                // per-node Continue policy.
-                terminal_status = RunStatus::Failed;
-                terminal_error = Some(format!("node `{}` failed: {err}", node.id));
-                break;
+                // F2-8: honour the workflow-level `on_error` policy.
+                //   - `Halt` (Phase-1 default): mark run Failed, stop.
+                //   - `Continue`: log the per-step failure, advance
+                //     to the next node, mark run Failed at the end
+                //     (so the user sees the overall workflow as
+                //     having had at least one failed step — chain
+                //     completion AND failure are both honest).
+                tracing::warn!(
+                    target: "workflows-run",
+                    run = %run.id,
+                    node = %node.id,
+                    "[workflows-run] node failed after retries: {err}"
+                );
+                match workflow.settings.on_error {
+                    crate::openhuman::workflows::types::OnErrorPolicy::Halt => {
+                        terminal_status = RunStatus::Failed;
+                        terminal_error = Some(format!("node `{}` failed: {err}", node.id));
+                        break;
+                    }
+                    crate::openhuman::workflows::types::OnErrorPolicy::Continue => {
+                        // Per-step failure recorded already by the
+                        // executor body. Mark the overall run Failed
+                        // (preserve the first failure as the
+                        // terminal_error) and continue walking.
+                        if terminal_error.is_none() {
+                            terminal_error = Some(format!("node `{}` failed: {err}", node.id));
+                        }
+                        terminal_status = RunStatus::Failed;
+                        cursor += 1;
+                        continue;
+                    }
+                }
             }
             Err(_elapsed) => {
                 terminal_status = RunStatus::TimedOut;
@@ -1079,6 +1111,129 @@ pub(crate) async fn dispatch_node(
         NodeConfig::Condition(_) => execute_condition(config, run, node, ctx).await,
         NodeConfig::Delay(_) => execute_delay(config, run, node, ctx).await,
     }
+}
+
+/// F2-8: wraps `dispatch_node` in a per-node retry loop respecting
+/// `Node.retry_policy`. `None` policy → single attempt (no retry,
+/// preserves F2-2 behaviour). On retry-eligible failure, sleeps the
+/// exponential backoff and re-dispatches; on success at any attempt,
+/// returns the body. On exhaustion, returns the last failure.
+///
+/// Publishes `DomainEvent::WorkflowRunStepRetried` per retry so
+/// observability can chart retry rates.
+///
+/// Today every error is retry-eligible (matches `RetryableError::Any`).
+/// Once `dispatch_node` surfaces structured error kinds, this loop
+/// will respect `retry_policy.retry_on` filtering.
+pub(crate) async fn dispatch_node_with_retry(
+    config: &Config,
+    run: &Run,
+    node: &Node,
+    ctx: &crate::openhuman::workflows::templating::NodeContext,
+) -> Result<serde_json::Value> {
+    use crate::openhuman::workflows::types::BackoffSpec;
+    let (max_attempts, backoff): (u32, Option<BackoffSpec>) = match &node.retry_policy {
+        Some(p) => (p.max_attempts.max(1), Some(p.backoff.clone())),
+        None => (1, None),
+    };
+    let mut last_err: Option<anyhow::Error> = None;
+    for attempt in 1..=max_attempts {
+        match dispatch_node(config, run, node, ctx).await {
+            Ok(body) => {
+                if attempt > 1 {
+                    tracing::info!(
+                        target: "workflows-run",
+                        run = %run.id,
+                        node = %node.id,
+                        attempt,
+                        "[workflows-run] node succeeded on retry"
+                    );
+                }
+                return Ok(body);
+            }
+            Err(err) => {
+                last_err = Some(err);
+                if attempt < max_attempts {
+                    // Compute backoff for the NEXT attempt's wait.
+                    let wait_ms = if let Some(BackoffSpec::Exponential { initial_ms, max_ms }) =
+                        backoff.as_ref()
+                    {
+                        // Current `attempt` (1-indexed) just failed.
+                        // Wait BEFORE the next attempt (= attempt+1)
+                        // is `initial_ms * 2^(attempt-1)`, capped at
+                        // `max_ms`. So attempt 1 fails → wait
+                        // `initial_ms * 1 = initial_ms`; attempt 2 →
+                        // `initial_ms * 2`; attempt 3 → `initial_ms * 4`; …
+                        let shift = (attempt as u32).saturating_sub(1);
+                        let factor: u64 = 1u64.checked_shl(shift).unwrap_or(u64::MAX);
+                        let raw = (*initial_ms as u64).saturating_mul(factor);
+                        raw.min(*max_ms as u64)
+                    } else {
+                        0
+                    };
+                    publish_global(DomainEvent::WorkflowRunStepRetried {
+                        run_id: run.id.clone(),
+                        node_id: node.id.clone(),
+                        attempt: attempt + 1,
+                        wait_ms,
+                    });
+                    tracing::warn!(
+                        target: "workflows-run",
+                        run = %run.id,
+                        node = %node.id,
+                        attempt,
+                        next_attempt = attempt + 1,
+                        wait_ms,
+                        "[workflows-run] node failed; retrying after backoff"
+                    );
+                    if wait_ms > 0 {
+                        if let Some(stub) = test_retry_backoff_override() {
+                            stub(wait_ms).await;
+                        } else {
+                            tokio::time::sleep(std::time::Duration::from_millis(wait_ms)).await;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Err(last_err.unwrap_or_else(|| anyhow::anyhow!("retry loop exhausted without recording error")))
+}
+
+// ── Test-only backoff override (F2-8) ──────────────────────────────────
+
+type RetryBackoffStubFn = Box<
+    dyn Fn(u64) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> + Send + Sync,
+>;
+
+static RETRY_BACKOFF_OVERRIDE: OnceLock<Mutex<Option<Arc<RetryBackoffStubFn>>>> = OnceLock::new();
+
+/// Test-only hook to short-circuit the retry-loop backoff sleep so
+/// tests don't wait real wall-clock time between attempts. Receives
+/// the requested `wait_ms` so a test can assert on the schedule
+/// while skipping the actual sleep.
+#[cfg(any(test, feature = "e2e-test-support"))]
+pub fn set_test_retry_backoff_override<F, Fut>(stub: F)
+where
+    F: Fn(u64) -> Fut + Send + Sync + 'static,
+    Fut: std::future::Future<Output = ()> + Send + 'static,
+{
+    let boxed: RetryBackoffStubFn = Box::new(move |ms| Box::pin(stub(ms)));
+    let slot = RETRY_BACKOFF_OVERRIDE.get_or_init(|| Mutex::new(None));
+    *slot.lock() = Some(Arc::new(boxed));
+}
+
+#[cfg(any(test, feature = "e2e-test-support"))]
+pub fn clear_test_retry_backoff_override() {
+    if let Some(slot) = RETRY_BACKOFF_OVERRIDE.get() {
+        *slot.lock() = None;
+    }
+}
+
+fn test_retry_backoff_override() -> Option<Arc<RetryBackoffStubFn>> {
+    RETRY_BACKOFF_OVERRIDE
+        .get()
+        .and_then(|slot| slot.lock().clone())
 }
 
 // ── execute_tool_call (F2-3) ───────────────────────────────────────────

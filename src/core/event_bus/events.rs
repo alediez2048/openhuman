@@ -512,6 +512,18 @@ pub enum DomainEvent {
         node_id: String,
         status_json: serde_json::Value,
     },
+    /// A node attempt failed and the retry loop is scheduling
+    /// another attempt. Published from `executor::dispatch_node_with_retry`
+    /// (F2-8) between attempts so observability can chart retry rates.
+    /// `attempt` is the 1-indexed number of the NEXT attempt (i.e.
+    /// the one about to fire); `wait_ms` is the backoff sleep before
+    /// that next attempt.
+    WorkflowRunStepRetried {
+        run_id: String,
+        node_id: String,
+        attempt: u32,
+        wait_ms: u64,
+    },
     /// The run reached a terminal status (`Succeeded` / `Failed` /
     /// `Cancelled` / `TimedOut`). `status_json` is the `RunStatus`.
     WorkflowRunCompleted {
@@ -625,6 +637,7 @@ impl DomainEvent {
             | Self::WorkflowRunStarted { .. }
             | Self::WorkflowRunStepStarted { .. }
             | Self::WorkflowRunStepCompleted { .. }
+            | Self::WorkflowRunStepRetried { .. }
             | Self::WorkflowRunCompleted { .. }
             | Self::WorkflowRunSkipped { .. } => "workflow",
 

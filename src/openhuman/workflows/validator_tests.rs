@@ -51,6 +51,7 @@ fn agent_node(id: &str, allowed: Vec<ConnectionRef>) -> Node {
             model_tier: None,
         }),
         position: None,
+        retry_policy: None,
     }
 }
 
@@ -446,6 +447,7 @@ fn node_with_config(id: &str, kind: NodeKind, config: NodeConfig) -> Node {
         kind,
         config,
         position: None,
+        retry_policy: None,
     }
 }
 
