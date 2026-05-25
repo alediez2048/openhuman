@@ -233,8 +233,7 @@ export default function McpAddModal({ onClose }: Props) {
                     type="button"
                     onClick={() => setShowBearerToken(prev => !prev)}
                     className="text-xs font-medium text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300"
-                    data-testid="mcp-add-bearer-token-toggle"
-                  >
+                    data-testid="mcp-add-bearer-token-toggle">
                     {showBearerToken ? 'Hide' : 'Show'}
                   </button>
                 </div>

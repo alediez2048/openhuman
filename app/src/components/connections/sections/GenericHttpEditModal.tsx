@@ -239,8 +239,7 @@ export default function GenericHttpEditModal({
                 type="button"
                 onClick={() => setShowCredential(prev => !prev)}
                 className="text-xs font-medium text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300"
-                data-testid="generic-http-modal-credential-toggle"
-              >
+                data-testid="generic-http-modal-credential-toggle">
                 {showCredential ? 'Hide' : 'Show'}
               </button>
             </div>

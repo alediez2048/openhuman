@@ -64,8 +64,7 @@ fn install_test_agent_stub() {
             if prompt.contains("F-17:") {
                 if let Some(narrative) = NARRATIVE_SLOT.lock().pop_front() {
                     if let Some(rest) = narrative.strip_prefix("F17-FAIL-RUN:") {
-                        let (run_id, real_narrative) =
-                            rest.split_once('|').unwrap_or((rest, ""));
+                        let (run_id, real_narrative) = rest.split_once('|').unwrap_or((rest, ""));
                         publish_synthetic_tool_failure(run_id.trim());
                         return Ok(real_narrative.to_string());
                     }

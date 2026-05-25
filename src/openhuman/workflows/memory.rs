@@ -325,7 +325,10 @@ pub fn auto_entity_tags(connections: &[ConnectionRef]) -> Vec<String> {
                 tags.push(format!("entity:source:mcp:{}", server_id.to_lowercase()));
             }
             ConnectionRef::GenericHttp { connection_id } => {
-                tags.push(format!("entity:source:http:{}", connection_id.to_lowercase()));
+                tags.push(format!(
+                    "entity:source:http:{}",
+                    connection_id.to_lowercase()
+                ));
             }
         }
     }
@@ -743,9 +746,7 @@ mod tests {
         assert!(md.contains("**Triggered:** 2026-05-21 08:00 UTC"));
         assert!(md.contains("**Source:** Cron"));
         assert!(md.contains("## Narrative\nSent the morning digest to #general."));
-        assert!(md.contains(
-            "## Actual\n- ✓ composio_execute(SLACK_SEND_MESSAGE) (412ms)"
-        ));
+        assert!(md.contains("## Actual\n- ✓ composio_execute(SLACK_SEND_MESSAGE) (412ms)"));
         assert!(md.contains("## Entities\n- entity:source:slack"));
         assert!(md.contains("```json\n"));
         // No drift section when narrative_matches_actual = true.
@@ -774,7 +775,9 @@ mod tests {
         let md = mem.to_storage_markdown();
         assert!(md.contains("## Drift\n"));
         assert!(md.contains("rate_limit_exceeded"));
-        assert!(md.contains("- ✗ composio_execute(SLACK_SEND_MESSAGE) (412ms): rate_limit_exceeded"));
+        assert!(
+            md.contains("- ✗ composio_execute(SLACK_SEND_MESSAGE) (412ms): rate_limit_exceeded")
+        );
     }
 
     #[test]
@@ -1002,7 +1005,9 @@ mod tests {
         for i in 0..3 {
             let mut m = sample_memory();
             m.run_id = format!("run-{i}");
-            m.triggered_at = Utc.with_ymd_and_hms(2026, 5, 19 + i as u32, 8, 0, 0).unwrap();
+            m.triggered_at = Utc
+                .with_ymd_and_hms(2026, 5, 19 + i as u32, 8, 0, 0)
+                .unwrap();
             runs.push(m);
         }
         let block = render_recall_block(&runs, RECALL_BLOCK_MAX_CHARS);
@@ -1021,10 +1026,11 @@ mod tests {
         for i in 0..5 {
             let mut m = sample_memory();
             m.run_id = format!("run-{i}");
-            m.triggered_at = Utc.with_ymd_and_hms(2026, 5, 15 + i as u32, 8, 0, 0).unwrap();
+            m.triggered_at = Utc
+                .with_ymd_and_hms(2026, 5, 15 + i as u32, 8, 0, 0)
+                .unwrap();
             // Pad narrative so each bullet is well above 50 chars.
-            m.narrative =
-                "Sent the morning digest, skipped 8 promos, all good.".to_string();
+            m.narrative = "Sent the morning digest, skipped 8 promos, all good.".to_string();
             runs.push(m);
         }
         let block = render_recall_block(&runs, 600);
@@ -1032,7 +1038,11 @@ mod tests {
         // At least one bullet is always emitted; total cap is respected.
         assert!(!bullets.is_empty());
         assert!(bullets.len() < 5);
-        assert!(block.len() <= 600 + 80, "block must respect cap (got {} chars)", block.len());
+        assert!(
+            block.len() <= 600 + 80,
+            "block must respect cap (got {} chars)",
+            block.len()
+        );
     }
 
     #[test]

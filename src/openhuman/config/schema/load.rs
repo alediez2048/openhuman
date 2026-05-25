@@ -468,11 +468,8 @@ pub fn pre_login_user_dir(default_openhuman_dir: &Path) -> PathBuf {
 /// Callers compare against `config.config_path` for the guard check.
 pub async fn resolve_active_config_path() -> Result<PathBuf> {
     let (default_openhuman_dir, default_workspace_dir) = default_config_and_workspace_dirs()?;
-    let (openhuman_dir, _workspace_dir, _source) = resolve_runtime_config_dirs(
-        &default_openhuman_dir,
-        &default_workspace_dir,
-    )
-    .await?;
+    let (openhuman_dir, _workspace_dir, _source) =
+        resolve_runtime_config_dirs(&default_openhuman_dir, &default_workspace_dir).await?;
     Ok(openhuman_dir.join("config.toml"))
 }
 

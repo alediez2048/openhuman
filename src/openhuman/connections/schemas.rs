@@ -459,9 +459,7 @@ fn handle_mcp_remove(params: Map<String, Value>) -> ControllerFuture {
 fn handle_mcp_orphans_list(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let config = config_rpc::load_config_with_timeout().await?;
-        to_json(
-            crate::openhuman::connections::rpc::connections_mcp_orphans_list(&config).await?,
-        )
+        to_json(crate::openhuman::connections::rpc::connections_mcp_orphans_list(&config).await?)
     })
 }
 

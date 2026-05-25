@@ -734,8 +734,14 @@ async fn execute_agent_prompt(config: &Config, run: &Run, node: &Node) -> Result
     );
 
     let (terminal_status, output_json, error, agent_narrative, observed_tool_calls) =
-        match run_agent_prompt(config, &run.workflow_id, &run.id, agent_prompt_config, &agent_def)
-            .await
+        match run_agent_prompt(
+            config,
+            &run.workflow_id,
+            &run.id,
+            agent_prompt_config,
+            &agent_def,
+        )
+        .await
         {
             Ok(output) => {
                 let narrative = output.text.clone();
@@ -976,10 +982,8 @@ async fn run_agent_prompt(
     // memory client isn't initialised, recall_prior_runs returns []
     // and render_recall_block emits the "first execution" fallback.
     let prior_runs = workflow_memory::recall_prior_runs(workflow_id, 3).await;
-    let recall_block = workflow_memory::render_recall_block(
-        &prior_runs,
-        workflow_memory::RECALL_BLOCK_MAX_CHARS,
-    );
+    let recall_block =
+        workflow_memory::render_recall_block(&prior_runs, workflow_memory::RECALL_BLOCK_MAX_CHARS);
     let composed_prompt =
         workflow_memory::compose_prompt_with_recall(&recall_block, &agent_prompt_config.prompt);
     tracing::info!(

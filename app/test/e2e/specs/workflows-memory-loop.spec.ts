@@ -99,26 +99,22 @@ function queryMemoryChunks(workflowId: string): ChunkRow[] {
   const dbPath = memoryDbPath();
   let raw: string;
   try {
-    raw = execSync(`sqlite3 -separator '|' '${dbPath}' "${sql}"`, {
-      encoding: 'utf8',
-    }).trim();
+    raw = execSync(`sqlite3 -separator '|' '${dbPath}' "${sql}"`, { encoding: 'utf8' }).trim();
   } catch (err) {
     // DB may not exist yet on a fresh workspace before the first run.
     stepLog(`sqlite3 query failed (likely DB not yet created): ${(err as Error).message}`);
     return [];
   }
   if (!raw) return [];
-  return raw
-    .split('\n')
-    .map((line) => {
-      const [namespace, key, bytes, updated_at] = line.split('|');
-      return {
-        namespace: namespace!,
-        key: key!,
-        bytes: Number(bytes),
-        updated_at: Number(updated_at),
-      };
-    });
+  return raw.split('\n').map(line => {
+    const [namespace, key, bytes, updated_at] = line.split('|');
+    return {
+      namespace: namespace!,
+      key: key!,
+      bytes: Number(bytes),
+      updated_at: Number(updated_at),
+    };
+  });
 }
 
 function fetchChunkContent(workflowId: string, runKey: string): string {
@@ -196,7 +192,11 @@ async function dispatchRunNow(workflowId: string): Promise<string> {
   return runId;
 }
 
-async function waitForRunTerminal(workflowId: string, runId: string, timeoutMs = 20_000): Promise<string> {
+async function waitForRunTerminal(
+  workflowId: string,
+  runId: string,
+  timeoutMs = 20_000
+): Promise<string> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const out = await callOpenhumanRpc('openhuman.workflows_get_run', { run_id: runId });
@@ -208,7 +208,9 @@ async function waitForRunTerminal(workflowId: string, runId: string, timeoutMs =
     }
     await browser.pause(400);
   }
-  throw new Error(`run ${runId} of workflow ${workflowId} never reached terminal within ${timeoutMs}ms`);
+  throw new Error(
+    `run ${runId} of workflow ${workflowId} never reached terminal within ${timeoutMs}ms`
+  );
 }
 
 describe('Workflows — F-17 memory loop (real binary)', () => {
