@@ -816,6 +816,67 @@ pub fn list_workflows_referencing(config: &Config, r#ref: &ConnectionRef) -> Res
     })
 }
 
+/// F2-10: find every ENABLED workflow whose `Trigger::ComposioEvent`
+/// matches the given `(toolkit, trigger)` pair. Used by the
+/// `ComposioEventSubscriber` to fan-out an inbound Composio event to
+/// every workflow that asked to react to it.
+///
+/// The SQL LIKE pre-filter checks `trigger_json` for both substrings;
+/// the in-memory pass parses each row + structurally re-checks
+/// `Trigger::ComposioEvent { toolkit, trigger_id }` so a stray
+/// substring match (e.g. the toolkit name appearing in a
+/// `description` field that happens to live in trigger_json) can't
+/// over-select. Same lossy-LIKE-then-strict-filter pattern as
+/// `list_workflows_referencing`.
+pub fn list_workflows_matching_composio_event(
+    config: &Config,
+    toolkit: &str,
+    trigger: &str,
+) -> Result<Vec<Workflow>> {
+    let toolkit_pattern = format!("%{}%", escape_like(toolkit));
+    let trigger_pattern = format!("%{}%", escape_like(trigger));
+
+    let rows = with_connection(config, |db| {
+        let mut stmt = db
+            .prepare(
+                "SELECT id, schema_version, name, description, enabled, origin, health, \
+                 trigger_json, nodes_json, edges_json, settings_json, \
+                 created_at, updated_at, last_run_at \
+                 FROM workflows \
+                 WHERE enabled = 1 \
+                   AND trigger_json LIKE ?1 ESCAPE '\\' \
+                   AND trigger_json LIKE ?2 ESCAPE '\\' \
+                 ORDER BY updated_at DESC",
+            )
+            .context("Failed to prepare list_workflows_matching_composio_event")?;
+        let rows = stmt
+            .query_map(rusqlite::params![toolkit_pattern, trigger_pattern], |row| {
+                Ok(row_to_workflow(row))
+            })
+            .context("Failed to query list_workflows_matching_composio_event")?
+            .collect::<Result<Vec<_>, _>>()
+            .context("Failed to materialise list_workflows_matching_composio_event row")?
+            .into_iter()
+            .collect::<Result<Vec<Workflow>>>()?;
+        Ok(rows)
+    })?;
+
+    // Strict in-memory re-check: the LIKE could over-select on a
+    // toolkit name that appears in some other JSON field today. Match
+    // the actual `Trigger::ComposioEvent` shape.
+    use crate::openhuman::workflows::types::Trigger;
+    Ok(rows
+        .into_iter()
+        .filter(|wf| {
+            matches!(
+                &wf.trigger,
+                Trigger::ComposioEvent { toolkit: t, trigger_id }
+                    if t == toolkit && trigger_id == trigger
+            )
+        })
+        .collect())
+}
+
 /// Replace ONLY the `health` column (plus bump `updated_at`). Used by
 /// F-3's bus subscriber so the bounded UPDATE doesn't churn unrelated
 /// fields. Returns `false` when no row matched.

@@ -205,6 +205,50 @@ fn validate_accepts_5_field_cron_via_normalize_expression() {
     assert!(validate(&proposal, &ConnectionsSnapshot::empty(), 1).is_ok());
 }
 
+// ── F2-10: Composio trigger validation ─────────────────────────────────
+
+#[test]
+fn validate_rejects_composio_event_with_empty_toolkit() {
+    let mut proposal = valid_proposal();
+    proposal.trigger = Trigger::ComposioEvent {
+        toolkit: "   ".into(),
+        trigger_id: "GMAIL_NEW_GMAIL_MESSAGE".into(),
+    };
+    let err = validate(&proposal, &ConnectionsSnapshot::empty(), 2).unwrap_err();
+    match err {
+        ProposalValidationError::MissingRequiredField { field } => {
+            assert_eq!(field, "trigger.toolkit");
+        }
+        other => panic!("expected MissingRequiredField {{ trigger.toolkit }}, got {other:?}"),
+    }
+}
+
+#[test]
+fn validate_rejects_composio_event_with_empty_trigger_id() {
+    let mut proposal = valid_proposal();
+    proposal.trigger = Trigger::ComposioEvent {
+        toolkit: "gmail".into(),
+        trigger_id: String::new(),
+    };
+    let err = validate(&proposal, &ConnectionsSnapshot::empty(), 2).unwrap_err();
+    match err {
+        ProposalValidationError::MissingRequiredField { field } => {
+            assert_eq!(field, "trigger.trigger_id");
+        }
+        other => panic!("expected MissingRequiredField {{ trigger.trigger_id }}, got {other:?}"),
+    }
+}
+
+#[test]
+fn validate_accepts_composio_event_with_populated_fields() {
+    let mut proposal = valid_proposal();
+    proposal.trigger = Trigger::ComposioEvent {
+        toolkit: "gmail".into(),
+        trigger_id: "GMAIL_NEW_GMAIL_MESSAGE".into(),
+    };
+    assert!(validate(&proposal, &ConnectionsSnapshot::empty(), 2).is_ok());
+}
+
 // ── EdgeIntegrity ──────────────────────────────────────────────────────
 
 #[test]

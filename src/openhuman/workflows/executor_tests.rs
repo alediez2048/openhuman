@@ -3434,3 +3434,268 @@ fn webhook_router_register_workflow_rejects_kind_collision() {
         "rejection must explain the conflict; got: {err}"
     );
 }
+
+// ── F2-10: composio_event trigger fan-out ──────────────────────────────
+
+/// F2-10 helper: build a Workflow with a `Trigger::ComposioEvent`
+/// trigger. Bypasses the validator/CURRENT_PHASE gate by going straight
+/// to `store::insert_workflow`, mirroring `f2_2_workflow`.
+fn f2_10_composio_workflow(
+    id: &str,
+    toolkit: &str,
+    trigger_id: &str,
+    enabled: bool,
+    nodes: Vec<Node>,
+    edges: Vec<Edge>,
+) -> Workflow {
+    Workflow {
+        id: id.into(),
+        schema_version: 1,
+        name: format!("F2-10 {id}"),
+        description: None,
+        enabled,
+        origin: WorkflowOrigin::UserChat,
+        health: WorkflowHealth::Ready,
+        trigger: Trigger::ComposioEvent {
+            toolkit: toolkit.into(),
+            trigger_id: trigger_id.into(),
+        },
+        nodes,
+        edges,
+        settings: WorkflowSettings::default(),
+        created_at: chrono::Utc::now(),
+        updated_at: chrono::Utc::now(),
+        last_run_at: None,
+    }
+}
+
+/// Minimal single-node tool-call workflow whose argument template
+/// references `{{trigger.*}}` so the F2-10 tests can both verify
+/// dispatch + see the composio payload flow through templating.
+fn f2_10_tool_node(arguments_template: serde_json::Value) -> Node {
+    Node {
+        id: "n1".into(),
+        kind: NodeKind::ToolCall,
+        config: NodeConfig::ToolCall(ToolCallConfig {
+            tool_name: "consume".into(),
+            arguments_template,
+        }),
+        position: None,
+        retry_policy: None,
+    }
+}
+
+/// Enabled workflow with `Trigger::ComposioEvent { toolkit, trigger_id }`
+/// MUST dispatch on `dispatch_matching_workflows` and the payload MUST
+/// flow into `NodeContext.trigger_payload`.
+#[tokio::test]
+async fn composio_event_dispatches_matching_workflow() {
+    use crate::openhuman::workflows::bus::dispatch_matching_workflows;
+    use crate::openhuman::workflows::executor::{
+        clear_test_tool_call_override, set_test_tool_call_override,
+    };
+    let _lock = TOOL_CALL_TEST_LOCK.lock();
+
+    let captured: Arc<parking_lot::Mutex<Option<serde_json::Value>>> =
+        Arc::new(parking_lot::Mutex::new(None));
+    let writer = Arc::clone(&captured);
+    set_test_tool_call_override(move |_name, args, _ctx| {
+        let writer = Arc::clone(&writer);
+        let args = args.clone();
+        async move {
+            *writer.lock() = Some(args.clone());
+            Ok(serde_json::json!({ "text": "ok", "is_error": false, "blocks": [] }))
+        }
+    });
+
+    let (_dir, config) = config_with_temp_workspace();
+    let workflow = f2_10_composio_workflow(
+        &format!("wf-composio-{}", uuid::Uuid::new_v4()),
+        "gmail",
+        "GMAIL_NEW_GMAIL_MESSAGE",
+        true,
+        vec![f2_10_tool_node(serde_json::json!({
+            "subject": "{{trigger.subject}}",
+            "from": "{{trigger.from}}"
+        }))],
+        vec![],
+    );
+    store::insert_workflow(&config, &workflow).expect("insert_workflow");
+
+    let payload = serde_json::json!({ "subject": "hello", "from": "alice@example.com" });
+    dispatch_matching_workflows(&config, "gmail", "GMAIL_NEW_GMAIL_MESSAGE", payload.clone()).await;
+    let run = wait_for_terminal_run(&config, &workflow.id).await;
+    clear_test_tool_call_override();
+
+    assert!(
+        matches!(run.status, RunStatus::Succeeded),
+        "matching composio event MUST drive run to Succeeded; got {:?} err={:?}",
+        run.status,
+        run.error
+    );
+    assert_eq!(run.trigger_source, TriggerSource::ComposioEvent);
+    let captured_args = captured
+        .lock()
+        .clone()
+        .expect("stub must have been invoked");
+    assert_eq!(captured_args["subject"], serde_json::json!("hello"));
+    assert_eq!(
+        captured_args["from"],
+        serde_json::json!("alice@example.com")
+    );
+}
+
+/// A disabled workflow with the matching trigger MUST NOT dispatch —
+/// the store query filters on `enabled = 1`.
+#[tokio::test]
+async fn composio_event_skips_disabled_workflow() {
+    use crate::openhuman::workflows::bus::dispatch_matching_workflows;
+    use crate::openhuman::workflows::executor::{
+        clear_test_tool_call_override, set_test_tool_call_override,
+    };
+    let _lock = TOOL_CALL_TEST_LOCK.lock();
+
+    let called = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let called_w = Arc::clone(&called);
+    set_test_tool_call_override(move |_name, _args, _ctx| {
+        let called_w = Arc::clone(&called_w);
+        async move {
+            called_w.store(true, std::sync::atomic::Ordering::SeqCst);
+            Ok(serde_json::json!({ "text": "ok", "is_error": false }))
+        }
+    });
+
+    let (_dir, config) = config_with_temp_workspace();
+    let workflow = f2_10_composio_workflow(
+        &format!("wf-composio-disabled-{}", uuid::Uuid::new_v4()),
+        "gmail",
+        "GMAIL_NEW_GMAIL_MESSAGE",
+        false, // <- disabled
+        vec![f2_10_tool_node(serde_json::json!({"x": "{{trigger.x}}"}))],
+        vec![],
+    );
+    store::insert_workflow(&config, &workflow).expect("insert_workflow");
+
+    dispatch_matching_workflows(
+        &config,
+        "gmail",
+        "GMAIL_NEW_GMAIL_MESSAGE",
+        serde_json::json!({"x": 1}),
+    )
+    .await;
+
+    // Give any (incorrect) spawn a moment to run.
+    tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+    clear_test_tool_call_override();
+
+    assert!(
+        !called.load(std::sync::atomic::Ordering::SeqCst),
+        "disabled workflow MUST NOT dispatch"
+    );
+    let runs = store::list_runs(&config, &workflow.id, Pagination::default()).expect("list_runs");
+    assert!(
+        runs.is_empty(),
+        "disabled workflow MUST produce zero run rows; got {} runs",
+        runs.len()
+    );
+}
+
+/// Two enabled workflows with the SAME (toolkit, trigger_id) MUST both
+/// dispatch on a single event — the subscriber fans out.
+#[tokio::test]
+async fn composio_event_fans_out_to_multiple_workflows() {
+    use crate::openhuman::workflows::bus::dispatch_matching_workflows;
+    use crate::openhuman::workflows::executor::{
+        clear_test_tool_call_override, set_test_tool_call_override,
+    };
+    let _lock = TOOL_CALL_TEST_LOCK.lock();
+
+    set_test_tool_call_override(move |_name, _args, _ctx| async move {
+        Ok(serde_json::json!({ "text": "ok", "is_error": false }))
+    });
+
+    let (_dir, config) = config_with_temp_workspace();
+    let wf_a = f2_10_composio_workflow(
+        &format!("wf-fanout-a-{}", uuid::Uuid::new_v4()),
+        "github",
+        "GITHUB_NEW_ISSUE",
+        true,
+        vec![f2_10_tool_node(serde_json::json!({"who": "a"}))],
+        vec![],
+    );
+    let wf_b = f2_10_composio_workflow(
+        &format!("wf-fanout-b-{}", uuid::Uuid::new_v4()),
+        "github",
+        "GITHUB_NEW_ISSUE",
+        true,
+        vec![f2_10_tool_node(serde_json::json!({"who": "b"}))],
+        vec![],
+    );
+    store::insert_workflow(&config, &wf_a).expect("insert wf_a");
+    store::insert_workflow(&config, &wf_b).expect("insert wf_b");
+
+    dispatch_matching_workflows(
+        &config,
+        "github",
+        "GITHUB_NEW_ISSUE",
+        serde_json::json!({"issue": 42}),
+    )
+    .await;
+
+    let run_a = wait_for_terminal_run(&config, &wf_a.id).await;
+    let run_b = wait_for_terminal_run(&config, &wf_b.id).await;
+    clear_test_tool_call_override();
+
+    assert!(
+        matches!(run_a.status, RunStatus::Succeeded),
+        "wf_a MUST succeed; got {:?}",
+        run_a.status
+    );
+    assert!(
+        matches!(run_b.status, RunStatus::Succeeded),
+        "wf_b MUST succeed; got {:?}",
+        run_b.status
+    );
+    assert_eq!(run_a.trigger_source, TriggerSource::ComposioEvent);
+    assert_eq!(run_b.trigger_source, TriggerSource::ComposioEvent);
+}
+
+/// Events with a non-matching (toolkit, trigger_id) MUST NOT dispatch
+/// any workflow — protects against LIKE pre-filter false-positives
+/// when the strict in-memory re-check kicks in.
+#[tokio::test]
+async fn composio_event_skips_non_matching_workflow() {
+    use crate::openhuman::workflows::bus::dispatch_matching_workflows;
+
+    let (_dir, config) = config_with_temp_workspace();
+    let workflow = f2_10_composio_workflow(
+        &format!("wf-nomatch-{}", uuid::Uuid::new_v4()),
+        "gmail",
+        "GMAIL_NEW_GMAIL_MESSAGE",
+        true,
+        vec![f2_10_tool_node(serde_json::json!({"x": 1}))],
+        vec![],
+    );
+    store::insert_workflow(&config, &workflow).expect("insert_workflow");
+
+    // Different toolkit — must NOT match.
+    dispatch_matching_workflows(
+        &config,
+        "slack",
+        "GMAIL_NEW_GMAIL_MESSAGE",
+        serde_json::json!({}),
+    )
+    .await;
+    // Different trigger_id — must NOT match.
+    dispatch_matching_workflows(&config, "gmail", "GMAIL_OTHER", serde_json::json!({})).await;
+
+    // Give any (incorrect) spawn a moment to run.
+    tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+
+    let runs = store::list_runs(&config, &workflow.id, Pagination::default()).expect("list_runs");
+    assert!(
+        runs.is_empty(),
+        "non-matching event MUST NOT dispatch; got {} runs",
+        runs.len()
+    );
+}

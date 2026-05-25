@@ -1096,6 +1096,10 @@ fn register_domain_subscribers(
         crate::openhuman::workflows::bus::register_health_recompute_subscriber(Arc::new(
             config.clone(),
         ));
+        // F2-10: workflows::composio_event trigger fan-out subscriber.
+        crate::openhuman::workflows::bus::register_composio_event_subscriber(Arc::new(
+            config.clone(),
+        ));
         // F-7: rebuild the workflow scheduler registry from disk and
         // spawn the polling loop. Done in this REGISTERED.call_once
         // block so a sidecar restart resumes scheduling without

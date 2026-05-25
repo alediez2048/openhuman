@@ -133,6 +133,33 @@ pub fn validate(
         validate_cron_expr(expr)?;
     }
 
+    // ── Composio trigger non-empty (F2-10) ─────────────────────────────
+    //
+    // Validating against the live Composio trigger catalog would require
+    // I/O (network or cache lookup), which conflicts with the validator's
+    // pure-Rust + sub-50 ms contract (NFR-2.1.5). Per the F2-10 brainstorm
+    // lean: enforce non-empty `toolkit` / `trigger_id` here, and surface
+    // a deeper "unknown trigger" error from the subscriber's dispatch
+    // path (where I/O is already allowed). A LIKE-pre-filter miss in
+    // `list_workflows_matching_composio_event` is the natural fail-soft
+    // path — the workflow is saved but simply never fires.
+    if let Trigger::ComposioEvent {
+        toolkit,
+        trigger_id,
+    } = &proposal.trigger
+    {
+        if toolkit.trim().is_empty() {
+            return Err(ProposalValidationError::MissingRequiredField {
+                field: "trigger.toolkit".into(),
+            });
+        }
+        if trigger_id.trim().is_empty() {
+            return Err(ProposalValidationError::MissingRequiredField {
+                field: "trigger.trigger_id".into(),
+            });
+        }
+    }
+
     // ── Allowed node kinds ─────────────────────────────────────────────
     let allowed = allowed_node_kinds(phase);
     for node in &proposal.nodes {

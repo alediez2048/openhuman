@@ -18,8 +18,10 @@ use crate::core::event_bus::{publish_global, subscribe_global, DomainEvent, Even
 use crate::openhuman::config::Config;
 use crate::openhuman::connections::aggregator;
 use crate::openhuman::connections::types::ConnectionRef;
+use crate::openhuman::workflows::executor;
 use crate::openhuman::workflows::health::{self, ConnectionsSnapshot};
 use crate::openhuman::workflows::store;
+use crate::openhuman::workflows::types::TriggerSource;
 use async_trait::async_trait;
 use std::sync::Arc;
 
@@ -275,4 +277,143 @@ pub async fn recompute_all_workflows(config: &Config) {
         target: "workflows-bus",
         "[workflows-bus] boot recompute done: {updated}/{total} workflows transitioned"
     );
+}
+
+// ── F2-10: composio_event trigger subscriber ──────────────────────────
+
+/// Boot-time registration helper for [`ComposioEventSubscriber`].
+/// Subscribes to the global bus and leaks the handle so the background
+/// task lives for the lifetime of the process. Idempotent at the
+/// subscribe layer (the bus de-dupes by name), but typical callers
+/// only invoke this once during core boot.
+pub fn register_composio_event_subscriber(config: Arc<Config>) {
+    let subscriber = Arc::new(ComposioEventSubscriber::new(config));
+    match subscribe_global(subscriber) {
+        Some(handle) => {
+            tracing::info!(
+                target: "workflows-bus",
+                "[workflows-bus] registered composio-event subscriber"
+            );
+            std::mem::forget(handle);
+        }
+        None => {
+            log::warn!(
+                "[event_bus] failed to register workflows composio-event subscriber — bus not initialized"
+            );
+        }
+    }
+}
+
+/// Listens for [`DomainEvent::ComposioTriggerReceived`] and dispatches
+/// every enabled workflow whose `Trigger::ComposioEvent { toolkit,
+/// trigger_id }` matches the event's `toolkit` + `trigger`. Multiple
+/// workflows can match the same event (fan-out).
+///
+/// Single-flight (ADR-014) is enforced by [`executor::dispatch_run_with_payload`]:
+/// if a run is already in-flight for one of the matched workflows, the
+/// second dispatch publishes `WorkflowRunSkipped` and returns
+/// `AlreadyRunning`. The subscriber treats `AlreadyRunning` as expected
+/// and logs at `debug`; every other dispatch error is logged at `warn`.
+pub struct ComposioEventSubscriber {
+    config: Arc<Config>,
+}
+
+impl ComposioEventSubscriber {
+    pub fn new(config: Arc<Config>) -> Self {
+        Self { config }
+    }
+}
+
+#[async_trait]
+impl EventHandler for ComposioEventSubscriber {
+    fn name(&self) -> &str {
+        "workflow::composio_event"
+    }
+
+    fn domains(&self) -> Option<&[&str]> {
+        Some(&["composio"])
+    }
+
+    async fn handle(&self, event: &DomainEvent) {
+        let DomainEvent::ComposioTriggerReceived {
+            toolkit,
+            trigger,
+            payload,
+            ..
+        } = event
+        else {
+            return;
+        };
+
+        dispatch_matching_workflows(&self.config, toolkit, trigger, payload.clone()).await;
+    }
+}
+
+/// Resolve the workflows that match (toolkit, trigger) and fan out a
+/// `dispatch_run_with_payload` call per match. Public so tests can
+/// drive it directly without going through the global bus.
+pub async fn dispatch_matching_workflows(
+    config: &Config,
+    toolkit: &str,
+    trigger: &str,
+    payload: serde_json::Value,
+) {
+    tracing::debug!(
+        target: "workflows-bus",
+        "[workflows-bus] composio trigger fan-out toolkit={toolkit} trigger={trigger}"
+    );
+
+    let matches = match store::list_workflows_matching_composio_event(config, toolkit, trigger) {
+        Ok(rows) => rows,
+        Err(err) => {
+            tracing::error!(
+                target: "workflows-bus",
+                "[workflows-bus] list_workflows_matching_composio_event failed: {err:#}"
+            );
+            return;
+        }
+    };
+    if matches.is_empty() {
+        return;
+    }
+
+    for wf in matches {
+        let wf_id = wf.id.clone();
+        let payload_clone = payload.clone();
+        // Owned `Config` clone so the spawned task doesn't borrow `self`.
+        let cfg = config.clone();
+        tokio::spawn(async move {
+            match executor::dispatch_run_with_payload(
+                &cfg,
+                wf_id.clone(),
+                TriggerSource::ComposioEvent,
+                Some(payload_clone),
+            )
+            .await
+            {
+                Ok(run_id) => {
+                    tracing::info!(
+                        target: "workflows-bus",
+                        "[workflows-bus] composio fan-out wf={wf_id} run={run_id} dispatched"
+                    );
+                }
+                Err(err) => {
+                    // Single-flight skip is expected on bursty events;
+                    // executor already publishes `WorkflowRunSkipped`.
+                    let msg = format!("{err:#}");
+                    if msg.contains("AlreadyRunning") {
+                        tracing::debug!(
+                            target: "workflows-bus",
+                            "[workflows-bus] composio fan-out wf={wf_id} skipped (already running)"
+                        );
+                    } else {
+                        tracing::warn!(
+                            target: "workflows-bus",
+                            "[workflows-bus] composio fan-out wf={wf_id} dispatch failed: {msg}"
+                        );
+                    }
+                }
+            }
+        });
+    }
 }
