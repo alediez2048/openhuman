@@ -53,7 +53,8 @@ pub struct WebhookResponseData {
 pub struct TunnelRegistration {
     /// Tunnel UUID (from the backend).
     pub tunnel_uuid: String,
-    /// Registration target kind (`skill`, `channel`, or `echo`).
+    /// Registration target kind (`skill`, `channel`, `echo`, `agent`,
+    /// `workflow`).
     #[serde(default = "default_webhook_target_kind")]
     pub target_kind: String,
     /// Skill ID that owns and handles this tunnel.
@@ -69,6 +70,12 @@ pub struct TunnelRegistration {
     /// should handle incoming requests on this tunnel.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_id: Option<String>,
+    /// F2-9: optional workflow id for `target_kind == "workflow"`.
+    /// The webhook dispatcher uses this to route inbound POSTs to
+    /// `workflows::executor::dispatch_run` with the body as the
+    /// run's trigger payload.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workflow_id: Option<String>,
 }
 
 fn default_webhook_target_kind() -> String {
@@ -362,6 +369,7 @@ mod tests {
                 tunnel_name: None,
                 backend_tunnel_id: None,
                 agent_id: None,
+                workflow_id: None,
             }],
         };
         let back: WebhookDebugRegistrationsResult =

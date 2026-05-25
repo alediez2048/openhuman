@@ -3247,3 +3247,190 @@ async fn on_error_continue_advances_past_failed_step() {
         "n2 MUST have run under Continue policy; got steps: {step_ids:?}"
     );
 }
+
+// ── F2-9: webhook trigger plumbing ─────────────────────────────────────
+
+/// Direct unit test: `dispatch_run_with_payload` threads the trigger
+/// payload into `NodeContext.trigger_payload` so per-kind bodies can
+/// template `{{trigger.*}}` against it.
+///
+/// Uses the F2-3 tool_call test override to capture the resolved
+/// args + a ToolCall node whose args reference `{{trigger.x}}`.
+#[tokio::test]
+async fn dispatch_run_with_payload_plumbs_into_trigger_context() {
+    use crate::openhuman::workflows::executor::{
+        clear_test_tool_call_override, set_test_tool_call_override,
+    };
+    let _lock = TOOL_CALL_TEST_LOCK.lock();
+
+    // Stub captures the resolved args (post-templating) for inspection.
+    let captured: Arc<parking_lot::Mutex<Option<serde_json::Value>>> =
+        Arc::new(parking_lot::Mutex::new(None));
+    let writer = Arc::clone(&captured);
+    set_test_tool_call_override(move |_name, args, _ctx| {
+        let writer = Arc::clone(&writer);
+        let args = args.clone();
+        async move {
+            *writer.lock() = Some(args.clone());
+            Ok(serde_json::json!({ "text": "ok", "is_error": false, "blocks": [] }))
+        }
+    });
+
+    let (_dir, config) = config_with_temp_workspace();
+    let workflow = f2_2_workflow(
+        &format!("wf-payload-{}", uuid::Uuid::new_v4()),
+        vec![Node {
+            id: "n1".into(),
+            kind: NodeKind::ToolCall,
+            config: NodeConfig::ToolCall(ToolCallConfig {
+                tool_name: "consume".into(),
+                arguments_template: serde_json::json!({
+                    "echoed": "{{trigger.x}}",
+                    "passthrough": "{{trigger}}"
+                }),
+            }),
+            position: None,
+            retry_policy: None,
+        }],
+        vec![],
+    );
+    store::insert_workflow(&config, &workflow).expect("insert_workflow");
+
+    // F2-9 entry-point: dispatch with a payload.
+    let payload = serde_json::json!({ "x": 99, "user": "jad" });
+    executor::dispatch_run_with_payload(
+        &config,
+        workflow.id.clone(),
+        TriggerSource::Webhook,
+        Some(payload.clone()),
+    )
+    .await
+    .expect("dispatch_run_with_payload");
+    let run = wait_for_terminal_run(&config, &workflow.id).await;
+    clear_test_tool_call_override();
+
+    assert!(matches!(run.status, RunStatus::Succeeded));
+    let captured_args = captured
+        .lock()
+        .clone()
+        .expect("stub must have been invoked");
+    // OQ-7 single-ref type preservation: `{{trigger.x}}` resolves to
+    // the JSON number 99, not the string "99".
+    assert_eq!(captured_args["echoed"], serde_json::json!(99));
+    // `{{trigger}}` (whole payload) substitutes as the full object.
+    assert_eq!(captured_args["passthrough"], payload);
+}
+
+/// Cron / Manual triggers (no payload) keep the F2-2 default: ctx
+/// trigger_payload = Null. Regression guard.
+#[tokio::test]
+async fn dispatch_run_without_payload_keeps_null_trigger() {
+    use crate::openhuman::workflows::executor::{
+        clear_test_tool_call_override, set_test_tool_call_override,
+    };
+    let _lock = TOOL_CALL_TEST_LOCK.lock();
+    let captured: Arc<parking_lot::Mutex<Option<serde_json::Value>>> =
+        Arc::new(parking_lot::Mutex::new(None));
+    let writer = Arc::clone(&captured);
+    set_test_tool_call_override(move |_name, args, _ctx| {
+        let writer = Arc::clone(&writer);
+        let args = args.clone();
+        async move {
+            *writer.lock() = Some(args.clone());
+            Ok(serde_json::json!({ "text": "ok", "is_error": false }))
+        }
+    });
+
+    let (_dir, config) = config_with_temp_workspace();
+    let workflow = f2_2_workflow(
+        &format!("wf-no-payload-{}", uuid::Uuid::new_v4()),
+        vec![Node {
+            id: "n1".into(),
+            kind: NodeKind::ToolCall,
+            config: NodeConfig::ToolCall(ToolCallConfig {
+                tool_name: "consume".into(),
+                arguments_template: serde_json::json!({
+                    "whole": "{{trigger}}"
+                }),
+            }),
+            position: None,
+            retry_policy: None,
+        }],
+        vec![],
+    );
+    store::insert_workflow(&config, &workflow).expect("insert_workflow");
+
+    // The normal `dispatch_run` (no payload param) → None internally.
+    executor::dispatch_run(
+        &config,
+        workflow.id.clone(),
+        TriggerSource::Manual {
+            initiator: "test".into(),
+        },
+    )
+    .await
+    .expect("dispatch_run");
+    let _run = wait_for_terminal_run(&config, &workflow.id).await;
+    clear_test_tool_call_override();
+
+    let captured_args = captured.lock().clone().expect("stub invoked");
+    // `{{trigger}}` resolves to JSON null (single-ref preservation).
+    assert_eq!(captured_args["whole"], serde_json::Value::Null);
+}
+
+// ── F2-9: webhook router registration ──────────────────────────────────
+
+#[test]
+fn webhook_router_register_workflow_stores_workflow_id() {
+    use crate::openhuman::webhooks::WebhookRouter;
+    let router = WebhookRouter::new(None);
+    let tunnel_uuid = "tunnel-abc-123";
+    let workflow_id = "wf-xyz-789";
+    router
+        .register_workflow(tunnel_uuid, workflow_id, Some("test-tunnel".into()), None)
+        .expect("register_workflow must succeed on fresh router");
+
+    let reg = router
+        .registration(tunnel_uuid)
+        .expect("registration must exist after register_workflow");
+    assert_eq!(reg.target_kind, "workflow");
+    assert_eq!(reg.workflow_id.as_deref(), Some(workflow_id));
+    assert_eq!(reg.skill_id, "workflow");
+    assert_eq!(reg.tunnel_name.as_deref(), Some("test-tunnel"));
+    // Other kind-fields stay None for workflow tunnels.
+    assert!(reg.agent_id.is_none());
+}
+
+#[test]
+fn webhook_router_unregister_workflow_clears_registration() {
+    use crate::openhuman::webhooks::WebhookRouter;
+    let router = WebhookRouter::new(None);
+    let tunnel_uuid = "tunnel-unreg-1";
+    let workflow_id = "wf-unreg-1";
+    router
+        .register_workflow(tunnel_uuid, workflow_id, None, None)
+        .expect("register_workflow");
+    router
+        .unregister(tunnel_uuid, "workflow")
+        .expect("unregister returns Ok when the owning skill matches");
+    assert!(router.registration(tunnel_uuid).is_none());
+}
+
+#[test]
+fn webhook_router_register_workflow_rejects_kind_collision() {
+    use crate::openhuman::webhooks::WebhookRouter;
+    let router = WebhookRouter::new(None);
+    let tunnel_uuid = "tunnel-collision-1";
+    router
+        .register("tunnel-collision-1", "some-skill", None, None)
+        .expect("first register as skill");
+    // Re-registering the SAME tunnel as a workflow must fail — same
+    // ownership contract the agent path uses.
+    let err = router
+        .register_workflow(tunnel_uuid, "wf-x", None, None)
+        .expect_err("kind mismatch must reject");
+    assert!(
+        err.contains("already owned"),
+        "rejection must explain the conflict; got: {err}"
+    );
+}

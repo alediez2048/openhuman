@@ -396,6 +396,23 @@ pub async fn dispatch_run(
     workflow_id: WorkflowId,
     trigger_source: TriggerSource,
 ) -> Result<RunId> {
+    dispatch_run_with_payload(config, workflow_id, trigger_source, None).await
+}
+
+/// F2-9 extension: like [`dispatch_run`] but accepts an optional
+/// trigger payload (webhook body / composio event / channel message).
+/// The payload is plumbed into the run's `NodeContext.trigger_payload`
+/// so per-kind bodies can template `{{trigger.*}}` against it.
+///
+/// In-memory only — survives the run's lifetime, NOT a core restart.
+/// Persistent resume of triggered runs lives in F2-9b alongside the
+/// boot reconcile work.
+pub async fn dispatch_run_with_payload(
+    config: &Config,
+    workflow_id: WorkflowId,
+    trigger_source: TriggerSource,
+    trigger_payload: Option<serde_json::Value>,
+) -> Result<RunId> {
     let workflow = match store::get_workflow(config, &workflow_id) {
         Ok(Some(w)) => w,
         Ok(None) => return Err(DispatchError::NotFound(workflow_id).into()),
@@ -468,11 +485,12 @@ pub async fn dispatch_run(
         run_id: run.id.clone(),
     };
     let config_owned = config.clone();
+    let payload_owned = trigger_payload;
     tokio::spawn(async move {
         // Move the slot into the task so Drop fires on every exit
         // path — including a panic inside execute_inner.
         let _slot_guard = slot;
-        execute_inner(config_owned, workflow, run).await;
+        execute_inner(config_owned, workflow, run, payload_owned).await;
     });
     Ok(run_id)
 }
@@ -748,7 +766,12 @@ fn build_reachability(
 /// Error policy: F2-2 ships the `on_error = Halt` default — any
 /// node failure terminates the run as `Failed` with the failing
 /// node's error as `terminal_error`. F2-8 lands per-node `Continue`.
-async fn execute_inner(config: Config, workflow: Workflow, run: Run) {
+async fn execute_inner(
+    config: Config,
+    workflow: Workflow,
+    run: Run,
+    trigger_payload: Option<serde_json::Value>,
+) {
     let timeout_secs = workflow.settings.timeout_secs.clamp(1, 3600);
     let workflow_id = workflow.id.clone();
     let run_id = run.id.clone();
@@ -792,8 +815,14 @@ async fn execute_inner(config: Config, workflow: Workflow, run: Run) {
     // Cron / Manual triggers carry no payload (`Value::Null`); F2-9
     // / F2-10 / F2-11 surface webhook / composio_event /
     // channel_message payloads via the same field.
-    let mut ctx =
-        crate::openhuman::workflows::templating::NodeContext::new(serde_json::Value::Null);
+    // F2-9: the run's trigger payload (webhook body / composio event /
+    // channel message) lands on `NodeContext.trigger_payload` so node
+    // bodies can template `{{trigger.*}}` against it. Cron / Manual
+    // triggers pass `None`, which materialises as JSON `Null` —
+    // matches the F2-2 default.
+    let mut ctx = crate::openhuman::workflows::templating::NodeContext::new(
+        trigger_payload.unwrap_or(serde_json::Value::Null),
+    );
 
     // Pre-run cancel check — handles the case where cancel_run fired
     // between the dispatch and this task's first scheduling tick.

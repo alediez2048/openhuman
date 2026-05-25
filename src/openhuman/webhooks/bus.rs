@@ -189,6 +189,91 @@ impl EventHandler for WebhookRequestSubscriber {
                     (resp, skill_id, None)
                 }
             }
+            Some(ref reg) if reg.target_kind == "workflow" => {
+                // F2-9: route inbound POST to workflows::executor.
+                match reg.workflow_id.as_deref() {
+                    Some(workflow_id) => {
+                        let payload = decode_webhook_body(&request.body).unwrap_or_else(|e| {
+                            tracing::warn!(
+                                "[webhook] workflow tunnel {} body decode failed ({e}); \
+                                     using `null` payload",
+                                tunnel_uuid
+                            );
+                            serde_json::Value::Null
+                        });
+                        let corr_for_task = correlation_id.clone();
+                        let workflow_id_owned = workflow_id.to_string();
+                        // Spawn so we don't block the broadcast channel.
+                        tokio::spawn(async move {
+                            let config =
+                                match crate::openhuman::config::rpc::load_config_with_timeout()
+                                    .await
+                                {
+                                    Ok(c) => c,
+                                    Err(e) => {
+                                        tracing::error!(
+                                            "[webhook] workflow dispatch corr={corr_for_task}: \
+                                         load_config failed: {e}"
+                                        );
+                                        return;
+                                    }
+                                };
+                            let trigger_source =
+                                crate::openhuman::workflows::types::TriggerSource::Webhook;
+                            match crate::openhuman::workflows::executor::dispatch_run_with_payload(
+                                &config,
+                                workflow_id_owned,
+                                trigger_source,
+                                Some(payload),
+                            )
+                            .await
+                            {
+                                Ok(run_id) => {
+                                    tracing::info!(
+                                        "[webhook] workflow dispatched corr={corr_for_task} \
+                                         run={run_id}"
+                                    );
+                                }
+                                Err(e) => {
+                                    tracing::warn!(
+                                        "[webhook] workflow dispatch failed \
+                                         corr={corr_for_task}: {e:#}"
+                                    );
+                                }
+                            }
+                        });
+                        let resp = WebhookResponseData {
+                            correlation_id: correlation_id.clone(),
+                            status_code: 202,
+                            headers: HashMap::new(),
+                            body: serde_json::json!({
+                                "status": "accepted",
+                                "message": "Workflow dispatch started"
+                            })
+                            .to_string(),
+                        };
+                        (resp, Some(reg.skill_id.clone()), None)
+                    }
+                    None => {
+                        tracing::warn!(
+                            "[webhook] workflow tunnel {} missing workflow_id; \
+                             refusing dispatch",
+                            tunnel_uuid
+                        );
+                        let resp = WebhookResponseData {
+                            correlation_id: correlation_id.clone(),
+                            status_code: 500,
+                            headers: HashMap::new(),
+                            body: error_body("workflow tunnel registration missing workflow_id"),
+                        };
+                        (
+                            resp,
+                            Some(reg.skill_id.clone()),
+                            Some("workflow_id missing".to_string()),
+                        )
+                    }
+                }
+            }
             Some(ref reg) => {
                 // skill target kind or any other unrecognised kind — direct skill dispatch is not available
                 tracing::debug!(

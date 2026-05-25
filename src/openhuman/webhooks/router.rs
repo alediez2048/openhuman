@@ -110,6 +110,7 @@ impl WebhookRouter {
             tunnel_name,
             backend_tunnel_id,
             None,
+            None,
         )
     }
 
@@ -126,6 +127,7 @@ impl WebhookRouter {
             "echo",
             tunnel_name,
             backend_tunnel_id,
+            None,
             None,
         )
     }
@@ -151,6 +153,34 @@ impl WebhookRouter {
             tunnel_name,
             backend_tunnel_id,
             agent_id,
+            None,
+        )
+    }
+
+    /// F2-9: register a workflow-backed tunnel.
+    ///
+    /// Requests arriving on this tunnel are routed to
+    /// [`crate::openhuman::workflows::executor::dispatch_run`] with
+    /// `TriggerSource::Webhook` and the request body as the run's
+    /// `NodeContext.trigger_payload`. `workflow_id` is stored on the
+    /// registration so the dispatcher's bus arm can resolve it without
+    /// a second lookup. `skill_id` is set to `"workflow"` (the
+    /// observability label); the actual routing key is `workflow_id`.
+    pub fn register_workflow(
+        &self,
+        tunnel_uuid: &str,
+        workflow_id: &str,
+        tunnel_name: Option<String>,
+        backend_tunnel_id: Option<String>,
+    ) -> Result<(), String> {
+        self.register_target(
+            tunnel_uuid,
+            "workflow",
+            "workflow",
+            tunnel_name,
+            backend_tunnel_id,
+            None,
+            Some(workflow_id.to_string()),
         )
     }
 
@@ -162,6 +192,7 @@ impl WebhookRouter {
         tunnel_name: Option<String>,
         backend_tunnel_id: Option<String>,
         agent_id: Option<String>,
+        workflow_id: Option<String>,
     ) -> Result<(), String> {
         let mut routes = self.routes.write().map_err(|e| e.to_string())?;
 
@@ -202,6 +233,7 @@ impl WebhookRouter {
                 tunnel_name,
                 backend_tunnel_id,
                 agent_id,
+                workflow_id,
             },
         );
 

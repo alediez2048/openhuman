@@ -51,6 +51,77 @@ fn scheduler_register_best_effort(workflow: &Workflow) {
     }
 }
 
+/// F2-9: best-effort tunnel registration for `Webhook` triggers.
+///
+/// Mirrors `scheduler_register_best_effort` — failures (no socket
+/// manager bound yet, router lock contention) only log; the persisted
+/// row is the source of truth and the next `reconcile_at_startup`
+/// will retry. No-op for non-Webhook triggers AND for disabled
+/// workflows (an inactive workflow shouldn't be accepting inbound
+/// POSTs).
+fn webhook_register_best_effort(workflow: &Workflow) {
+    let crate::openhuman::workflows::types::Trigger::Webhook { tunnel_uuid, .. } =
+        &workflow.trigger
+    else {
+        return;
+    };
+    if !workflow.enabled {
+        return;
+    }
+    let Some(mgr) = crate::openhuman::socket::global_socket_manager() else {
+        tracing::debug!(
+            target: "workflows-rpc",
+            "[workflows-rpc] webhook register: no socket manager — skipping (reconcile_at_startup will retry)"
+        );
+        return;
+    };
+    let Some(router) = mgr.webhook_router() else {
+        tracing::debug!(
+            target: "workflows-rpc",
+            "[workflows-rpc] webhook register: socket manager has no router yet — skipping"
+        );
+        return;
+    };
+    let uuid_str = tunnel_uuid.to_string();
+    if let Err(err) = router.register_workflow(
+        &uuid_str,
+        &workflow.id,
+        Some(format!("workflow:{}", workflow.id)),
+        None,
+    ) {
+        tracing::warn!(
+            target: "workflows-rpc",
+            "[workflows-rpc] webhook register_workflow failed for wf={} tunnel={}: {err}; \
+             persisted row is unchanged",
+            workflow.id, uuid_str
+        );
+    }
+}
+
+/// F2-9: best-effort tunnel deregistration. Called on
+/// disable/delete/update-with-trigger-change. Same fallback semantics
+/// as register — failures log; the persisted row is the source of
+/// truth.
+fn webhook_deregister_best_effort(workflow_id: &WorkflowId, trigger: &Trigger) {
+    let crate::openhuman::workflows::types::Trigger::Webhook { tunnel_uuid, .. } = trigger else {
+        return;
+    };
+    let Some(mgr) = crate::openhuman::socket::global_socket_manager() else {
+        return;
+    };
+    let Some(router) = mgr.webhook_router() else {
+        return;
+    };
+    let uuid_str = tunnel_uuid.to_string();
+    if let Err(err) = router.unregister(&uuid_str, "workflow") {
+        tracing::debug!(
+            target: "workflows-rpc",
+            "[workflows-rpc] webhook unregister for wf={} tunnel={} returned: {err}",
+            workflow_id, uuid_str
+        );
+    }
+}
+
 /// Build a `ConnectionsSnapshot` from the live aggregator output. On
 /// aggregator failure (network blip during a Composio fan-out, etc.)
 /// we fall back to an empty snapshot — the workflow is then marked
@@ -154,6 +225,10 @@ pub async fn create(config: &Config, req: CreateWorkflowRequest) -> Result<RpcOu
     // no-op; the F-6 catalog's [Add & Enable] flow follows up with
     // `workflows_enable` which calls register() then.
     scheduler_register_best_effort(&workflow);
+    // F2-9: register the inbound webhook tunnel if the trigger is
+    // Webhook and the workflow ships enabled. Same enabled-gate as
+    // the scheduler — disabled workflows don't accept inbound POSTs.
+    webhook_register_best_effort(&workflow);
 
     publish_global(DomainEvent::WorkflowDefined {
         workflow_id: workflow.id.clone(),
@@ -219,6 +294,11 @@ pub async fn update(config: &Config, req: UpdateWorkflowRequest) -> Result<RpcOu
     // flipped via a patch, trigger type changed Manual ↔ Cron).
     scheduler::deregister(&workflow.id);
     scheduler_register_best_effort(&workflow);
+    // F2-9: do the same for webhook tunnels. Trigger-shape changes
+    // (Manual → Webhook, or Webhook → Cron) flow through this same
+    // deregister-then-register pair.
+    webhook_deregister_best_effort(&workflow.id, &workflow.trigger);
+    webhook_register_best_effort(&workflow);
 
     publish_global(DomainEvent::WorkflowUpdated {
         workflow_id: workflow.id.clone(),
@@ -237,10 +317,17 @@ pub async fn update(config: &Config, req: UpdateWorkflowRequest) -> Result<RpcOu
 /// this simple; the 30-day soft-delete retention sweep (FR-1.3.4) is
 /// deferred to F-15.
 pub async fn delete(config: &Config, id: WorkflowId) -> Result<RpcOutcome<bool>> {
+    // F2-9: peek at the trigger BEFORE the cascade delete so we can
+    // deregister the webhook tunnel (if any) cleanly. Cheap read;
+    // none-result short-circuits below.
+    let pre_delete_trigger: Option<Trigger> = store::get_workflow(config, &id)?.map(|w| w.trigger);
     // F-7: deregister BEFORE the cascade delete so a cron tick can't
     // race the row removal and dispatch a run against a workflow_id
     // the executor will then 404 on.
     scheduler::deregister(&id);
+    if let Some(trigger) = &pre_delete_trigger {
+        webhook_deregister_best_effort(&id, trigger);
+    }
     let removed = store::delete_workflow(config, &id)?;
     if removed {
         publish_global(DomainEvent::WorkflowDeleted {
@@ -295,10 +382,13 @@ async fn set_enabled_to(
 
     // F-7: keep the cron-trigger registration in sync with the
     // `enabled` bit. enable → register; disable → deregister.
+    // F2-9: webhook tunnels follow the same pattern.
     if target {
         scheduler_register_best_effort(&workflow);
+        webhook_register_best_effort(&workflow);
     } else {
         scheduler::deregister(&id);
+        webhook_deregister_best_effort(&id, &workflow.trigger);
     }
 
     if target {
