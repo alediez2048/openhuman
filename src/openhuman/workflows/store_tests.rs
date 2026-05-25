@@ -56,8 +56,8 @@ fn open_creates_workflows_db_and_applies_all_migrations() {
             .unwrap();
         assert_eq!(
             versions,
-            vec![1, 2, 3, 4],
-            "ledger must record every migration (F2-14 added 004_workflow_soft_delete)"
+            vec![1, 2, 3, 4, 5],
+            "ledger must record every migration (F2-14 added 004, F2-7b added 005)"
         );
         Ok(())
     })
@@ -78,8 +78,8 @@ fn re_open_is_idempotent_and_does_not_duplicate_ledger_rows() {
             })
             .unwrap();
         assert_eq!(
-            count, 4,
-            "four migrations must record exactly four rows (F2-14 added 004_workflow_soft_delete)"
+            count, 5,
+            "five migrations must record exactly five rows (F2-14 added 004, F2-7b added 005)"
         );
         Ok(())
     })

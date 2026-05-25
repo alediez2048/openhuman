@@ -23,6 +23,7 @@ const MIGRATION_001: &str = include_str!("migrations/001_init_workflows.sql");
 const MIGRATION_002: &str = include_str!("migrations/002_runs.sql");
 const MIGRATION_003: &str = include_str!("migrations/003_run_steps.sql");
 const MIGRATION_004: &str = include_str!("migrations/004_workflow_soft_delete.sql");
+const MIGRATION_005: &str = include_str!("migrations/005_delay_resume.sql");
 
 /// Resolves the database path for this workspace: `${workspace_dir}/workflows.db`.
 fn db_path(config: &Config) -> PathBuf {
@@ -78,6 +79,7 @@ fn apply_migrations(conn: &Connection) -> Result<()> {
     apply_one(conn, 2, "002_runs", MIGRATION_002)?;
     apply_one(conn, 3, "003_run_steps", MIGRATION_003)?;
     apply_one(conn, 4, "004_workflow_soft_delete", MIGRATION_004)?;
+    apply_one(conn, 5, "005_delay_resume", MIGRATION_005)?;
 
     Ok(())
 }
@@ -673,8 +675,14 @@ pub fn orphan_running_runs(
     completed_at: DateTime<Utc>,
 ) -> Result<Vec<(WorkflowId, RunId)>> {
     with_connection(config, |db| {
+        // F2-7b: skip rows where `pending_resume_at IS NOT NULL` —
+        // those are "validly sleeping" inside a delay node and are
+        // recovered separately by `resume_or_fail_delayed_runs`.
         let mut stmt = db
-            .prepare("SELECT id, workflow_id FROM workflow_runs WHERE status = 'running'")
+            .prepare(
+                "SELECT id, workflow_id FROM workflow_runs \
+                 WHERE status = 'running' AND pending_resume_at IS NULL",
+            )
             .context("Failed to prepare orphan_running_runs select")?;
         let pairs: Vec<(RunId, WorkflowId)> = stmt
             .query_map([], |row| {
@@ -689,7 +697,7 @@ pub fn orphan_running_runs(
              SET status = 'failed', \
                  error = 'CoreCrashed', \
                  completed_at = ?1 \
-             WHERE status = 'running'",
+             WHERE status = 'running' AND pending_resume_at IS NULL",
             rusqlite::params![completed_at.to_rfc3339()],
         )
         .context("Failed to orphan-sweep workflow_runs")?;
@@ -699,6 +707,77 @@ pub fn orphan_running_runs(
             .into_iter()
             .map(|(run_id, workflow_id)| (workflow_id, run_id))
             .collect())
+    })
+}
+
+/// F2-7b: persist `pending_resume_at` on a run row right before
+/// `execute_delay` calls `tokio::sleep`. Used by the boot-time
+/// recovery path to distinguish "validly sleeping" rows from
+/// "crashed mid-LLM-call" rows.
+pub fn set_pending_resume_at(
+    config: &Config,
+    run_id: &RunId,
+    resume_at: DateTime<Utc>,
+) -> Result<bool> {
+    with_connection(config, |db| {
+        let rows = db
+            .execute(
+                "UPDATE workflow_runs SET pending_resume_at = ?2 WHERE id = ?1",
+                rusqlite::params![run_id, resume_at.to_rfc3339()],
+            )
+            .context("Failed to set_pending_resume_at on workflow_runs row")?;
+        Ok(rows > 0)
+    })
+}
+
+/// F2-7b: clear `pending_resume_at` after `execute_delay` returns
+/// from its sleep (success or cancel) so a subsequent boot sweep
+/// doesn't treat the row as still-sleeping.
+pub fn clear_pending_resume_at(config: &Config, run_id: &RunId) -> Result<bool> {
+    with_connection(config, |db| {
+        let rows = db
+            .execute(
+                "UPDATE workflow_runs SET pending_resume_at = NULL WHERE id = ?1",
+                rusqlite::params![run_id],
+            )
+            .context("Failed to clear_pending_resume_at on workflow_runs row")?;
+        Ok(rows > 0)
+    })
+}
+
+/// F2-7b: every `Running` run with a `pending_resume_at` cursor.
+/// Returns `(workflow_id, run_id, pending_resume_at)` tuples so the
+/// recovery loop can either schedule a future flip (resume_at > now)
+/// or fail-immediately (resume_at <= now).
+pub fn list_delayed_running_runs(
+    config: &Config,
+) -> Result<Vec<(WorkflowId, RunId, DateTime<Utc>)>> {
+    with_connection(config, |db| {
+        let mut stmt = db
+            .prepare(
+                "SELECT id, workflow_id, pending_resume_at FROM workflow_runs \
+                 WHERE status = 'running' AND pending_resume_at IS NOT NULL",
+            )
+            .context("Failed to prepare list_delayed_running_runs select")?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })
+            .context("Failed to query list_delayed_running_runs")?
+            .collect::<Result<Vec<_>, _>>()
+            .context("Failed to materialise list_delayed_running_runs row")?;
+        let mut out = Vec::with_capacity(rows.len());
+        for (run_id, workflow_id, raw) in rows {
+            let ts = chrono::DateTime::parse_from_rfc3339(&raw)
+                .with_context(|| format!("parse pending_resume_at `{raw}` for run `{run_id}`"))?
+                .with_timezone(&Utc);
+            out.push((workflow_id, run_id, ts));
+        }
+        Ok(out)
     })
 }
 

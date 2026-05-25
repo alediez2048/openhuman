@@ -89,7 +89,7 @@ use crate::openhuman::workflows::types::{
     TriggerSource, Workflow, WorkflowId,
 };
 use anyhow::Result;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -571,6 +571,109 @@ pub async fn orphan_recovery_sweep(config: &Config) -> Result<usize> {
         "[workflows-run] orphan_recovery_sweep marked {count} runs as Failed{{CoreCrashed}}"
     );
     Ok(count)
+}
+
+/// F2-7b: boot-time recovery for runs that were sleeping inside a
+/// `delay` node when the core died. Companion to
+/// [`orphan_recovery_sweep`] (which skips these rows because their
+/// `pending_resume_at` is non-NULL).
+///
+/// Strategy:
+///   - Resume time already passed during downtime → flip the run to
+///     `Failed { delay_interrupted_by_core_restart }` immediately +
+///     publish `WorkflowRunCompleted`. We can't recover the in-process
+///     execution state to actually resume the chain (full mid-
+///     execution resume is a Phase 3 canvas-editor concern), but
+///     failing loudly with a clear reason is honest.
+///   - Resume time still in the future → spawn a tokio task that
+///     sleeps until then, then performs the same flip. The run stays
+///     visible as `Running` with a populated `pending_resume_at`
+///     until the resume tick fires, which matches the UI semantic
+///     "this workflow is waiting on a delay node".
+///
+/// Returns `(flipped_now, scheduled)` for ops visibility.
+pub async fn resume_or_fail_delayed_runs(config: &Config) -> Result<(usize, usize)> {
+    let runs = store::list_delayed_running_runs(config)?;
+    if runs.is_empty() {
+        tracing::debug!(
+            target: "workflows-run",
+            "[workflows-run] resume_or_fail_delayed_runs no delayed rows"
+        );
+        return Ok((0, 0));
+    }
+
+    let now = Utc::now();
+    let (past, future): (Vec<_>, Vec<_>) = runs
+        .into_iter()
+        .partition(|(_, _, resume_at)| *resume_at <= now);
+
+    let flipped_now = past.len();
+    for (workflow_id, run_id, resume_at) in past {
+        fail_delayed_run(
+            config,
+            &workflow_id,
+            &run_id,
+            resume_at,
+            "resume_time_passed",
+        );
+    }
+
+    let scheduled = future.len();
+    for (workflow_id, run_id, resume_at) in future {
+        let wait = (resume_at - now).to_std().unwrap_or_default();
+        let cfg = config.clone();
+        let wf = workflow_id.clone();
+        let rid = run_id.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(wait).await;
+            fail_delayed_run(&cfg, &wf, &rid, resume_at, "resume_tick_fired_post_restart");
+        });
+    }
+
+    tracing::info!(
+        target: "workflows-run",
+        "[workflows-run] resume_or_fail_delayed_runs: {flipped_now} flipped immediately, {scheduled} scheduled for later"
+    );
+    Ok((flipped_now, scheduled))
+}
+
+/// Helper for [`resume_or_fail_delayed_runs`]: mark a single delayed
+/// run as Failed with a clear reason, clear its `pending_resume_at`
+/// so a subsequent sweep doesn't re-pick it, and publish the
+/// completion event so observers see the transition.
+fn fail_delayed_run(
+    config: &Config,
+    workflow_id: &str,
+    run_id: &str,
+    resume_at: DateTime<Utc>,
+    reason: &str,
+) {
+    let now = Utc::now();
+    let _ = store::clear_pending_resume_at(config, &run_id.to_string());
+    let error =
+        format!("delay_interrupted_by_core_restart (reason={reason}, resume_at={resume_at})");
+    if let Err(err) = store::mark_run_terminal(
+        config,
+        &run_id.to_string(),
+        RunStatus::Failed,
+        now,
+        Some(error.clone()),
+    ) {
+        tracing::error!(
+            target: "workflows-run",
+            "[workflows-run] mark_run_terminal failed for delayed run={run_id}: {err:#}"
+        );
+        return;
+    }
+    publish_global(DomainEvent::WorkflowRunCompleted {
+        workflow_id: workflow_id.to_string(),
+        run_id: run_id.to_string(),
+        status_json: serde_json::to_value(RunStatus::Failed).unwrap_or(serde_json::Value::Null),
+    });
+    tracing::info!(
+        target: "workflows-run",
+        "[workflows-run] failed delayed run wf={workflow_id} run={run_id} reason={reason}"
+    );
 }
 
 // ── execute_inner ──────────────────────────────────────────────────────
@@ -2372,10 +2475,32 @@ async fn execute_delay(
 
     // Sleep — test override may short-circuit so tests don't wait.
     let seconds = delay_cfg.seconds;
+    // F2-7b: persist the resume cursor BEFORE sleeping so a core
+    // crash leaves enough state for `resume_or_fail_delayed_runs` to
+    // recover the row correctly on next boot. Best-effort write — a
+    // store error here downgrades to in-process-only delay (same
+    // pre-F2-7b behaviour) rather than aborting the step.
+    let resume_at = Utc::now() + chrono::Duration::seconds(seconds as i64);
+    if let Err(err) = store::set_pending_resume_at(config, &run.id, resume_at) {
+        tracing::warn!(
+            target: "workflows-run",
+            "[workflows-run] set_pending_resume_at failed run={}: {err:#}; delay state won't survive a crash",
+            run.id
+        );
+    }
     if let Some(stub) = test_delay_override() {
         stub(seconds).await;
     } else {
         tokio::time::sleep(std::time::Duration::from_secs(seconds)).await;
+    }
+    // F2-7b: clear the cursor whether the sleep completed cleanly or
+    // we're about to bail on cancel; the row is no longer "sleeping".
+    if let Err(err) = store::clear_pending_resume_at(config, &run.id) {
+        tracing::warn!(
+            target: "workflows-run",
+            "[workflows-run] clear_pending_resume_at failed run={}: {err:#}",
+            run.id
+        );
     }
 
     // Post-sleep cancel check — if a cancel landed during the

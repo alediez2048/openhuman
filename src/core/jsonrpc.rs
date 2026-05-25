@@ -1131,6 +1131,22 @@ fn register_domain_subscribers(
                         );
                     }
                 }
+                // F2-7b: recover runs that were sleeping inside a
+                // delay node when the core died. Companion to the
+                // orphan sweep above (which skipped these rows).
+                match crate::openhuman::workflows::executor::resume_or_fail_delayed_runs(
+                    &config,
+                )
+                .await
+                {
+                    Ok((flipped, scheduled)) if flipped + scheduled > 0 => log::info!(
+                        "[workflows-run] resume_or_fail_delayed_runs: {flipped} flipped, {scheduled} scheduled"
+                    ),
+                    Ok(_) => {}
+                    Err(err) => log::warn!(
+                        "[workflows-run] resume_or_fail_delayed_runs failed: {err:#}"
+                    ),
+                }
                 if let Err(err) =
                     crate::openhuman::workflows::scheduler::reconcile_at_startup(&config).await
                 {

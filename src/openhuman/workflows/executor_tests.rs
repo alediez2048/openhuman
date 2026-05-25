@@ -4040,3 +4040,143 @@ async fn channel_message_skips_disabled_workflow() {
         runs.len()
     );
 }
+
+// ── F2-7b: delay persistent resume tracking ────────────────────────────
+
+fn seed_delayed_running_run(
+    config: &Config,
+    workflow_id: &str,
+    run_id: &str,
+    resume_at: chrono::DateTime<chrono::Utc>,
+) {
+    let wf = f2_2_workflow(workflow_id, vec![f2_2_agent_node("n1", "x")], vec![]);
+    let _ = store::insert_workflow(config, &wf);
+    let run = Run {
+        id: run_id.into(),
+        workflow_id: workflow_id.into(),
+        trigger_source: TriggerSource::Manual {
+            initiator: "test".into(),
+        },
+        status: RunStatus::Running,
+        started_at: chrono::Utc::now() - chrono::Duration::seconds(5),
+        completed_at: None,
+        error: None,
+        cancelled: false,
+    };
+    store::insert_run(config, &run).expect("insert_run");
+    store::set_pending_resume_at(config, &run.id, resume_at).expect("set_pending_resume_at");
+}
+
+#[tokio::test]
+async fn orphan_sweep_skips_delayed_running_runs() {
+    let (_dir, config) = config_with_temp_workspace();
+    let workflow_id = format!("wf-orphan-skip-{}", uuid::Uuid::new_v4());
+    let run_id = format!("run-{}", uuid::Uuid::new_v4());
+    let resume_at = chrono::Utc::now() + chrono::Duration::hours(1);
+    seed_delayed_running_run(&config, &workflow_id, &run_id, resume_at);
+
+    let swept = executor::orphan_recovery_sweep(&config)
+        .await
+        .expect("sweep");
+    assert_eq!(
+        swept, 0,
+        "delayed run MUST NOT be flipped by orphan sweep; got {swept}"
+    );
+
+    let (run, _steps) = store::get_run(&config, &run_id).unwrap().expect("row");
+    assert!(matches!(run.status, RunStatus::Running));
+}
+
+#[tokio::test]
+async fn resume_or_fail_flips_past_resume_immediately() {
+    let (_dir, config) = config_with_temp_workspace();
+    let workflow_id = format!("wf-past-resume-{}", uuid::Uuid::new_v4());
+    let run_id = format!("run-{}", uuid::Uuid::new_v4());
+    let resume_at = chrono::Utc::now() - chrono::Duration::minutes(10);
+    seed_delayed_running_run(&config, &workflow_id, &run_id, resume_at);
+
+    let (flipped, scheduled) = executor::resume_or_fail_delayed_runs(&config)
+        .await
+        .expect("resume_or_fail");
+    assert_eq!(flipped, 1, "past-resume row MUST be flipped immediately");
+    assert_eq!(scheduled, 0);
+
+    let (run, _) = store::get_run(&config, &run_id).unwrap().expect("row");
+    assert!(matches!(run.status, RunStatus::Failed));
+    assert!(
+        run.error
+            .as_deref()
+            .unwrap_or("")
+            .contains("delay_interrupted"),
+        "error must explain the interrupt; got {:?}",
+        run.error
+    );
+}
+
+#[tokio::test]
+async fn resume_or_fail_schedules_future_resume() {
+    let (_dir, config) = config_with_temp_workspace();
+    let workflow_id = format!("wf-future-resume-{}", uuid::Uuid::new_v4());
+    let run_id = format!("run-{}", uuid::Uuid::new_v4());
+    let resume_at = chrono::Utc::now() + chrono::Duration::milliseconds(200);
+    seed_delayed_running_run(&config, &workflow_id, &run_id, resume_at);
+
+    let (flipped, scheduled) = executor::resume_or_fail_delayed_runs(&config)
+        .await
+        .expect("resume_or_fail");
+    assert_eq!(flipped, 0);
+    assert_eq!(scheduled, 1, "future-resume row MUST be scheduled");
+
+    let (run_pre, _) = store::get_run(&config, &run_id).unwrap().expect("row");
+    assert!(matches!(run_pre.status, RunStatus::Running));
+
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    let (run_post, _) = store::get_run(&config, &run_id).unwrap().expect("row");
+    assert!(
+        matches!(run_post.status, RunStatus::Failed),
+        "scheduled-resume task MUST flip the row to Failed; status={:?}",
+        run_post.status
+    );
+}
+
+#[tokio::test]
+async fn execute_delay_clears_pending_resume_at_after_sleep() {
+    use crate::openhuman::workflows::executor::{
+        clear_test_delay_override, set_test_delay_override,
+    };
+
+    set_test_delay_override(move |_secs| async move {});
+
+    let (_dir, config) = config_with_temp_workspace();
+    let wf = f2_2_workflow(
+        &format!("wf-delay-clear-{}", uuid::Uuid::new_v4()),
+        vec![Node {
+            id: "n1".into(),
+            kind: NodeKind::Delay,
+            config: NodeConfig::Delay(DelayConfig { seconds: 5 }),
+            position: None,
+            retry_policy: None,
+        }],
+        vec![],
+    );
+    store::insert_workflow(&config, &wf).unwrap();
+    executor::dispatch_run(
+        &config,
+        wf.id.clone(),
+        TriggerSource::Manual {
+            initiator: "test".into(),
+        },
+    )
+    .await
+    .expect("dispatch");
+
+    let run = wait_for_terminal_run(&config, &wf.id).await;
+    clear_test_delay_override();
+    assert!(matches!(run.status, RunStatus::Succeeded));
+
+    let delayed = store::list_delayed_running_runs(&config).unwrap();
+    assert!(
+        delayed.iter().all(|(_, rid, _)| rid != &run.id),
+        "execute_delay MUST clear pending_resume_at on completion"
+    );
+}
