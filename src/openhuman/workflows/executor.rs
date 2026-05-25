@@ -582,10 +582,14 @@ fn validate_workflow_shape(workflow: &Workflow) -> Result<(), DispatchError> {
     Ok(())
 }
 
-/// Phase-1 anchor for `validate_workflow_shape` — the only constant
-/// referenced from the dispatcher. Bumping this to `2` unlocks
-/// multi-kind dispatch end-to-end once F2-3..F2-7 are done.
-const CURRENT_PHASE: u32 = 1;
+/// Phase anchor for `validate_workflow_shape`. Bumped to `2` in F2-3
+/// once `AgentPrompt` + `ToolCall` both have real executor bodies;
+/// HttpRequest / ChannelMessage / Condition / Delay still route to
+/// their `NodeDispatchError::NotImplementedYet` arm and the
+/// dispatcher surfaces that as a clean `Failed` terminal status
+/// (the F2-1 design contract — "reachable without behaviour").
+/// F2-4..F2-7 replace each NotImplementedYet arm with a real body.
+const CURRENT_PHASE: u32 = 2;
 
 /// Order nodes by a topological sort over `edges`, returning the
 /// execution order. Phase 2 chains are linear (single ancestor per
@@ -913,9 +917,7 @@ pub(crate) async fn dispatch_node(
 ) -> Result<serde_json::Value> {
     match &node.config {
         NodeConfig::AgentPrompt(_) => execute_agent_prompt(config, run, node, ctx).await,
-        NodeConfig::ToolCall(_) => {
-            Err(NodeDispatchError::NotImplementedYet(NodeKind::ToolCall).into())
-        }
+        NodeConfig::ToolCall(_) => execute_tool_call(config, run, node, ctx).await,
         NodeConfig::HttpRequest(_) => {
             Err(NodeDispatchError::NotImplementedYet(NodeKind::HttpRequest).into())
         }
@@ -927,6 +929,329 @@ pub(crate) async fn dispatch_node(
         }
         NodeConfig::Delay(_) => Err(NodeDispatchError::NotImplementedYet(NodeKind::Delay).into()),
     }
+}
+
+// ── execute_tool_call (F2-3) ───────────────────────────────────────────
+
+/// Build the workflow-runtime tool registry from a `&Config`.
+///
+/// Mirrors the pattern in `runtime_node::ops::build_runtime_tools` —
+/// the same SecurityPolicy / Memory / NativeRuntime setup that the
+/// JS runtime uses. Centralising the construction here (vs reusing
+/// `runtime_node::ops`'s private helper) keeps the workflows domain
+/// self-contained; a follow-up refactor can extract this to
+/// `tools::ops::build_default_tool_set(config)` if a third caller
+/// shows up.
+///
+/// Returns `Err(String)` on memory-construction failure so the F2-3
+/// dispatcher can surface a clean `node_id` + `reason` error rather
+/// than crashing the run.
+fn build_tools_registry(
+    config: &Config,
+) -> Result<Vec<Box<dyn crate::openhuman::tools::Tool>>, String> {
+    use crate::openhuman::agent::host_runtime::{NativeRuntime, RuntimeAdapter};
+    use crate::openhuman::memory::Memory;
+    use crate::openhuman::security::SecurityPolicy;
+    let security = Arc::new(SecurityPolicy::from_config(
+        &config.autonomy,
+        &config.workspace_dir,
+    ));
+    let runtime: Arc<dyn RuntimeAdapter> = Arc::new(NativeRuntime::new());
+    let local_embedding = config.workload_local_model("embeddings");
+    let memory: Arc<dyn Memory> = Arc::from(
+        crate::openhuman::memory::create_memory_with_local_ai(
+            &config.memory,
+            local_embedding.as_deref(),
+            &config.embedding_routes,
+            Some(&config.storage.provider.config),
+            &config.workspace_dir,
+        )
+        .map_err(|e| format!("memory init failed: {e}"))?,
+    );
+    Ok(crate::openhuman::tools::ops::all_tools_with_runtime(
+        Arc::new(config.clone()),
+        &security,
+        runtime,
+        memory,
+        &config.browser,
+        &config.http_request,
+        &config.workspace_dir,
+        &config.agents,
+        config,
+    ))
+}
+
+/// F2-3 node body for `NodeKind::ToolCall`.
+///
+/// Steps:
+///   1. Look up `tool_name` in the workflow-runtime tool registry.
+///      Unknown name → step Failed with a clear error (the dispatcher
+///      surfaces it back to `execute_inner`'s terminal-error pipeline).
+///   2. Run [`crate::openhuman::workflows::templating::substitute_json`]
+///      on `arguments_template` against the live `NodeContext` so
+///      upstream node outputs / trigger payload values land in the
+///      resolved args.
+///   3. Persist a `RunStep` row in `Running` state, publish
+///      `WorkflowRunStepStarted`.
+///   4. Call `tool.execute(args).await`. Map the `ToolResult` body to
+///      the step's `output_json` AND to the `NodeOutput` body returned
+///      to the dispatcher (so downstream `{{node.<id>.output...}}`
+///      templates can index into it).
+///   5. Persist terminal status + publish `WorkflowRunStepCompleted`.
+///
+/// Output body shape: `{ "text": String, "is_error": bool, "blocks":
+/// [<ToolContent>...] }` — `text` is the LLM-facing rendering
+/// (`output_for_llm`); `blocks` carries the raw content blocks so
+/// downstream nodes can index structured fields when needed.
+async fn execute_tool_call(
+    config: &Config,
+    run: &Run,
+    node: &Node,
+    ctx: &crate::openhuman::workflows::templating::NodeContext,
+) -> Result<serde_json::Value> {
+    let tool_cfg = match &node.config {
+        NodeConfig::ToolCall(cfg) => cfg,
+        other => anyhow::bail!(
+            "execute_tool_call invoked on non-ToolCall node config: {:?}",
+            std::mem::discriminant(other)
+        ),
+    };
+
+    let step_id: RunStepId = Uuid::new_v4().to_string();
+    let started_at = Utc::now();
+    let step = RunStep {
+        id: step_id.clone(),
+        run_id: run.id.clone(),
+        node_id: node.id.clone(),
+        status: RunStatus::Running,
+        started_at,
+        completed_at: None,
+        output_json: None,
+        error: None,
+    };
+    if let Err(err) = store::insert_run_step(config, &step) {
+        anyhow::bail!("insert_run_step failed: {err:#}");
+    }
+    publish_global(DomainEvent::WorkflowRunStepStarted {
+        run_id: run.id.clone(),
+        node_id: node.id.clone(),
+    });
+
+    let (terminal_status, output_json, error, body_value) =
+        match dispatch_tool_call_inner(config, tool_cfg, ctx).await {
+            Ok(body) => {
+                let payload = serde_json::to_string(&body).unwrap_or_else(|_| "{}".into());
+                (RunStatus::Succeeded, Some(payload), None, body)
+            }
+            Err(reason) => {
+                tracing::warn!(
+                    target: "workflows-run",
+                    run = %run.id,
+                    node = %node.id,
+                    "[workflows-run] tool_call failed: {reason}"
+                );
+                (
+                    RunStatus::Failed,
+                    None,
+                    Some(reason),
+                    serde_json::Value::Null,
+                )
+            }
+        };
+
+    if let Err(err) = store::update_run_step_terminal(
+        config,
+        &step_id,
+        terminal_status,
+        Utc::now(),
+        output_json,
+        error.clone(),
+    ) {
+        anyhow::bail!("update_run_step_terminal failed: {err:#}");
+    }
+    let status_json = serde_json::to_value(&terminal_status).unwrap_or(serde_json::Value::Null);
+    publish_global(DomainEvent::WorkflowRunStepCompleted {
+        run_id: run.id.clone(),
+        node_id: node.id.clone(),
+        status_json,
+    });
+    tracing::info!(
+        target: "workflows-run",
+        "[workflows-run] tool_call step terminal run={} node={} tool={} status={terminal_status:?}",
+        run.id,
+        node.id,
+        tool_cfg.tool_name,
+    );
+
+    if matches!(terminal_status, RunStatus::Failed) {
+        if let Some(reason) = error {
+            anyhow::bail!("tool_call step failed: {reason}");
+        }
+        anyhow::bail!("tool_call step failed");
+    }
+    Ok(body_value)
+}
+
+/// Inner runner — pulls the tool out of the registry, runs templating,
+/// dispatches, maps to a JSON body. Returns `Err(reason)` for any
+/// failure mode the dispatcher needs to surface as a Failed step.
+async fn dispatch_tool_call_inner(
+    config: &Config,
+    tool_cfg: &crate::openhuman::workflows::types::ToolCallConfig,
+    ctx: &crate::openhuman::workflows::templating::NodeContext,
+) -> Result<serde_json::Value, String> {
+    // Run templating BEFORE the stub-bypass branch so tests + the
+    // real path both see the same resolved args. Otherwise the stub
+    // path would expose the raw `{{...}}` tokens to the test code,
+    // bypassing the OQ-7 substitution F2-3 is supposed to verify.
+    let (resolved_args, unresolved) =
+        crate::openhuman::workflows::templating::substitute_json(&tool_cfg.arguments_template, ctx);
+    if !unresolved.is_empty() {
+        tracing::warn!(
+            target: "workflows-run",
+            tool = %tool_cfg.tool_name,
+            unresolved = unresolved.len(),
+            "[workflows-run] tool_call args carry unresolved template refs; passing through"
+        );
+    }
+
+    if let Some(stub) = test_tool_call_override() {
+        let body = stub(&tool_cfg.tool_name, &resolved_args, ctx).await?;
+        // Honor `is_error: true` even on the stub path so the F-16-
+        // style "halt on tool error" contract is testable without
+        // routing through the real registry.
+        if body
+            .get("is_error")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        {
+            let text = body
+                .get("text")
+                .and_then(|v| v.as_str())
+                .unwrap_or("(no text)");
+            return Err(format!(
+                "tool `{}` returned is_error=true: {text}",
+                tool_cfg.tool_name
+            ));
+        }
+        return Ok(body);
+    }
+
+    let registry = build_tools_registry(config)?;
+    let tool = registry
+        .into_iter()
+        .find(|t| t.name() == tool_cfg.tool_name)
+        .ok_or_else(|| {
+            format!(
+                "tool not registered: `{}` — check the tool name + the runtime tool registry",
+                tool_cfg.tool_name
+            )
+        })?;
+
+    let started = std::time::Instant::now();
+    let result = tool
+        .execute(resolved_args)
+        .await
+        .map_err(|e| format!("tool `{}` execute failed: {e:#}", tool_cfg.tool_name))?;
+    let elapsed_ms = started.elapsed().as_millis() as u64;
+
+    publish_global(DomainEvent::ToolExecutionCompleted {
+        tool_name: tool_cfg.tool_name.clone(),
+        session_id: format!("workflow:{}", ctx_runtime_session_id_or_empty(ctx)),
+        elapsed_ms,
+        success: !result.is_error,
+    });
+
+    // Render the body for downstream templating. The `text` field is
+    // the LLM-facing rendering; `blocks` carries the raw content
+    // blocks so downstream nodes can index structured fields.
+    let text = result
+        .content
+        .iter()
+        .filter_map(|c| match c {
+            crate::openhuman::tools::traits::ToolContent::Text { text } => Some(text.clone()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let blocks =
+        serde_json::to_value(&result.content).unwrap_or(serde_json::Value::Array(Vec::new()));
+    let body = serde_json::json!({
+        "text": text,
+        "is_error": result.is_error,
+        "blocks": blocks,
+    });
+
+    if result.is_error {
+        return Err(format!(
+            "tool `{}` returned is_error=true: {text}",
+            tool_cfg.tool_name
+        ));
+    }
+    Ok(body)
+}
+
+/// Best-effort accessor for a "session id" derived from the context.
+/// Today `NodeContext` doesn't carry the run_id; the workflows-run
+/// session id is `workflow:<run_id>` and the tool-execution event
+/// uses it for filtering. F2-3 leaves this as an empty string —
+/// telemetry attribution can be sharpened in a follow-up by passing
+/// the run id through `NodeContext`.
+fn ctx_runtime_session_id_or_empty(
+    _ctx: &crate::openhuman::workflows::templating::NodeContext,
+) -> &'static str {
+    ""
+}
+
+// ── Test-only tool-call override (F2-3) ────────────────────────────────
+
+type ToolCallStubFn = Box<
+    dyn Fn(
+            &str,
+            &serde_json::Value,
+            &crate::openhuman::workflows::templating::NodeContext,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<serde_json::Value, String>> + Send>,
+        > + Send
+        + Sync,
+>;
+
+static TOOL_CALL_OVERRIDE: OnceLock<Mutex<Option<Arc<ToolCallStubFn>>>> = OnceLock::new();
+
+/// Test-only hook: replaces `dispatch_tool_call_inner`'s real registry
+/// + execute path with a caller-supplied stub. The stub receives the
+/// requested `tool_name`, the (pre-substituted) `arguments_template`,
+/// and the live `NodeContext`, and returns the body JSON that gets
+/// recorded as the step's `output_json` AND passed back to the
+/// dispatcher for downstream templating.
+///
+/// Idempotent / last-writer-wins so tests can re-install with a
+/// different behaviour between cases.
+#[cfg(any(test, feature = "e2e-test-support"))]
+pub fn set_test_tool_call_override<F, Fut>(stub: F)
+where
+    F: Fn(&str, &serde_json::Value, &crate::openhuman::workflows::templating::NodeContext) -> Fut
+        + Send
+        + Sync
+        + 'static,
+    Fut: std::future::Future<Output = Result<serde_json::Value, String>> + Send + 'static,
+{
+    let boxed: ToolCallStubFn = Box::new(move |name, args, ctx| Box::pin(stub(name, args, ctx)));
+    let slot = TOOL_CALL_OVERRIDE.get_or_init(|| Mutex::new(None));
+    *slot.lock() = Some(Arc::new(boxed));
+}
+
+#[cfg(any(test, feature = "e2e-test-support"))]
+pub fn clear_test_tool_call_override() {
+    if let Some(slot) = TOOL_CALL_OVERRIDE.get() {
+        *slot.lock() = None;
+    }
+}
+
+fn test_tool_call_override() -> Option<Arc<ToolCallStubFn>> {
+    TOOL_CALL_OVERRIDE
+        .get()
+        .and_then(|slot| slot.lock().clone())
 }
 
 // ── execute_agent_prompt ───────────────────────────────────────────────

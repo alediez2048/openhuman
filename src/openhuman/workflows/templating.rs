@@ -138,6 +138,95 @@ pub fn substitute(raw: &str, ctx: &NodeContext) -> SubstituteOutcome {
     }
 }
 
+/// F2-3 extension: substitute templating references inside a JSON
+/// [`Value`] — walks the structure and applies [`substitute`] to every
+/// string leaf. Object keys are NOT templated (only values); this
+/// matches the OQ-7 lock that templating is for *values*, not schema
+/// key names. Numbers / booleans / nulls pass through unchanged.
+///
+/// Single-string-leaf semantics: when an entire string value is exactly
+/// one `{{...}}` reference whose resolution is a structured value
+/// (object / array / number / boolean / null), the leaf is REPLACED
+/// with the structured value — not the string serialisation. This
+/// lets `tool_call.args = { "user": "{{trigger.payload.user}}" }`
+/// pass a structured user object through to the tool when the trigger
+/// payload's `user` field is itself an object.
+///
+/// Strings containing other text in addition to the reference
+/// (`"hi {{name}}"`) always substitute as a string (no type
+/// promotion), matching `substitute`'s behaviour.
+///
+/// Returns the rewritten value AND any unresolved refs collected
+/// across every leaf the walker visited.
+pub fn substitute_json(value: &Value, ctx: &NodeContext) -> (Value, Vec<UnresolvedRef>) {
+    let mut unresolved = Vec::new();
+    let resolved = substitute_json_inner(value, ctx, &mut unresolved);
+    (resolved, unresolved)
+}
+
+fn substitute_json_inner(
+    value: &Value,
+    ctx: &NodeContext,
+    unresolved: &mut Vec<UnresolvedRef>,
+) -> Value {
+    match value {
+        Value::String(s) => {
+            // Detect the "single-reference-only" form so a JSON object
+            // can flow through intact when the resolved value is also
+            // a JSON object — without this, every templated arg
+            // collapses to a string-serialisation of its value.
+            if let Some(only_ref) = parse_single_ref(s) {
+                match resolve_ref(only_ref, ctx) {
+                    Ok(v) => return v,
+                    Err(reason) => {
+                        unresolved.push(UnresolvedRef {
+                            token: s.clone(),
+                            reason,
+                        });
+                        return Value::String(s.clone());
+                    }
+                }
+            }
+            // Mixed-content strings — fall back to `substitute`, which
+            // returns a String regardless of the resolved value's type.
+            let outcome = substitute(s, ctx);
+            unresolved.extend(outcome.unresolved);
+            Value::String(outcome.resolved)
+        }
+        Value::Array(items) => Value::Array(
+            items
+                .iter()
+                .map(|v| substitute_json_inner(v, ctx, unresolved))
+                .collect(),
+        ),
+        Value::Object(map) => {
+            let mut out = serde_json::Map::with_capacity(map.len());
+            for (k, v) in map {
+                out.insert(k.clone(), substitute_json_inner(v, ctx, unresolved));
+            }
+            Value::Object(out)
+        }
+        // Numbers, bools, nulls — pass through unchanged.
+        other => other.clone(),
+    }
+}
+
+/// Return the inner ref body when `s` is exactly `{{...}}` with no
+/// surrounding text — used by `substitute_json` to decide between
+/// type-preserving substitution (single ref) and string substitution
+/// (mixed content).
+fn parse_single_ref(s: &str) -> Option<&str> {
+    let trimmed = s.trim();
+    let inner = trimmed.strip_prefix("{{")?.strip_suffix("}}")?;
+    // Reject inner content that itself contains `}}` followed by more
+    // text — that means the user wrote `{{a}}{{b}}` (two refs);
+    // substitute_json's single-ref shortcut only fires for ONE ref.
+    if inner.contains("}}") {
+        return None;
+    }
+    Some(inner.trim())
+}
+
 /// Resolve one `{{...}}` body (without braces) against the context.
 ///
 /// Supported shapes:
@@ -368,5 +457,93 @@ mod tests {
     #[test]
     fn render_value_objects_use_compact_json() {
         assert_eq!(render_value(&json!({"a": 1})), r#"{"a":1}"#);
+    }
+
+    // ── F2-3: substitute_json ──────────────────────────────────────────
+
+    #[test]
+    fn substitute_json_passes_through_non_string_leaves() {
+        let value = json!({ "n": 42, "b": true, "x": null });
+        let (out, unresolved) = substitute_json(&value, &NodeContext::default());
+        assert_eq!(out, value);
+        assert!(unresolved.is_empty());
+    }
+
+    #[test]
+    fn substitute_json_substitutes_string_leaves() {
+        let mut ctx = NodeContext::new(json!({ "user": "jad" }));
+        ctx.record_output("n1", json!({ "score": 9 }));
+        let value = json!({
+            "greeting": "hi {{trigger.user}}",
+            "score_text": "score={{node.n1.output.score}}"
+        });
+        let (out, unresolved) = substitute_json(&value, &ctx);
+        assert!(unresolved.is_empty());
+        assert_eq!(out["greeting"], json!("hi jad"));
+        assert_eq!(out["score_text"], json!("score=9"));
+    }
+
+    #[test]
+    fn substitute_json_single_ref_preserves_value_type() {
+        // When the WHOLE string is exactly `{{...}}` and the resolved
+        // value is a non-string JSON value, the leaf MUST become that
+        // structured value — not its string serialisation. This lets
+        // `tool_call.args = { count: "{{trigger.n}}" }` send a real
+        // number, not `"42"`.
+        let ctx = NodeContext::new(json!({ "n": 42 }));
+        let value = json!({ "count": "{{trigger.n}}" });
+        let (out, _) = substitute_json(&value, &ctx);
+        assert_eq!(out, json!({ "count": 42 }));
+    }
+
+    #[test]
+    fn substitute_json_single_ref_preserves_object_value() {
+        let mut ctx = NodeContext::new(json!({}));
+        ctx.record_output("classify", json!({ "score": 0.7, "label": "ok" }));
+        let value = json!({ "classification": "{{node.classify.output}}" });
+        let (out, _) = substitute_json(&value, &ctx);
+        assert_eq!(
+            out,
+            json!({ "classification": { "score": 0.7, "label": "ok" } })
+        );
+    }
+
+    #[test]
+    fn substitute_json_walks_arrays() {
+        let ctx = NodeContext::new(json!({ "u": "jad" }));
+        let value = json!(["plain", "ref={{trigger.u}}"]);
+        let (out, _) = substitute_json(&value, &ctx);
+        assert_eq!(out, json!(["plain", "ref=jad"]));
+    }
+
+    #[test]
+    fn substitute_json_walks_nested_objects() {
+        let ctx = NodeContext::new(json!({ "uid": 7 }));
+        let value = json!({
+            "outer": { "inner": { "id": "{{trigger.uid}}" } }
+        });
+        let (out, _) = substitute_json(&value, &ctx);
+        assert_eq!(out, json!({ "outer": { "inner": { "id": 7 } } }));
+    }
+
+    #[test]
+    fn substitute_json_collects_unresolved_across_leaves() {
+        let ctx = NodeContext::default();
+        let value = json!({
+            "a": "{{trigger.missing}}",
+            "b": "{{node.absent.output.x}}"
+        });
+        let (_, unresolved) = substitute_json(&value, &ctx);
+        assert_eq!(unresolved.len(), 2);
+    }
+
+    #[test]
+    fn substitute_json_does_not_template_object_keys() {
+        // OQ-7 lock: keys are schema; only values template.
+        let ctx = NodeContext::new(json!({ "k": "renamed" }));
+        let value = json!({ "{{trigger.k}}": "value" });
+        let (out, _) = substitute_json(&value, &ctx);
+        // Key must NOT have been substituted.
+        assert!(out.as_object().unwrap().contains_key("{{trigger.k}}"));
     }
 }

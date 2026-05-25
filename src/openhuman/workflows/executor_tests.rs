@@ -18,7 +18,7 @@ use super::store::{self, Pagination};
 use super::types::*;
 use crate::openhuman::config::Config;
 use crate::openhuman::connections::types::ConnectionRef;
-use std::sync::Once;
+use std::sync::{Arc, Once};
 use tempfile::TempDir;
 
 /// FIFO queue of narratives the F-17 path of the unified stub returns.
@@ -27,6 +27,13 @@ use tempfile::TempDir;
 static NARRATIVE_SLOT: once_cell::sync::Lazy<
     parking_lot::Mutex<std::collections::VecDeque<String>>,
 > = once_cell::sync::Lazy::new(|| parking_lot::Mutex::new(std::collections::VecDeque::new()));
+
+/// F2-3: serialize tests that install the process-wide
+/// `TOOL_CALL_OVERRIDE`. Without this, parallel tests racing on
+/// `set_test_tool_call_override` / `clear_test_tool_call_override`
+/// see each other's stubs (or no stub at all).
+static TOOL_CALL_TEST_LOCK: once_cell::sync::Lazy<parking_lot::Mutex<()>> =
+    once_cell::sync::Lazy::new(|| parking_lot::Mutex::new(()));
 
 /// Process-wide capture of every composed prompt seen by the unified
 /// stub. F-17 integration tests inspect this to assert the recall
@@ -1211,27 +1218,14 @@ fn dispatch_test_node(kind: NodeKind, config: NodeConfig) -> Node {
     }
 }
 
-#[tokio::test]
-async fn dispatch_node_returns_not_implemented_for_tool_call() {
-    let (_dir, config) = config_with_temp_workspace();
-    let run = dispatch_test_run();
-    let node = dispatch_test_node(
-        NodeKind::ToolCall,
-        NodeConfig::ToolCall(ToolCallConfig {
-            tool_name: "current_time".into(),
-            arguments_template: serde_json::json!({}),
-        }),
-    );
-    let ctx = crate::openhuman::workflows::templating::NodeContext::default();
-    let err = executor::dispatch_node(&config, &run, &node, &ctx)
-        .await
-        .expect_err("ToolCall must return NotImplementedYet in F2-1");
-    let msg = err.to_string();
-    assert!(
-        msg.contains("not yet implemented") && msg.contains("ToolCall"),
-        "got: {msg}"
-    );
-}
+// F2-3 replaced F2-1's `NodeDispatchError::NotImplementedYet` arm for
+// `NodeConfig::ToolCall` with a real `execute_tool_call` body. The
+// end-to-end behaviour is covered by
+// `tool_call_node_runs_via_test_override` /
+// `tool_call_output_flows_into_downstream_agent_prompt_template` /
+// `tool_call_arguments_template_substitutes_upstream_output` /
+// `tool_call_with_is_error_true_halts_run` below — they exercise the
+// dispatcher through `dispatch_run`'s full lifecycle.
 
 #[tokio::test]
 async fn dispatch_node_returns_not_implemented_for_http_request() {
@@ -1732,4 +1726,315 @@ async fn single_node_workflow_with_no_edges_still_runs() {
     .expect("dispatch_run");
     let run = wait_for_terminal_run(&config, &workflow.id).await;
     assert!(matches!(run.status, RunStatus::Succeeded));
+}
+
+// ── F2-3: tool_call node ───────────────────────────────────────────────
+
+/// End-to-end: a single `tool_call` node runs through dispatch via
+/// the test override and persists a successful step row.
+#[tokio::test]
+async fn tool_call_node_runs_via_test_override() {
+    use crate::openhuman::workflows::executor::{
+        clear_test_tool_call_override, set_test_tool_call_override,
+    };
+    let _lock = TOOL_CALL_TEST_LOCK.lock();
+    set_test_tool_call_override(|name, args, _ctx| {
+        // Capture owned copies before the async block so the future
+        // doesn't borrow `&serde_json::Value` across an await.
+        let name = name.to_string();
+        let args = args.clone();
+        async move {
+            Ok(serde_json::json!({
+                "text": format!("stub:{name}:{}", args),
+                "is_error": false,
+                "blocks": []
+            }))
+        }
+    });
+
+    let (_dir, config) = config_with_temp_workspace();
+    let workflow = f2_2_workflow(
+        &format!("wf-tc-{}", uuid::Uuid::new_v4()),
+        vec![Node {
+            id: "n1".into(),
+            kind: NodeKind::ToolCall,
+            config: NodeConfig::ToolCall(ToolCallConfig {
+                tool_name: "current_time".into(),
+                arguments_template: serde_json::json!({}),
+            }),
+            position: None,
+        }],
+        vec![],
+    );
+    store::insert_workflow(&config, &workflow).expect("insert_workflow");
+
+    executor::dispatch_run(
+        &config,
+        workflow.id.clone(),
+        TriggerSource::Manual {
+            initiator: "test".into(),
+        },
+    )
+    .await
+    .expect("dispatch_run");
+    let run = wait_for_terminal_run(&config, &workflow.id).await;
+    clear_test_tool_call_override();
+
+    assert!(
+        matches!(run.status, RunStatus::Succeeded),
+        "tool_call must succeed via stub; got {:?} (err: {:?})",
+        run.status,
+        run.error
+    );
+    let (_run, steps) = store::get_run(&config, &run.id).unwrap().expect("run row");
+    assert_eq!(steps.len(), 1);
+    let step = &steps[0];
+    assert!(matches!(step.status, RunStatus::Succeeded));
+    let output_json = step
+        .output_json
+        .as_deref()
+        .expect("succeeded step must persist output_json");
+    assert!(
+        output_json.contains("stub:current_time"),
+        "output_json must carry the stub's text; got: {output_json}"
+    );
+}
+
+/// Two-node chain: `n1` is `tool_call` (stub returns `{"text":"42"}`),
+/// `n2` is `agent_prompt` whose prompt templates
+/// `{{node.n1.output.text}}`. The substituted prompt must show
+/// `n1`'s output text — proves the inter-node body handoff works
+/// for ToolCall outputs (not just AgentPrompt outputs).
+#[tokio::test]
+async fn tool_call_output_flows_into_downstream_agent_prompt_template() {
+    use crate::openhuman::workflows::executor::{
+        clear_test_tool_call_override, set_test_tool_call_override,
+    };
+    let _lock = TOOL_CALL_TEST_LOCK.lock();
+    set_test_tool_call_override(|_name, _args, _ctx| async move {
+        Ok::<serde_json::Value, String>(serde_json::json!({
+            "text": "the-answer-is-42",
+            "is_error": false,
+            "blocks": []
+        }))
+    });
+
+    let (_dir, config) = config_with_temp_workspace();
+    let workflow = f2_2_workflow(
+        &format!("wf-tc-chain-{}", uuid::Uuid::new_v4()),
+        vec![
+            Node {
+                id: "n1".into(),
+                kind: NodeKind::ToolCall,
+                config: NodeConfig::ToolCall(ToolCallConfig {
+                    tool_name: "current_time".into(),
+                    arguments_template: serde_json::json!({}),
+                }),
+                position: None,
+            },
+            f2_2_agent_node("n2", "downstream sees: {{node.n1.output.text}}"),
+        ],
+        vec![Edge {
+            from: "n1".into(),
+            to: "n2".into(),
+        }],
+    );
+    store::insert_workflow(&config, &workflow).expect("insert_workflow");
+
+    executor::dispatch_run(
+        &config,
+        workflow.id.clone(),
+        TriggerSource::Manual {
+            initiator: "test".into(),
+        },
+    )
+    .await
+    .expect("dispatch_run");
+    let run = wait_for_terminal_run(&config, &workflow.id).await;
+    clear_test_tool_call_override();
+
+    assert!(matches!(run.status, RunStatus::Succeeded));
+    let prompts = captured_prompts().lock().clone();
+    let n2_prompt = prompts
+        .iter()
+        .find(|p| p.contains("downstream sees:"))
+        .unwrap_or_else(|| panic!("n2's prompt missing from captured: {prompts:#?}"));
+    assert!(
+        n2_prompt.contains("the-answer-is-42"),
+        "n2's prompt must show the substituted text from n1's tool_call output; got:\n{n2_prompt}"
+    );
+}
+
+/// Args templating: previous node emits `{"x": 7}`; tool_call node's
+/// `arguments_template` is `{"value": "{{node.n1.output.x}}"}`. The
+/// stub captures the args it received and we assert the substituted
+/// value.
+#[tokio::test]
+async fn tool_call_arguments_template_substitutes_upstream_output() {
+    use crate::openhuman::workflows::executor::{
+        clear_test_tool_call_override, set_test_tool_call_override,
+    };
+    let _lock = TOOL_CALL_TEST_LOCK.lock();
+
+    // Capture the args the stub received so we can assert on them.
+    let captured_args: Arc<parking_lot::Mutex<Option<serde_json::Value>>> =
+        Arc::new(parking_lot::Mutex::new(None));
+    let writer = Arc::clone(&captured_args);
+    set_test_tool_call_override(move |_name, args, _ctx| {
+        let writer = Arc::clone(&writer);
+        let args = args.clone();
+        async move {
+            *writer.lock() = Some(args.clone());
+            Ok(serde_json::json!({ "text": "ok", "is_error": false, "blocks": [] }))
+        }
+    });
+
+    let (_dir, config) = config_with_temp_workspace();
+    // n1 = agent_prompt emitting "x": 7 in its output_json. The stub
+    // echoes prompt verbatim — the output body is `{"text": "..."}`
+    // which doesn't have an `x` field. Instead, make n1 a ToolCall too,
+    // whose stub returns `{"x": 7}`. Then n2 references it.
+    //
+    // Override the ToolCall stub to differentiate by tool_name:
+    //   tool_name "produce" → returns {"x": 7}
+    //   tool_name "consume" → captures args, returns ok
+    let captured_args2 = Arc::clone(&captured_args);
+    set_test_tool_call_override(move |name, args, _ctx| {
+        let writer = Arc::clone(&captured_args2);
+        let args = args.clone();
+        let name = name.to_string();
+        async move {
+            if name == "consume" {
+                *writer.lock() = Some(args.clone());
+            }
+            let body = if name == "produce" {
+                serde_json::json!({ "x": 7 })
+            } else {
+                serde_json::json!({ "text": "ok", "is_error": false, "blocks": [] })
+            };
+            Ok(body)
+        }
+    });
+
+    let workflow = f2_2_workflow(
+        &format!("wf-tc-args-{}", uuid::Uuid::new_v4()),
+        vec![
+            Node {
+                id: "n1".into(),
+                kind: NodeKind::ToolCall,
+                config: NodeConfig::ToolCall(ToolCallConfig {
+                    tool_name: "produce".into(),
+                    arguments_template: serde_json::json!({}),
+                }),
+                position: None,
+            },
+            Node {
+                id: "n2".into(),
+                kind: NodeKind::ToolCall,
+                config: NodeConfig::ToolCall(ToolCallConfig {
+                    tool_name: "consume".into(),
+                    arguments_template: serde_json::json!({
+                        "value": "{{node.n1.output.x}}",
+                        "literal": "stays-the-same"
+                    }),
+                }),
+                position: None,
+            },
+        ],
+        vec![Edge {
+            from: "n1".into(),
+            to: "n2".into(),
+        }],
+    );
+    store::insert_workflow(&config, &workflow).expect("insert_workflow");
+
+    executor::dispatch_run(
+        &config,
+        workflow.id.clone(),
+        TriggerSource::Manual {
+            initiator: "test".into(),
+        },
+    )
+    .await
+    .expect("dispatch_run");
+    let run = wait_for_terminal_run(&config, &workflow.id).await;
+    clear_test_tool_call_override();
+
+    assert!(
+        matches!(run.status, RunStatus::Succeeded),
+        "chain must succeed; got {:?} (err: {:?})",
+        run.status,
+        run.error
+    );
+    let args = captured_args
+        .lock()
+        .clone()
+        .expect("consume stub must have been invoked");
+    // OQ-7 single-ref type preservation: `"{{node.n1.output.x}}"`
+    // resolves to the JSON number 7, not the string "7".
+    assert_eq!(args["value"], serde_json::json!(7));
+    assert_eq!(args["literal"], serde_json::json!("stays-the-same"));
+}
+
+/// Tool returning `is_error=true` halts the chain — same workflow-
+/// level Halt policy as F2-2's per-failure path.
+#[tokio::test]
+async fn tool_call_with_is_error_true_halts_run() {
+    use crate::openhuman::workflows::executor::{
+        clear_test_tool_call_override, set_test_tool_call_override,
+    };
+    let _lock = TOOL_CALL_TEST_LOCK.lock();
+    set_test_tool_call_override(|_name, _args, _ctx| async move {
+        Ok::<serde_json::Value, String>(serde_json::json!({
+            "text": "synthetic upstream failure",
+            "is_error": true,
+            "blocks": []
+        }))
+    });
+
+    let (_dir, config) = config_with_temp_workspace();
+    let workflow = f2_2_workflow(
+        &format!("wf-tc-err-{}", uuid::Uuid::new_v4()),
+        vec![
+            Node {
+                id: "n1".into(),
+                kind: NodeKind::ToolCall,
+                config: NodeConfig::ToolCall(ToolCallConfig {
+                    tool_name: "current_time".into(),
+                    arguments_template: serde_json::json!({}),
+                }),
+                position: None,
+            },
+            f2_2_agent_node("n2", "should never run"),
+        ],
+        vec![Edge {
+            from: "n1".into(),
+            to: "n2".into(),
+        }],
+    );
+    store::insert_workflow(&config, &workflow).expect("insert_workflow");
+
+    executor::dispatch_run(
+        &config,
+        workflow.id.clone(),
+        TriggerSource::Manual {
+            initiator: "test".into(),
+        },
+    )
+    .await
+    .expect("dispatch_run");
+    let run = wait_for_terminal_run(&config, &workflow.id).await;
+    clear_test_tool_call_override();
+
+    assert!(matches!(run.status, RunStatus::Failed));
+    let err = run.error.as_deref().unwrap_or("");
+    assert!(
+        err.contains("node `n1` failed"),
+        "terminal error must name n1; got: {err}"
+    );
+    let (_run, steps) = store::get_run(&config, &run.id).unwrap().expect("run row");
+    assert!(
+        steps.iter().all(|s| s.node_id != "n2"),
+        "n2 must not have run after n1 errored"
+    );
 }
