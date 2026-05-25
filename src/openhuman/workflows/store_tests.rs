@@ -16,7 +16,7 @@ fn config_with_temp_workspace() -> (TempDir, Config) {
 }
 
 #[test]
-fn open_creates_workflows_db_and_applies_all_three_migrations() {
+fn open_creates_workflows_db_and_applies_all_migrations() {
     let (_dir, config) = config_with_temp_workspace();
     with_connection(&config, |_conn| Ok(())).unwrap();
 
@@ -56,8 +56,8 @@ fn open_creates_workflows_db_and_applies_all_three_migrations() {
             .unwrap();
         assert_eq!(
             versions,
-            vec![1, 2, 3],
-            "ledger must record every migration"
+            vec![1, 2, 3, 4],
+            "ledger must record every migration (F2-14 added 004_workflow_soft_delete)"
         );
         Ok(())
     })
@@ -77,7 +77,10 @@ fn re_open_is_idempotent_and_does_not_duplicate_ledger_rows() {
                 row.get(0)
             })
             .unwrap();
-        assert_eq!(count, 3, "three migrations must record exactly three rows");
+        assert_eq!(
+            count, 4,
+            "four migrations must record exactly four rows (F2-14 added 004_workflow_soft_delete)"
+        );
         Ok(())
     })
     .unwrap();

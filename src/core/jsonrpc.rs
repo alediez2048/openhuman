@@ -1150,6 +1150,33 @@ fn register_domain_subscribers(
                 }
             });
         }
+        // F2-14: retention sweep tokio task. Hourly tick that hard-
+        // deletes workflow rows whose `deleted_at` is older than the
+        // 30-day retention window. Bounded work per tick; off the hot
+        // path so a sweep stall doesn't impact the scheduler.
+        {
+            let config = config.clone();
+            tokio::spawn(async move {
+                let interval =
+                    std::time::Duration::from_secs(crate::openhuman::workflows::retention::SWEEP_INTERVAL_SECS);
+                // Initial delay so the sweep doesn't race the rest of
+                // boot — the retention window is 30 days, an extra
+                // minute at startup costs nothing.
+                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                loop {
+                    match crate::openhuman::workflows::retention::run_purge_sweep(&config) {
+                        Ok(0) => {}
+                        Ok(n) => log::info!(
+                            "[workflows-retention] sweep purged {n} aged-out workflow rows"
+                        ),
+                        Err(err) => log::error!(
+                            "[workflows-retention] sweep failed: {err:#}"
+                        ),
+                    }
+                    tokio::time::sleep(interval).await;
+                }
+            });
+        }
         crate::openhuman::notifications::register_notification_bridge_subscriber();
         crate::openhuman::memory::conversations::register_conversation_persistence_subscriber(
             workspace_dir.clone(),

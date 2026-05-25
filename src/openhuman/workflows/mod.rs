@@ -42,6 +42,7 @@ pub mod health;
 pub mod memory;
 pub mod ops;
 pub mod proposer;
+pub mod retention;
 pub mod rpc;
 pub mod scheduler;
 pub mod schemas;

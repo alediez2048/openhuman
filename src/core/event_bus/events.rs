@@ -546,6 +546,12 @@ pub enum DomainEvent {
         reason_json: serde_json::Value,
         attempted_trigger_source_json: serde_json::Value,
     },
+    /// F2-14: a soft-deleted workflow aged past its 30-day retention
+    /// window and was hard-deleted by the retention sweep. `run_count`
+    /// is the number of `workflow_runs` rows that the FK cascade
+    /// dropped — informational so observers can surface the loss in a
+    /// "deleted N runs" log line.
+    WorkflowPurged { workflow_id: String, run_count: u32 },
 
     // ── Auth ────────────────────────────────────────────────────────────
     /// The local app session is no longer valid — typically detected when
@@ -645,7 +651,8 @@ impl DomainEvent {
             | Self::WorkflowRunStepCompleted { .. }
             | Self::WorkflowRunStepRetried { .. }
             | Self::WorkflowRunCompleted { .. }
-            | Self::WorkflowRunSkipped { .. } => "workflow",
+            | Self::WorkflowRunSkipped { .. }
+            | Self::WorkflowPurged { .. } => "workflow",
 
             Self::SessionExpired { .. } => "auth",
         }

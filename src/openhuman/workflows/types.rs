@@ -970,6 +970,11 @@ pub struct ListFilter {
     /// Case-insensitive substring against `name`.
     #[serde(default)]
     pub search: Option<String>,
+    /// F2-14: when `false` (default), `list_workflows` filters out
+    /// soft-deleted rows (`deleted_at IS NOT NULL`). Set to `true` to
+    /// surface the retention-window backlog (e.g. for a Trash view).
+    #[serde(default)]
+    pub include_deleted: bool,
 }
 
 /// Discriminator-only enum used by the [`ListFilter`] chip. Mirrors the

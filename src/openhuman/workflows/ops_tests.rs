@@ -398,7 +398,10 @@ async fn disable_flips_bit_emits_event() {
 }
 
 #[tokio::test]
-async fn delete_cascades_runs_and_publishes_event() {
+async fn delete_soft_deletes_and_publishes_event_keeping_runs() {
+    // F2-14: soft-delete sets `deleted_at` and leaves the FK cascade
+    // dormant. Run rows MUST survive so a restore brings history back.
+    // The hard-delete cascade lives in the retention sweep test below.
     let (_dir, config) = config_with_temp_workspace();
     let (_lock, mut rx, _handle) = setup_event_probe();
 
@@ -407,9 +410,6 @@ async fn delete_cascades_runs_and_publishes_event() {
         .unwrap()
         .value;
 
-    // Insert a fake run via the store's connection so we can verify the
-    // FK cascade fires on workflow deletion (full run-row CRUD lands in
-    // F-8; for now we hit the raw SQL).
     super::store::with_connection(&config, |conn| {
         conn.execute(
             "INSERT INTO workflow_runs (id, workflow_id, trigger_source, status, started_at) \
@@ -433,6 +433,168 @@ async fn delete_cascades_runs_and_publishes_event() {
     )
     .await;
 
+    // F2-14: row is soft-deleted; the run survives the retention window.
+    let surviving_runs: i64 = super::store::with_connection(&config, |conn| {
+        Ok(conn
+            .query_row(
+                "SELECT COUNT(*) FROM workflow_runs WHERE workflow_id = ?1",
+                rusqlite::params![created.id],
+                |row| row.get(0),
+            )
+            .unwrap())
+    })
+    .unwrap();
+    assert_eq!(
+        surviving_runs, 1,
+        "soft-delete MUST preserve run history within the retention window"
+    );
+
+    // The default list filter excludes soft-deleted rows.
+    let listed = super::store::list_workflows(&config, &ListFilter::default()).unwrap();
+    assert!(
+        !listed.iter().any(|wf| wf.id == created.id),
+        "soft-deleted workflow MUST NOT appear in default list"
+    );
+
+    // Trash view (include_deleted=true) still sees it.
+    let with_deleted = super::store::list_workflows(
+        &config,
+        &ListFilter {
+            include_deleted: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert!(
+        with_deleted.iter().any(|wf| wf.id == created.id),
+        "soft-deleted workflow MUST appear when include_deleted=true"
+    );
+
+    // `get_workflow` honours the default filter; restore-time read uses
+    // the including-deleted variant.
+    assert!(super::store::get_workflow(&config, &created.id)
+        .unwrap()
+        .is_none());
+    assert!(
+        super::store::get_workflow_including_deleted(&config, &created.id)
+            .unwrap()
+            .is_some()
+    );
+}
+
+#[tokio::test]
+async fn restore_clears_deleted_at_and_publishes_workflow_defined() {
+    let (_dir, config) = config_with_temp_workspace();
+    let (_lock, mut rx, _handle) = setup_event_probe();
+
+    let created = ops::create(&config, sample_create(WorkflowOrigin::UserChat))
+        .await
+        .unwrap()
+        .value;
+    let id = created.id.clone();
+
+    ops::delete(&config, id.clone()).await.unwrap();
+    // Drain the WorkflowDeleted event so the restore probe sees the
+    // following WorkflowDefined event cleanly.
+    await_matching(
+        &mut rx,
+        &id,
+        |e| matches!(e, DomainEvent::WorkflowDeleted { workflow_id } if workflow_id == &id),
+    )
+    .await;
+
+    let restored = ops::restore(&config, id.clone()).await.unwrap().value;
+    assert!(restored.is_some(), "restore must return the row");
+    assert_eq!(restored.unwrap().id, id);
+
+    // Now visible in default list view again.
+    let listed = super::store::list_workflows(&config, &ListFilter::default()).unwrap();
+    assert!(listed.iter().any(|wf| wf.id == id));
+
+    await_matching(
+        &mut rx,
+        &id,
+        |e| matches!(e, DomainEvent::WorkflowDefined { workflow_id, .. } if workflow_id == &id),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn restore_unknown_id_is_idempotent_noop() {
+    let (_dir, config) = config_with_temp_workspace();
+    let restored = ops::restore(&config, "no-such-id".into())
+        .await
+        .unwrap()
+        .value;
+    assert!(restored.is_none());
+}
+
+#[tokio::test]
+async fn restore_already_live_workflow_is_noop() {
+    let (_dir, config) = config_with_temp_workspace();
+    let created = ops::create(&config, sample_create(WorkflowOrigin::UserChat))
+        .await
+        .unwrap()
+        .value;
+    let restored = ops::restore(&config, created.id.clone())
+        .await
+        .unwrap()
+        .value;
+    assert!(
+        restored.is_none(),
+        "restore on a non-soft-deleted row must be a no-op"
+    );
+}
+
+#[tokio::test]
+async fn retention_sweep_hard_deletes_workflow_aged_past_window() {
+    use crate::openhuman::workflows::retention;
+
+    let (_dir, config) = config_with_temp_workspace();
+    let (_lock, mut rx, _handle) = setup_event_probe();
+
+    let created = ops::create(&config, sample_create(WorkflowOrigin::UserChat))
+        .await
+        .unwrap()
+        .value;
+    super::store::with_connection(&config, |conn| {
+        conn.execute(
+            "INSERT INTO workflow_runs (id, workflow_id, trigger_source, status, started_at) \
+             VALUES ('run-r1', ?1, '{\"type\":\"manual\",\"initiator\":\"test\"}', 'succeeded', ?2)",
+            rusqlite::params![created.id, "2026-05-20T00:00:00Z"],
+        )?;
+        Ok(())
+    })
+    .unwrap();
+
+    ops::delete(&config, created.id.clone()).await.unwrap();
+
+    // Sweep with NOW = now: row was deleted_at = ~now, cutoff = NOW - 30d,
+    // so the candidate set is empty — no purge.
+    let purged_immediate = retention::run_purge_sweep_with_now(
+        &config,
+        chrono::Utc::now,
+        retention::DEFAULT_RETENTION_DAYS,
+    )
+    .unwrap();
+    assert_eq!(
+        purged_immediate, 0,
+        "fresh soft-delete must NOT purge before the retention window elapses"
+    );
+
+    // Fast-forward 31 days. The row aged out — the sweep MUST purge.
+    let future = chrono::Utc::now() + chrono::Duration::days(31);
+    let purged_after = retention::run_purge_sweep_with_now(
+        &config,
+        move || future,
+        retention::DEFAULT_RETENTION_DAYS,
+    )
+    .unwrap();
+    assert_eq!(
+        purged_after, 1,
+        "31-day-old soft-deleted row MUST be purged"
+    );
+
     // FK cascade must have dropped the run row.
     let surviving_runs: i64 = super::store::with_connection(&config, |conn| {
         Ok(conn
@@ -444,7 +606,34 @@ async fn delete_cascades_runs_and_publishes_event() {
             .unwrap())
     })
     .unwrap();
-    assert_eq!(surviving_runs, 0);
+    assert_eq!(
+        surviving_runs, 0,
+        "hard-purge FK cascade MUST drop the run rows"
+    );
+
+    // Row is gone from both default + include_deleted lists.
+    let listed = super::store::list_workflows(
+        &config,
+        &ListFilter {
+            include_deleted: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert!(
+        !listed.iter().any(|wf| wf.id == created.id),
+        "purged workflow MUST NOT appear even in Trash view"
+    );
+
+    // WorkflowPurged event landed.
+    await_matching(&mut rx, &created.id, |e| {
+        matches!(
+            e,
+            DomainEvent::WorkflowPurged { workflow_id, run_count }
+                if workflow_id == &created.id && *run_count == 1
+        )
+    })
+    .await;
 }
 
 #[tokio::test]

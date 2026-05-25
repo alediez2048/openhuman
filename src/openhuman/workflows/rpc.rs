@@ -55,10 +55,23 @@ pub async fn workflows_update(
     ops::update(config, req).await.map_err(|e| e.to_string())
 }
 
-/// `openhuman.workflows_delete` — hard-delete with FK cascade. Returns
-/// `removed = false` when the id was unknown so the call is idempotent.
+/// `openhuman.workflows_delete` — F2-14 soft-delete. Sets
+/// `workflows.deleted_at` and unregisters cron / webhook hooks; the
+/// row is hard-deleted by the retention sweep after 30 days.
+/// `removed = false` when the id was unknown or already soft-deleted.
 pub async fn workflows_delete(config: &Config, id: WorkflowId) -> Result<RpcOutcome<bool>, String> {
     ops::delete(config, id).await.map_err(|e| e.to_string())
+}
+
+/// `openhuman.workflows_restore` — F2-14 undo for `workflows_delete`.
+/// Clears `deleted_at`, re-registers cron / webhook hooks, returns
+/// the restored row. Returns `None` when the id was unknown or the
+/// row was already live.
+pub async fn workflows_restore(
+    config: &Config,
+    id: WorkflowId,
+) -> Result<RpcOutcome<Option<Workflow>>, String> {
+    ops::restore(config, id).await.map_err(|e| e.to_string())
 }
 
 /// `openhuman.workflows_enable` — flip `enabled = true`, emit

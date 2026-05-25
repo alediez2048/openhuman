@@ -22,6 +22,7 @@ use std::path::PathBuf;
 const MIGRATION_001: &str = include_str!("migrations/001_init_workflows.sql");
 const MIGRATION_002: &str = include_str!("migrations/002_runs.sql");
 const MIGRATION_003: &str = include_str!("migrations/003_run_steps.sql");
+const MIGRATION_004: &str = include_str!("migrations/004_workflow_soft_delete.sql");
 
 /// Resolves the database path for this workspace: `${workspace_dir}/workflows.db`.
 fn db_path(config: &Config) -> PathBuf {
@@ -76,6 +77,7 @@ fn apply_migrations(conn: &Connection) -> Result<()> {
     apply_one(conn, 1, "001_init_workflows", MIGRATION_001)?;
     apply_one(conn, 2, "002_runs", MIGRATION_002)?;
     apply_one(conn, 3, "003_run_steps", MIGRATION_003)?;
+    apply_one(conn, 4, "004_workflow_soft_delete", MIGRATION_004)?;
 
     Ok(())
 }
@@ -159,7 +161,10 @@ pub fn insert_workflow(config: &Config, wf: &Workflow) -> Result<()> {
     })
 }
 
-/// Fetches one workflow by id; `Ok(None)` when the id is unknown.
+/// Fetches one workflow by id; `Ok(None)` when the id is unknown OR
+/// when the row has been soft-deleted (F2-14). Callers that need to
+/// see soft-deleted rows (e.g. `workflows_restore`) go through
+/// [`get_workflow_including_deleted`].
 pub fn get_workflow(config: &Config, id: &WorkflowId) -> Result<Option<Workflow>> {
     with_connection(config, |db| {
         let mut stmt = db
@@ -167,7 +172,7 @@ pub fn get_workflow(config: &Config, id: &WorkflowId) -> Result<Option<Workflow>
                 "SELECT id, schema_version, name, description, enabled, origin, health, \
                  trigger_json, nodes_json, edges_json, settings_json, \
                  created_at, updated_at, last_run_at \
-                 FROM workflows WHERE id = ?1",
+                 FROM workflows WHERE id = ?1 AND deleted_at IS NULL",
             )
             .context("Failed to prepare get_workflow statement")?;
         let mut rows = stmt
@@ -188,15 +193,24 @@ pub fn list_workflows(config: &Config, filter: &ListFilter) -> Result<Vec<Workfl
     // `health` column makes WHERE clauses fragile and the table is
     // bounded in size (Phase 1 expects O(10) workflows per user). When
     // workflow counts grow, we can add discriminator columns + indexes
-    // — for now, scan + filter is correct and small.
+    // — for now, scan + filter is correct and small. F2-14: the
+    // `deleted_at IS NULL` clause is in SQL because it must short-
+    // circuit the row read; `include_deleted = true` swaps for a
+    // no-WHERE-filter query so the Trash view can render the backlog.
     with_connection(config, |db| {
+        let sql = if filter.include_deleted {
+            "SELECT id, schema_version, name, description, enabled, origin, health, \
+             trigger_json, nodes_json, edges_json, settings_json, \
+             created_at, updated_at, last_run_at \
+             FROM workflows ORDER BY updated_at DESC"
+        } else {
+            "SELECT id, schema_version, name, description, enabled, origin, health, \
+             trigger_json, nodes_json, edges_json, settings_json, \
+             created_at, updated_at, last_run_at \
+             FROM workflows WHERE deleted_at IS NULL ORDER BY updated_at DESC"
+        };
         let mut stmt = db
-            .prepare(
-                "SELECT id, schema_version, name, description, enabled, origin, health, \
-                 trigger_json, nodes_json, edges_json, settings_json, \
-                 created_at, updated_at, last_run_at \
-                 FROM workflows ORDER BY updated_at DESC",
-            )
+            .prepare(sql)
             .context("Failed to prepare list_workflows statement")?;
         let workflows = stmt
             .query_map([], |row| Ok(row_to_workflow(row)))
@@ -277,16 +291,134 @@ pub fn set_enabled(
     })
 }
 
-/// Hard-deletes a workflow row. The FK cascades drop `workflow_runs`
-/// and `workflow_run_steps`. Returns `false` when no row matched.
+/// F2-14: soft-deletes a workflow row by setting `deleted_at`. The
+/// row stays in the table — `workflow_runs` + `workflow_run_steps`
+/// survive so users restoring within the 30-day window keep their
+/// history. The background retention sweep
+/// (`retention::run_purge_sweep`) hard-deletes rows whose
+/// `deleted_at` is older than the retention window.
 ///
-/// TODO(F-15): replace with a 30-day soft-delete sweep per FR-1.3.4.
+/// Returns `false` when no row matched or the row was already
+/// soft-deleted (idempotent).
 pub fn delete_workflow(config: &Config, id: &WorkflowId) -> Result<bool> {
+    let now = Utc::now().to_rfc3339();
     with_connection(config, |db| {
         let rows = db
-            .execute("DELETE FROM workflows WHERE id = ?1", rusqlite::params![id])
-            .context("Failed to delete workflows row")?;
+            .execute(
+                "UPDATE workflows SET deleted_at = ?2, updated_at = ?2 \
+                 WHERE id = ?1 AND deleted_at IS NULL",
+                rusqlite::params![id, now],
+            )
+            .context("Failed to soft-delete workflows row")?;
         Ok(rows > 0)
+    })
+}
+
+/// F2-14: restore a soft-deleted workflow by clearing `deleted_at`.
+/// No-op when the row doesn't exist OR is already live. Returns
+/// `true` only when a soft-deleted row transitioned back to live.
+pub fn restore_workflow(config: &Config, id: &WorkflowId) -> Result<bool> {
+    let now = Utc::now().to_rfc3339();
+    with_connection(config, |db| {
+        let rows = db
+            .execute(
+                "UPDATE workflows SET deleted_at = NULL, updated_at = ?2 \
+                 WHERE id = ?1 AND deleted_at IS NOT NULL",
+                rusqlite::params![id, now],
+            )
+            .context("Failed to restore workflows row")?;
+        Ok(rows > 0)
+    })
+}
+
+/// F2-14: read a workflow regardless of soft-delete state. Used by
+/// `workflows_restore` so the RPC can render a preview of what's
+/// about to come back. `Ok(None)` only when the id is completely
+/// unknown.
+pub fn get_workflow_including_deleted(
+    config: &Config,
+    id: &WorkflowId,
+) -> Result<Option<Workflow>> {
+    with_connection(config, |db| {
+        let mut stmt = db
+            .prepare(
+                "SELECT id, schema_version, name, description, enabled, origin, health, \
+                 trigger_json, nodes_json, edges_json, settings_json, \
+                 created_at, updated_at, last_run_at \
+                 FROM workflows WHERE id = ?1",
+            )
+            .context("Failed to prepare get_workflow_including_deleted statement")?;
+        let mut rows = stmt
+            .query(rusqlite::params![id])
+            .context("Failed to query get_workflow_including_deleted")?;
+        if let Some(row) = rows
+            .next()
+            .context("Failed to read get_workflow_including_deleted row")?
+        {
+            Ok(Some(row_to_workflow(row)?))
+        } else {
+            Ok(None)
+        }
+    })
+}
+
+/// F2-14: list ids of workflows whose `deleted_at` is older than the
+/// cutoff. The retention sweep (`retention::run_purge_sweep`) takes
+/// this list, hard-deletes each, and publishes `WorkflowPurged`.
+/// Returns `(id, deleted_at)` pairs so the caller can include the
+/// deletion timestamp in its log + event.
+pub fn list_deleted_workflows_older_than(
+    config: &Config,
+    cutoff: DateTime<Utc>,
+) -> Result<Vec<(WorkflowId, DateTime<Utc>)>> {
+    let cutoff_str = cutoff.to_rfc3339();
+    with_connection(config, |db| {
+        let mut stmt = db
+            .prepare(
+                "SELECT id, deleted_at FROM workflows \
+                 WHERE deleted_at IS NOT NULL AND deleted_at < ?1",
+            )
+            .context("Failed to prepare list_deleted_workflows_older_than")?;
+        let rows = stmt
+            .query_map(rusqlite::params![cutoff_str], |row| {
+                let id: String = row.get(0)?;
+                let raw: String = row.get(1)?;
+                Ok((id, raw))
+            })
+            .context("Failed to query list_deleted_workflows_older_than")?
+            .collect::<Result<Vec<_>, _>>()
+            .context("Failed to materialise list_deleted_workflows_older_than row")?;
+        let mut out = Vec::with_capacity(rows.len());
+        for (id, raw) in rows {
+            let ts = chrono::DateTime::parse_from_rfc3339(&raw)
+                .with_context(|| format!("parse deleted_at `{raw}` for id `{id}`"))?
+                .with_timezone(&Utc);
+            out.push((id, ts));
+        }
+        Ok(out)
+    })
+}
+
+/// F2-14: hard-delete a workflow row. Cascades to `workflow_runs` +
+/// `workflow_run_steps` via the FK chain from migrations 002 + 003.
+/// Caller is responsible for confirming the retention window has
+/// elapsed (`retention::run_purge_sweep` is the only intended caller).
+/// Returns the number of `workflow_runs` rows that the cascade dropped
+/// so the publisher can include the count in `WorkflowPurged`.
+pub fn hard_delete_workflow(config: &Config, id: &WorkflowId) -> Result<u32> {
+    with_connection(config, |db| {
+        // Count run rows BEFORE the cascade so the post-purge event
+        // can report what we lost.
+        let run_count: i64 = db
+            .query_row(
+                "SELECT COUNT(*) FROM workflow_runs WHERE workflow_id = ?1",
+                rusqlite::params![id],
+                |row| row.get(0),
+            )
+            .context("Failed to count workflow_runs for hard_delete_workflow")?;
+        db.execute("DELETE FROM workflows WHERE id = ?1", rusqlite::params![id])
+            .context("Failed to hard-delete workflows row")?;
+        Ok(run_count as u32)
     })
 }
 
@@ -295,8 +427,12 @@ pub fn delete_workflow(config: &Config, id: &WorkflowId) -> Result<bool> {
 /// to hide already-seeded templates.
 pub fn list_seed_origins(config: &Config) -> Result<Vec<String>> {
     with_connection(config, |db| {
+        // F2-14: soft-deleted seed workflows release their template back
+        // into the catalog so the user can re-add them. Hard-deleted (post-
+        // sweep) rows are gone from the table entirely so they don't need
+        // explicit filtering.
         let mut stmt = db
-            .prepare("SELECT origin FROM workflows")
+            .prepare("SELECT origin FROM workflows WHERE deleted_at IS NULL")
             .context("Failed to prepare list_seed_origins statement")?;
         let rows: Vec<String> = stmt
             .query_map([], |row| row.get::<_, String>(0))?
@@ -801,7 +937,8 @@ pub fn list_workflows_referencing(config: &Config, r#ref: &ConnectionRef) -> Res
                  trigger_json, nodes_json, edges_json, settings_json, \
                  created_at, updated_at, last_run_at \
                  FROM workflows \
-                 WHERE nodes_json LIKE ?1 ESCAPE '\\' \
+                 WHERE deleted_at IS NULL \
+                   AND nodes_json LIKE ?1 ESCAPE '\\' \
                  ORDER BY updated_at DESC",
             )
             .context("Failed to prepare list_workflows_referencing")?;
@@ -844,6 +981,7 @@ pub fn list_workflows_matching_composio_event(
                  created_at, updated_at, last_run_at \
                  FROM workflows \
                  WHERE enabled = 1 \
+                   AND deleted_at IS NULL \
                    AND trigger_json LIKE ?1 ESCAPE '\\' \
                    AND trigger_json LIKE ?2 ESCAPE '\\' \
                  ORDER BY updated_at DESC",
@@ -894,6 +1032,7 @@ pub fn list_workflows_matching_channel(config: &Config, provider: &str) -> Resul
                  created_at, updated_at, last_run_at \
                  FROM workflows \
                  WHERE enabled = 1 \
+                   AND deleted_at IS NULL \
                    AND trigger_json LIKE ?1 ESCAPE '\\' \
                  ORDER BY updated_at DESC",
             )

@@ -32,6 +32,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("create"),
         schemas("update"),
         schemas("delete"),
+        schemas("restore"),
         schemas("enable"),
         schemas("disable"),
         schemas("list_starter_templates"),
@@ -65,6 +66,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("delete"),
             handler: handle_delete,
+        },
+        RegisteredController {
+            schema: schemas("restore"),
+            handler: handle_restore,
         },
         RegisteredController {
             schema: schemas("enable"),
@@ -181,7 +186,7 @@ pub fn schemas(function: &str) -> ControllerSchema {
         "delete" => ControllerSchema {
             namespace: "workflows",
             function: "delete",
-            description: "Hard-delete a workflow. FK cascade drops workflow_runs + workflow_run_steps. Idempotent — returns removed=false when the id was unknown.",
+            description: "F2-14 soft-delete. Sets deleted_at, unregisters cron / webhook hooks; row is hard-deleted by the retention sweep after 30 days. Idempotent.",
             inputs: vec![FieldSchema {
                 name: "id",
                 ty: TypeSchema::String,
@@ -191,7 +196,24 @@ pub fn schemas(function: &str) -> ControllerSchema {
             outputs: vec![FieldSchema {
                 name: "removed",
                 ty: TypeSchema::Bool,
-                comment: "True when a row was removed; false when the id was unknown.",
+                comment: "True when the row transitioned to soft-deleted; false when the id was unknown or already soft-deleted.",
+                required: true,
+            }],
+        },
+        "restore" => ControllerSchema {
+            namespace: "workflows",
+            function: "restore",
+            description: "F2-14: undo workflows_delete. Clears deleted_at, re-registers cron / webhook hooks. Returns the restored row.",
+            inputs: vec![FieldSchema {
+                name: "id",
+                ty: TypeSchema::String,
+                comment: "Workflow id to restore.",
+                required: true,
+            }],
+            outputs: vec![FieldSchema {
+                name: "workflow",
+                ty: TypeSchema::Option(Box::new(TypeSchema::Ref("Workflow"))),
+                comment: "Restored workflow row, or null when the id was unknown / already live.",
                 required: true,
             }],
         },
@@ -402,6 +424,14 @@ fn handle_delete(params: Map<String, Value>) -> ControllerFuture {
         let config = config_rpc::load_config_with_timeout().await?;
         let id = required_string(&params, "id")?;
         to_json(crate::openhuman::workflows::rpc::workflows_delete(&config, id).await?)
+    })
+}
+
+fn handle_restore(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let id = required_string(&params, "id")?;
+        to_json(crate::openhuman::workflows::rpc::workflows_restore(&config, id).await?)
     })
 }
 

@@ -313,17 +313,20 @@ pub async fn update(config: &Config, req: UpdateWorkflowRequest) -> Result<RpcOu
     Ok(RpcOutcome::single_log(workflow, log))
 }
 
-/// `workflows_delete` — hard-delete with FK cascade. Phase 1 keeps
-/// this simple; the 30-day soft-delete retention sweep (FR-1.3.4) is
-/// deferred to F-15.
+/// `workflows_delete` — F2-14 soft-delete. Sets `workflows.deleted_at`
+/// and unregisters cron / webhook hooks so the row stops firing
+/// immediately. The actual row removal happens 30 days later via
+/// [`retention::run_purge_sweep`]; in the meantime the user can
+/// `workflows_restore` to bring the workflow back with its run
+/// history intact.
 pub async fn delete(config: &Config, id: WorkflowId) -> Result<RpcOutcome<bool>> {
-    // F2-9: peek at the trigger BEFORE the cascade delete so we can
+    // F2-9: peek at the trigger BEFORE the soft-delete so we can
     // deregister the webhook tunnel (if any) cleanly. Cheap read;
     // none-result short-circuits below.
     let pre_delete_trigger: Option<Trigger> = store::get_workflow(config, &id)?.map(|w| w.trigger);
-    // F-7: deregister BEFORE the cascade delete so a cron tick can't
-    // race the row removal and dispatch a run against a workflow_id
-    // the executor will then 404 on.
+    // F-7: deregister BEFORE the soft-delete so a cron tick can't
+    // race the state change and dispatch a run against a workflow
+    // we've already marked as deleted.
     scheduler::deregister(&id);
     if let Some(trigger) = &pre_delete_trigger {
         webhook_deregister_best_effort(&id, trigger);
@@ -333,15 +336,47 @@ pub async fn delete(config: &Config, id: WorkflowId) -> Result<RpcOutcome<bool>>
         publish_global(DomainEvent::WorkflowDeleted {
             workflow_id: id.clone(),
         });
-        tracing::info!(target: "workflows", "[workflows-rpc] delete id={id}");
+        tracing::info!(target: "workflows", "[workflows-rpc] soft-delete id={id}");
     } else {
         tracing::debug!(
             target: "workflows",
-            "[workflows-rpc] delete id={id} no-op (already absent)"
+            "[workflows-rpc] delete id={id} no-op (already absent or already soft-deleted)"
         );
     }
     let log = format!("workflows_delete id={id} removed={removed}");
     Ok(RpcOutcome::single_log(removed, log))
+}
+
+/// `workflows_restore` — F2-14 undo for `workflows_delete`. Clears
+/// `deleted_at`, re-registers cron / webhook hooks, and returns the
+/// restored row. No-op when the id doesn't exist or the row is
+/// already live.
+pub async fn restore(config: &Config, id: WorkflowId) -> Result<RpcOutcome<Option<Workflow>>> {
+    let restored = store::restore_workflow(config, &id)?;
+    if !restored {
+        tracing::debug!(
+            target: "workflows",
+            "[workflows-rpc] restore id={id} no-op (already live or unknown)"
+        );
+        let log = format!("workflows_restore id={id} restored=false");
+        return Ok(RpcOutcome::single_log(None, log));
+    }
+
+    let workflow = store::get_workflow(config, &id)?
+        .ok_or_else(|| anyhow!("workflows_restore: id `{id}` vanished between restore and read"))?;
+
+    // Re-register the trigger hooks the soft-delete tore down.
+    scheduler_register_best_effort(&workflow);
+    webhook_register_best_effort(&workflow);
+
+    publish_global(DomainEvent::WorkflowDefined {
+        workflow_id: workflow.id.clone(),
+        origin_json: serde_json::to_value(&workflow.origin).unwrap_or(serde_json::Value::Null),
+    });
+    tracing::info!(target: "workflows", "[workflows-rpc] restore id={id}");
+
+    let log = format!("workflows_restore id={id} restored=true");
+    Ok(RpcOutcome::single_log(Some(workflow), log))
 }
 
 /// `workflows_enable` — flip `enabled = true` and publish
