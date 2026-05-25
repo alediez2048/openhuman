@@ -16,5 +16,6 @@ pub use schemas::{
 
 /// Cross-module helpers from the channel controller layer that callers
 /// outside the controller registry need (e.g. the welcome agent's
-/// onboarding status snapshot).
-pub use ops::connected_channel_slugs;
+/// onboarding status snapshot, or the F2-5 workflow `channel_message`
+/// node body).
+pub use ops::{channel_send_message, connected_channel_slugs};

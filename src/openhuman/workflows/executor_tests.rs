@@ -1230,24 +1230,9 @@ fn dispatch_test_node(kind: NodeKind, config: NodeConfig) -> Node {
 // F2-4 replaced F2-1's NotImplementedYet stub for `HttpRequest`. The
 // integration tests below cover the new dispatch path end-to-end.
 
-#[tokio::test]
-async fn dispatch_node_returns_not_implemented_for_channel_message() {
-    let (_dir, config) = config_with_temp_workspace();
-    let run = dispatch_test_run();
-    let node = dispatch_test_node(
-        NodeKind::ChannelMessage,
-        NodeConfig::ChannelMessage(ChannelMessageConfig {
-            connection_id: "slack".into(),
-            channel_id: None,
-            body_template: "hi".into(),
-        }),
-    );
-    let ctx = crate::openhuman::workflows::templating::NodeContext::default();
-    let err = executor::dispatch_node(&config, &run, &node, &ctx)
-        .await
-        .unwrap_err();
-    assert!(err.to_string().contains("ChannelMessage"));
-}
+// F2-5 replaced F2-1's NotImplementedYet stub for `ChannelMessage`.
+// The integration tests at the bottom of this file cover the new
+// dispatch path end-to-end.
 
 #[tokio::test]
 async fn dispatch_node_returns_not_implemented_for_condition() {
@@ -2336,5 +2321,228 @@ async fn http_request_connection_not_found_fails_cleanly() {
     assert!(
         err.contains("not found"),
         "terminal_error must mention the missing connection; got: {err}"
+    );
+}
+
+// ── F2-5: channel_message node ─────────────────────────────────────────
+
+/// Serialize tests that install the process-wide
+/// `CHANNEL_MESSAGE_OVERRIDE`.
+static CHANNEL_MESSAGE_TEST_LOCK: once_cell::sync::Lazy<parking_lot::Mutex<()>> =
+    once_cell::sync::Lazy::new(|| parking_lot::Mutex::new(()));
+
+#[tokio::test]
+async fn channel_message_node_runs_via_test_override() {
+    use crate::openhuman::workflows::executor::{
+        clear_test_channel_message_override, set_test_channel_message_override,
+    };
+    let _lock = CHANNEL_MESSAGE_TEST_LOCK.lock();
+    set_test_channel_message_override(|cfg, body, _ctx| {
+        let cfg_channel = cfg.connection_id.clone();
+        let body = body.to_string();
+        async move {
+            Ok::<serde_json::Value, String>(serde_json::json!({
+                "sent": true,
+                "channel": cfg_channel,
+                "text": body,
+                "response": { "message_id": "msg-stub-123" }
+            }))
+        }
+    });
+
+    let (_dir, config) = config_with_temp_workspace();
+    let workflow = f2_2_workflow(
+        &format!("wf-chan-{}", uuid::Uuid::new_v4()),
+        vec![Node {
+            id: "n1".into(),
+            kind: NodeKind::ChannelMessage,
+            config: NodeConfig::ChannelMessage(ChannelMessageConfig {
+                connection_id: "slack".into(),
+                channel_id: Some("C0123".into()),
+                body_template: "hello, world".into(),
+            }),
+            position: None,
+        }],
+        vec![],
+    );
+    store::insert_workflow(&config, &workflow).expect("insert_workflow");
+
+    executor::dispatch_run(
+        &config,
+        workflow.id.clone(),
+        TriggerSource::Manual {
+            initiator: "test".into(),
+        },
+    )
+    .await
+    .expect("dispatch_run");
+    let run = wait_for_terminal_run(&config, &workflow.id).await;
+    clear_test_channel_message_override();
+
+    assert!(
+        matches!(run.status, RunStatus::Succeeded),
+        "channel_message must succeed via stub; got {:?} (err: {:?})",
+        run.status,
+        run.error
+    );
+    let (_run, steps) = store::get_run(&config, &run.id).unwrap().expect("run row");
+    assert_eq!(steps.len(), 1);
+    let body = steps[0]
+        .output_json
+        .as_deref()
+        .expect("succeeded step persists output_json");
+    assert!(body.contains("\"sent\":true"));
+    assert!(body.contains("hello, world"));
+    assert!(body.contains("msg-stub-123"));
+}
+
+/// `tool_call → channel_message` chain — n2's body_template
+/// references `{{node.n1.output.text}}`. The stub captures the
+/// resolved body and we assert the substitution.
+#[tokio::test]
+async fn channel_message_body_templates_upstream_node_output() {
+    use crate::openhuman::workflows::executor::{
+        clear_test_channel_message_override, clear_test_tool_call_override,
+        set_test_channel_message_override, set_test_tool_call_override,
+    };
+    let _lock_chan = CHANNEL_MESSAGE_TEST_LOCK.lock();
+    let _lock_tc = TOOL_CALL_TEST_LOCK.lock();
+
+    // n1: tool_call returns `{"text": "the daily summary"}`.
+    set_test_tool_call_override(|_name, _args, _ctx| async move {
+        Ok::<serde_json::Value, String>(serde_json::json!({
+            "text": "the daily summary",
+            "is_error": false,
+            "blocks": []
+        }))
+    });
+
+    // n2: channel_message stub captures the (substituted) body.
+    let captured_body: Arc<parking_lot::Mutex<Option<String>>> =
+        Arc::new(parking_lot::Mutex::new(None));
+    let writer = Arc::clone(&captured_body);
+    set_test_channel_message_override(move |_cfg, body, _ctx| {
+        let writer = Arc::clone(&writer);
+        let body = body.to_string();
+        async move {
+            *writer.lock() = Some(body);
+            Ok(serde_json::json!({ "sent": true, "channel": "slack", "text": "", "response": {} }))
+        }
+    });
+
+    let (_dir, config) = config_with_temp_workspace();
+    let workflow = f2_2_workflow(
+        &format!("wf-chan-tpl-{}", uuid::Uuid::new_v4()),
+        vec![
+            Node {
+                id: "n1".into(),
+                kind: NodeKind::ToolCall,
+                config: NodeConfig::ToolCall(ToolCallConfig {
+                    tool_name: "current_time".into(),
+                    arguments_template: serde_json::json!({}),
+                }),
+                position: None,
+            },
+            Node {
+                id: "n2".into(),
+                kind: NodeKind::ChannelMessage,
+                config: NodeConfig::ChannelMessage(ChannelMessageConfig {
+                    connection_id: "slack".into(),
+                    channel_id: Some("C-general".into()),
+                    body_template: "daily: {{node.n1.output.text}}".into(),
+                }),
+                position: None,
+            },
+        ],
+        vec![Edge {
+            from: "n1".into(),
+            to: "n2".into(),
+        }],
+    );
+    store::insert_workflow(&config, &workflow).expect("insert_workflow");
+
+    executor::dispatch_run(
+        &config,
+        workflow.id.clone(),
+        TriggerSource::Manual {
+            initiator: "test".into(),
+        },
+    )
+    .await
+    .expect("dispatch_run");
+    let run = wait_for_terminal_run(&config, &workflow.id).await;
+    clear_test_channel_message_override();
+    clear_test_tool_call_override();
+
+    assert!(
+        matches!(run.status, RunStatus::Succeeded),
+        "chain must succeed; got {:?} (err: {:?})",
+        run.status,
+        run.error
+    );
+    let body = captured_body
+        .lock()
+        .clone()
+        .expect("channel_message stub must have been invoked");
+    assert_eq!(body, "daily: the daily summary");
+}
+
+/// Stub returns an Err — run halts as Failed with the reason
+/// surfaced in the terminal error.
+#[tokio::test]
+async fn channel_message_send_failure_halts_run() {
+    use crate::openhuman::workflows::executor::{
+        clear_test_channel_message_override, set_test_channel_message_override,
+    };
+    let _lock = CHANNEL_MESSAGE_TEST_LOCK.lock();
+    set_test_channel_message_override(|_cfg, _body, _ctx| async move {
+        Err::<serde_json::Value, String>("upstream slack rejected: rate_limited".to_string())
+    });
+
+    let (_dir, config) = config_with_temp_workspace();
+    let workflow = f2_2_workflow(
+        &format!("wf-chan-err-{}", uuid::Uuid::new_v4()),
+        vec![
+            Node {
+                id: "n1".into(),
+                kind: NodeKind::ChannelMessage,
+                config: NodeConfig::ChannelMessage(ChannelMessageConfig {
+                    connection_id: "slack".into(),
+                    channel_id: None,
+                    body_template: "test".into(),
+                }),
+                position: None,
+            },
+            f2_2_agent_node("n2", "should never run"),
+        ],
+        vec![Edge {
+            from: "n1".into(),
+            to: "n2".into(),
+        }],
+    );
+    store::insert_workflow(&config, &workflow).expect("insert_workflow");
+
+    executor::dispatch_run(
+        &config,
+        workflow.id.clone(),
+        TriggerSource::Manual {
+            initiator: "test".into(),
+        },
+    )
+    .await
+    .expect("dispatch_run");
+    let run = wait_for_terminal_run(&config, &workflow.id).await;
+    clear_test_channel_message_override();
+
+    assert!(matches!(run.status, RunStatus::Failed));
+    let err = run.error.as_deref().unwrap_or("");
+    assert!(
+        err.contains("rate_limited"),
+        "terminal_error must surface the stub error; got: {err}"
+    );
+    let (_run, steps) = store::get_run(&config, &run.id).unwrap().expect("run row");
+    assert!(
+        steps.iter().all(|s| s.node_id != "n2"),
+        "n2 must not run after n1 failed"
     );
 }

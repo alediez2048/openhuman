@@ -919,9 +919,7 @@ pub(crate) async fn dispatch_node(
         NodeConfig::AgentPrompt(_) => execute_agent_prompt(config, run, node, ctx).await,
         NodeConfig::ToolCall(_) => execute_tool_call(config, run, node, ctx).await,
         NodeConfig::HttpRequest(_) => execute_http_request(config, run, node, ctx).await,
-        NodeConfig::ChannelMessage(_) => {
-            Err(NodeDispatchError::NotImplementedYet(NodeKind::ChannelMessage).into())
-        }
+        NodeConfig::ChannelMessage(_) => execute_channel_message(config, run, node, ctx).await,
         NodeConfig::Condition(_) => {
             Err(NodeDispatchError::NotImplementedYet(NodeKind::Condition).into())
         }
@@ -1630,6 +1628,200 @@ pub fn clear_test_http_request_override() {
 
 fn test_http_request_override() -> Option<Arc<HttpRequestStubFn>> {
     HTTP_REQUEST_OVERRIDE
+        .get()
+        .and_then(|slot| slot.lock().clone())
+}
+
+// ── execute_channel_message (F2-5) ─────────────────────────────────────
+
+/// F2-5 node body for `NodeKind::ChannelMessage`.
+///
+/// Sends a templated message to a connected chat channel. Reuses the
+/// existing `channels::controllers::ops::channel_send_message` which
+/// is the unified send path that backs every provider (Slack /
+/// Discord / Telegram / WhatsApp / iMessage). The
+/// `ConnectionMessageConfig` shape (F2-1) carries the channel slug as
+/// `connection_id`; F2-5 maps that 1:1 to the `channel` arg of
+/// `channel_send_message`.
+///
+/// Steps:
+///   1. Substitute `body_template` against the live `NodeContext`.
+///   2. Persist a `RunStep` row, publish `WorkflowRunStepStarted`.
+///   3. Call `channel_send_message(config, connection_id,
+///      json!({"text": resolved_body}))`.
+///   4. Map result → step `output_json` + dispatcher body. On Err,
+///      mark step Failed and bubble the reason up.
+///   5. Output body shape: `{ "sent": bool, "channel": String,
+///      "text": String, "response": Value }`. Downstream nodes can
+///      template `{{node.<this>.output.sent}}` or
+///      `{{node.<this>.output.response.message_id}}`.
+async fn execute_channel_message(
+    config: &Config,
+    run: &Run,
+    node: &Node,
+    ctx: &crate::openhuman::workflows::templating::NodeContext,
+) -> Result<serde_json::Value> {
+    let chan_cfg = match &node.config {
+        NodeConfig::ChannelMessage(cfg) => cfg,
+        other => anyhow::bail!(
+            "execute_channel_message invoked on non-ChannelMessage node config: {:?}",
+            std::mem::discriminant(other)
+        ),
+    };
+
+    let step_id: RunStepId = Uuid::new_v4().to_string();
+    let started_at = Utc::now();
+    let step = RunStep {
+        id: step_id.clone(),
+        run_id: run.id.clone(),
+        node_id: node.id.clone(),
+        status: RunStatus::Running,
+        started_at,
+        completed_at: None,
+        output_json: None,
+        error: None,
+    };
+    if let Err(err) = store::insert_run_step(config, &step) {
+        anyhow::bail!("insert_run_step failed: {err:#}");
+    }
+    publish_global(DomainEvent::WorkflowRunStepStarted {
+        run_id: run.id.clone(),
+        node_id: node.id.clone(),
+    });
+
+    let (terminal_status, output_json, error, body_value) =
+        match dispatch_channel_message_inner(config, chan_cfg, ctx).await {
+            Ok(body) => {
+                let payload = serde_json::to_string(&body).unwrap_or_else(|_| "{}".into());
+                (RunStatus::Succeeded, Some(payload), None, body)
+            }
+            Err(reason) => {
+                tracing::warn!(
+                    target: "workflows-run",
+                    run = %run.id,
+                    node = %node.id,
+                    "[workflows-run] channel_message failed: {reason}"
+                );
+                (
+                    RunStatus::Failed,
+                    None,
+                    Some(reason),
+                    serde_json::Value::Null,
+                )
+            }
+        };
+
+    if let Err(err) = store::update_run_step_terminal(
+        config,
+        &step_id,
+        terminal_status,
+        Utc::now(),
+        output_json,
+        error.clone(),
+    ) {
+        anyhow::bail!("update_run_step_terminal failed: {err:#}");
+    }
+    let status_json = serde_json::to_value(&terminal_status).unwrap_or(serde_json::Value::Null);
+    publish_global(DomainEvent::WorkflowRunStepCompleted {
+        run_id: run.id.clone(),
+        node_id: node.id.clone(),
+        status_json,
+    });
+
+    if matches!(terminal_status, RunStatus::Failed) {
+        if let Some(reason) = error {
+            anyhow::bail!("channel_message step failed: {reason}");
+        }
+        anyhow::bail!("channel_message step failed");
+    }
+    Ok(body_value)
+}
+
+/// Inner runner — templates the body, dispatches via the unified
+/// channel-send path, maps the response to a JSON body value. Returns
+/// `Err(reason)` for any failure mode.
+async fn dispatch_channel_message_inner(
+    config: &Config,
+    chan_cfg: &crate::openhuman::workflows::types::ChannelMessageConfig,
+    ctx: &crate::openhuman::workflows::templating::NodeContext,
+) -> Result<serde_json::Value, String> {
+    use crate::openhuman::workflows::templating::substitute;
+    let resolved_body = substitute(&chan_cfg.body_template, ctx).resolved;
+
+    if let Some(stub) = test_channel_message_override() {
+        return stub(chan_cfg, &resolved_body, ctx).await;
+    }
+
+    let message_payload = serde_json::json!({ "text": resolved_body });
+    let response = crate::openhuman::channels::controllers::channel_send_message(
+        config,
+        &chan_cfg.connection_id,
+        message_payload,
+    )
+    .await
+    .map_err(|e| format!("channel_send_message failed: {e}"))?;
+
+    Ok(serde_json::json!({
+        "sent": true,
+        "channel": chan_cfg.connection_id,
+        "channel_id": chan_cfg.channel_id,
+        "text": resolved_body,
+        "response": response.value,
+    }))
+}
+
+// ── Test-only channel_message override (F2-5) ──────────────────────────
+
+type ChannelMessageStubFn = Box<
+    dyn Fn(
+            &crate::openhuman::workflows::types::ChannelMessageConfig,
+            &str, // resolved body
+            &crate::openhuman::workflows::templating::NodeContext,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<serde_json::Value, String>> + Send>,
+        > + Send
+        + Sync,
+>;
+
+static CHANNEL_MESSAGE_OVERRIDE: OnceLock<Mutex<Option<Arc<ChannelMessageStubFn>>>> =
+    OnceLock::new();
+
+/// Test-only hook: replaces the real `channel_send_message` dispatch
+/// with a caller-supplied stub. Same shape as F2-3's
+/// `set_test_tool_call_override` and F2-4's
+/// `set_test_http_request_override`. The stub receives the
+/// (pre-substituted) `ChannelMessageConfig`, the resolved body
+/// string, and the live `NodeContext`. Returns the body JSON that
+/// gets recorded as the step's `output_json` AND passed back to the
+/// dispatcher for downstream templating.
+#[cfg(any(test, feature = "e2e-test-support"))]
+pub fn set_test_channel_message_override<F, Fut>(stub: F)
+where
+    F: Fn(
+            &crate::openhuman::workflows::types::ChannelMessageConfig,
+            &str,
+            &crate::openhuman::workflows::templating::NodeContext,
+        ) -> Fut
+        + Send
+        + Sync
+        + 'static,
+    Fut: std::future::Future<Output = Result<serde_json::Value, String>> + Send + 'static,
+{
+    let boxed: ChannelMessageStubFn =
+        Box::new(move |cfg, body, ctx| Box::pin(stub(cfg, body, ctx)));
+    let slot = CHANNEL_MESSAGE_OVERRIDE.get_or_init(|| Mutex::new(None));
+    *slot.lock() = Some(Arc::new(boxed));
+}
+
+#[cfg(any(test, feature = "e2e-test-support"))]
+pub fn clear_test_channel_message_override() {
+    if let Some(slot) = CHANNEL_MESSAGE_OVERRIDE.get() {
+        *slot.lock() = None;
+    }
+}
+
+fn test_channel_message_override() -> Option<Arc<ChannelMessageStubFn>> {
+    CHANNEL_MESSAGE_OVERRIDE
         .get()
         .and_then(|slot| slot.lock().clone())
 }
