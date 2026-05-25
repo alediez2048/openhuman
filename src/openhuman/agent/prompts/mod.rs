@@ -3,6 +3,28 @@ pub use types::*;
 mod connected_identities;
 pub use connected_identities::render_connected_identities;
 
+/// Canonical "MCP and Composio tool failures — surface verbatim" prompt
+/// fragment (F-19 + F-20 + F-21 fix 2). The verbatim-render rule lives in
+/// exactly one place so every agent that calls `mcp_call_tool` /
+/// `composio_execute` (or any tool that surfaces a structured `⚠`
+/// block — e.g. via `delegate_to_integrations_agent`) ships the same
+/// non-negotiable instructions to its LLM.
+///
+/// **Enforcement:** see
+/// `agent::agents::loader::tests::structured_tool_errors_fragment_must_be_included_by_every_agent_with_mcp_or_composio_tools`
+/// — that test fails if any new agent grows MCP/Composio tools in its
+/// allowlist without registering itself as a fragment carrier.
+pub fn structured_tool_errors_fragment() -> &'static str {
+    include_str!("structured_tool_errors.md")
+}
+
+/// Stable marker string the loader enforcement test looks for. Lives in
+/// the fragment body — extracting it as a constant keeps the test from
+/// depending on a fragile substring that an editor could accidentally
+/// reword without realising it breaks the contract.
+pub const STRUCTURED_TOOL_ERRORS_MARKER: &str =
+    "MCP and Composio tool failures — surface verbatim, never confabulate";
+
 use crate::openhuman::skills::Skill;
 use crate::openhuman::tools::Tool;
 use anyhow::Result;

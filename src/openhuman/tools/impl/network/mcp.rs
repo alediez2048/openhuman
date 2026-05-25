@@ -187,8 +187,7 @@ pub(crate) fn classify_mcp_error(err_string: &str) -> McpToolErrorKind {
     }
     if lower.contains("unknown server")
         || lower.contains("server not found")
-        || lower.contains("server `")
-            && lower.contains("not registered")
+        || lower.contains("server `") && lower.contains("not registered")
     {
         return McpToolErrorKind::UnknownServer;
     }
@@ -196,6 +195,14 @@ pub(crate) fn classify_mcp_error(err_string: &str) -> McpToolErrorKind {
     {
         return McpToolErrorKind::ToolReturnedError;
     }
+    // F-21 fix 3: emit drift telemetry on every Unknown so we notice
+    // upstream MCP-server string renames before users do. Same shape as
+    // the Composio classifier — atomic counter + sentry-bound
+    // `tracing::warn!` so the existing dashboards group hits by source.
+    crate::core::observability::record_classifier_drift(
+        crate::core::observability::ToolErrorClassifierSource::Mcp,
+        err_string,
+    );
     McpToolErrorKind::Unknown
 }
 
@@ -377,7 +384,10 @@ impl Tool for McpListToolsTool {
                     "[mcp_list_tools] failed: {detail}"
                 );
                 return Ok(ToolResult::error(render_mcp_tool_error(
-                    &server, "list_tools", kind, &detail,
+                    &server,
+                    "list_tools",
+                    kind,
+                    &detail,
                 )));
             }
         };
@@ -630,6 +640,32 @@ mod tests {
         assert_eq!(
             super::classify_mcp_error("some completely novel failure mode"),
             super::McpToolErrorKind::Unknown
+        );
+    }
+
+    /// F-21 fix 3: an `Unknown` return from the MCP classifier must
+    /// tick the drift counter so the observability surface can flag
+    /// upstream server string drift before users notice.
+    #[test]
+    fn classify_mcp_unknown_increments_drift_counter() {
+        let (mcp_before, _) = crate::core::observability::unknown_classifier_counts();
+        let _ = super::classify_mcp_error("some completely-new MCP failure shape");
+        let (mcp_after, _) = crate::core::observability::unknown_classifier_counts();
+        assert!(
+            mcp_after >= mcp_before + 1,
+            "Unknown classifier must tick the drift counter (before={mcp_before}, after={mcp_after})"
+        );
+    }
+
+    #[test]
+    fn classify_mcp_known_pattern_does_not_increment_drift_counter() {
+        let (before, _) = crate::core::observability::unknown_classifier_counts();
+        let kind = super::classify_mcp_error("HTTP 401 Unauthorized");
+        assert_eq!(kind, super::McpToolErrorKind::AuthFailed);
+        let (after, _) = crate::core::observability::unknown_classifier_counts();
+        assert_eq!(
+            after, before,
+            "a known classification must NOT tick the Unknown counter"
         );
     }
 

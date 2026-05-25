@@ -11,6 +11,7 @@
 //! `integrations_agent/prompt.rs` and nobody has to branch on `agent_id`
 //! in a shared section impl.
 
+use crate::openhuman::agent::prompts::structured_tool_errors_fragment;
 use crate::openhuman::context::prompt::{
     render_datetime, render_tools, render_user_files, render_workspace, ConnectedIntegration,
     PromptContext,
@@ -49,6 +50,14 @@ pub fn build(ctx: &PromptContext<'_>) -> Result<String> {
         out.push_str(tools.trim_end());
         out.push_str("\n\n");
     }
+
+    // F-21 fix 2: shared verbatim-render fragment. Lives in
+    // `agent/prompts/structured_tool_errors.md`; loaded once via
+    // `include_str!` so any update flows to every agent that includes
+    // this helper. Loader test enforces inclusion for every agent with
+    // mcp_* / composio_* tools in its allowlist.
+    out.push_str(structured_tool_errors_fragment().trim_end());
+    out.push_str("\n\n");
 
     let datetime = render_datetime(ctx)?;
     if !datetime.trim().is_empty() {

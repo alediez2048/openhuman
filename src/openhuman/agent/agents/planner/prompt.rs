@@ -5,6 +5,7 @@
 //! in the order it wants — so the output IS what the LLM sees, no
 //! post-processing in the runner.
 
+use crate::openhuman::agent::prompts::structured_tool_errors_fragment;
 use crate::openhuman::context::prompt::{
     render_datetime, render_tools, render_user_files, render_workspace, PromptContext,
 };
@@ -28,6 +29,12 @@ pub fn build(ctx: &PromptContext<'_>) -> Result<String> {
         out.push_str(tools.trim_end());
         out.push_str("\n\n");
     }
+
+    // F-21 fix 2: planner has composio_execute in its allowlist (under
+    // a read_only sandbox) so any tool error it surfaces must follow
+    // the shared verbatim-render contract.
+    out.push_str(structured_tool_errors_fragment().trim_end());
+    out.push_str("\n\n");
 
     let datetime = render_datetime(ctx)?;
     if !datetime.trim().is_empty() {

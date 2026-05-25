@@ -218,6 +218,15 @@ pub(crate) fn classify_composio_error(err_string: &str) -> ComposioToolErrorKind
         return ComposioToolErrorKind::UpstreamProviderError;
     }
 
+    // F-21 fix 3: emit drift telemetry on every Unknown so we notice
+    // upstream string renames before users do. The classifier is a
+    // string-match heuristic — when an upstream provider renames an
+    // error shape, we silently degrade to Unknown and the orchestrator
+    // stops giving actionable suggestions.
+    crate::core::observability::record_classifier_drift(
+        crate::core::observability::ToolErrorClassifierSource::Composio,
+        err_string,
+    );
     ComposioToolErrorKind::Unknown
 }
 
@@ -368,6 +377,43 @@ mod tests {
         assert_eq!(
             classify_composio_error("some completely novel failure mode"),
             ComposioToolErrorKind::Unknown
+        );
+    }
+
+    /// F-21 fix 3: an `Unknown` return must bump the global drift
+    /// counter so the existing observability surface notices when
+    /// upstream provider error strings drift away from our heuristics.
+    #[test]
+    fn classify_unknown_increments_drift_counter() {
+        // Single-threaded test serialisation: this and the matching
+        // MCP test BOTH touch the same global counter pair; running
+        // them in parallel would interleave the snapshot+delta
+        // arithmetic. `--test-threads=1` is documented at the suite
+        // level via [serial_test]-style discipline in the
+        // observability module's reset helper — for these specific
+        // tests we just snapshot-before / snapshot-after so a
+        // concurrent ticker contributes at most +1 of noise that
+        // wouldn't flip our `>= +1` assertion.
+        let (_, composio_before) = crate::core::observability::unknown_classifier_counts();
+        let _ = classify_composio_error("yet another never-before-seen drift case");
+        let (_, composio_after) = crate::core::observability::unknown_classifier_counts();
+        assert!(
+            composio_after >= composio_before + 1,
+            "Unknown classifier must tick the drift counter (before={composio_before}, after={composio_after})"
+        );
+    }
+
+    /// Sanity: a *known* shape must NOT tick the drift counter, or we'd
+    /// spam observability on every successful classification.
+    #[test]
+    fn classify_known_pattern_does_not_increment_drift_counter() {
+        let (_, before) = crate::core::observability::unknown_classifier_counts();
+        let kind = classify_composio_error("HTTP 401 Unauthorized");
+        assert_eq!(kind, ComposioToolErrorKind::AuthFailed);
+        let (_, after) = crate::core::observability::unknown_classifier_counts();
+        assert_eq!(
+            after, before,
+            "a known classification must NOT tick the Unknown counter"
         );
     }
 

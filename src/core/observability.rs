@@ -933,6 +933,92 @@ fn event_contains_budget_exhausted_message(event: &sentry::protocol::Event<'_>) 
     })
 }
 
+// ── F-21 fix 3: classifier-drift telemetry ──────────────────────────────
+//
+// `classify_mcp_error` and `classify_composio_error` are string-match
+// heuristics against today's upstream error text. When an upstream
+// provider renames an error string (Higgsfield switches "Session not
+// found" to "session_expired_v2", Composio renames "Toolkit X is not
+// enabled" to "toolkit_inactive", …) the classifier silently falls
+// through to `Unknown`, the orchestrator loses its actionable
+// suggestion, and the user notices before we do.
+//
+// These helpers give us a single tick whenever an `Unknown` branch
+// fires: a stable-target `tracing::warn!` (forwards to Sentry via
+// sentry-tracing so the existing dashboards pick it up) AND an atomic
+// counter for in-process visibility / tests. The counters are
+// process-lifetime — there's no persistence layer, on purpose.
+// Telemetry's value here is the *rate* visible in Sentry, not a
+// historical archive.
+
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static MCP_UNKNOWN_COUNT: AtomicU64 = AtomicU64::new(0);
+static COMPOSIO_UNKNOWN_COUNT: AtomicU64 = AtomicU64::new(0);
+
+/// Stable source label for classifier-drift telemetry. Adding a new
+/// classifier surface? Add a variant; the `record_classifier_drift`
+/// helper will route it to the right counter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolErrorClassifierSource {
+    Mcp,
+    Composio,
+}
+
+impl ToolErrorClassifierSource {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Mcp => "mcp",
+            Self::Composio => "composio",
+        }
+    }
+}
+
+/// Record that a classifier returned its `Unknown` branch.
+///
+/// Bumps the per-source atomic counter AND emits a `tracing::warn!`
+/// with a stable `target: "tool_error_drift"` so the existing
+/// sentry-tracing layer captures it as a Sentry event. `detail` is the
+/// upstream error string that didn't match any pattern — surface it
+/// in the log so triage can spot the rename without re-running the
+/// failing call.
+pub fn record_classifier_drift(source: ToolErrorClassifierSource, detail: &str) {
+    let counter = match source {
+        ToolErrorClassifierSource::Mcp => &MCP_UNKNOWN_COUNT,
+        ToolErrorClassifierSource::Composio => &COMPOSIO_UNKNOWN_COUNT,
+    };
+    let n = counter.fetch_add(1, Ordering::Relaxed) + 1;
+    // High-cardinality detail goes in the message body. Tag fields
+    // stay low-cardinality (source label + a stable kind) so Sentry
+    // can group + count efficiently.
+    tracing::warn!(
+        target: "tool_error_drift",
+        source = source.label(),
+        kind = "unknown",
+        count = n,
+        "tool error classifier returned Unknown — upstream string may have drifted; \
+         classifier needs an update. detail: {detail}"
+    );
+}
+
+/// In-process snapshot of the `Unknown`-rate counters. Returns
+/// `(mcp_unknown_count, composio_unknown_count)`. Used by tests and by
+/// any future RPC / dashboard that wants to surface drift to the user.
+pub fn unknown_classifier_counts() -> (u64, u64) {
+    (
+        MCP_UNKNOWN_COUNT.load(Ordering::Relaxed),
+        COMPOSIO_UNKNOWN_COUNT.load(Ordering::Relaxed),
+    )
+}
+
+/// Reset both counters. Test-only — production callers should never
+/// reset; they should snapshot via `unknown_classifier_counts()`.
+#[cfg(test)]
+pub fn reset_unknown_classifier_counts_for_tests() {
+    MCP_UNKNOWN_COUNT.store(0, Ordering::Relaxed);
+    COMPOSIO_UNKNOWN_COUNT.store(0, Ordering::Relaxed);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

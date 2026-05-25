@@ -506,7 +506,10 @@ pub async fn add_mcp_server(config: &Config, req: McpAddRequest) -> Result<McpSe
                         endpoint, outcome.url, outcome.matched_path, outcome.tried.len()
                     )
                 } else {
-                    format!("auto-probe verified MCP endpoint `{}` (HTTP 200)", outcome.url)
+                    format!(
+                        "auto-probe verified MCP endpoint `{}` (HTTP 200)",
+                        outcome.url
+                    )
                 };
                 tracing::info!(target: "connections", "[connections] {log_line}");
                 (outcome.url, Some(log_line))
@@ -676,6 +679,16 @@ pub struct McpProbeOutcome {
 /// Probe a sequence of MCP endpoint paths and return the first that
 /// responds with a valid JSON-RPC `initialize` result.
 ///
+/// **Two-phase probe (security hardening, F-21):** every candidate is
+/// probed **without auth first**. The bearer / basic credentials only
+/// attach on a follow-up request when the no-auth response carries
+/// MCP-shape evidence (a JSON-RPC body, `protocolVersion`, JSON-RPC
+/// error frame, or a `WWW-Authenticate: Bearer` challenge accompanied
+/// by JSON-RPC content). This prevents the user's bearer from being
+/// shipped to a typo'd hostname (`mcp.higsfield.ai`) or an unrelated
+/// internal service (`internal-admin.company.com/mcp`) that just
+/// happens to return 200.
+///
 /// Probe order:
 ///   1. The user-provided URL exactly (probe what they typed first;
 ///      respect explicit paths).
@@ -683,7 +696,7 @@ pub struct McpProbeOutcome {
 ///      `<base>/mcp`, `<base>/sse`, `<base>/messages`
 ///
 /// Per-path timeout: 5s. Total probe budget: bounded by the candidate
-/// count × 5s.
+/// count × 5s × 2 (no-auth phase + auth phase).
 ///
 /// Uses the `initialize` JSON-RPC method per the MCP Streamable HTTP
 /// spec — anything that responds 200 with a parseable JSON-RPC result
@@ -724,6 +737,15 @@ pub async fn probe_mcp_endpoint(
 
     for candidate in candidates.iter() {
         tried.push(candidate.clone());
+
+        // ── Phase 1: NO-AUTH probe ──
+        // The bearer/basic credentials NEVER get sent until we have
+        // body-level evidence the target speaks MCP. Pre-F-21 this loop
+        // attached auth to every candidate; a typo'd host or internal
+        // admin panel would receive the token before we knew it wasn't
+        // MCP. Now: we send `initialize` without auth, inspect the
+        // response shape, and only retry with auth when the response
+        // looks like an MCP server demanding it.
         let body = serde_json::json!({
             "jsonrpc": "2.0",
             "id": 1,
@@ -734,70 +756,156 @@ pub async fn probe_mcp_endpoint(
                 "clientInfo": { "name": "openhuman-mcp-probe", "version": "1.0.0" },
             },
         });
-        let req = client
+        let resp = match client
             .post(candidate)
             .header(reqwest::header::CONTENT_TYPE, "application/json")
             .header(
                 reqwest::header::ACCEPT,
                 "application/json, text/event-stream",
-            );
-        let req = apply_probe_auth(req, auth);
-        let resp = match req.body(body.to_string()).send().await {
+            )
+            .body(body.to_string())
+            .send()
+            .await
+        {
             Ok(r) => r,
             Err(e) => {
                 tracing::debug!(
                     target: "connections",
-                    "[mcp-probe] {candidate} → request failed: {e}"
+                    "[mcp-probe] {candidate} no-auth → request failed: {e}"
                 );
                 continue;
             }
         };
         let status = resp.status().as_u16();
         last_status = Some(status);
-        if status == 401 || status == 403 {
-            // Token rejected. The server exists at this path — record
-            // for a specific error message and stop trying other paths
-            // (a wrong path for a known auth-protected server isn't
-            // worth checking other paths against the same token).
-            auth_failed_url = Some(candidate.clone());
-            tracing::debug!(
-                target: "connections",
-                "[mcp-probe] {candidate} → HTTP {status} (auth rejected)"
-            );
-            break;
-        }
-        if !(200..300).contains(&status) {
-            tracing::debug!(
-                target: "connections",
-                "[mcp-probe] {candidate} → HTTP {status}"
-            );
-            continue;
-        }
-        // 2xx — confirm it's actually MCP. Read body, look for the
-        // `result.protocolVersion` shape (handles both bare-JSON and
-        // SSE `event: message\ndata: {...}` framings).
+        let www_auth = resp
+            .headers()
+            .get(reqwest::header::WWW_AUTHENTICATE)
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string());
         let body_text = match resp.text().await {
             Ok(t) => t,
             Err(e) => {
-                tracing::debug!(target: "connections", "[mcp-probe] {candidate} → body read failed: {e}");
+                tracing::debug!(
+                    target: "connections",
+                    "[mcp-probe] {candidate} no-auth → body read failed: {e}"
+                );
                 continue;
             }
         };
-        if parse_initialize_protocol_version(&body_text).is_some() {
-            let matched_path = url::Url::parse(candidate)
-                .ok()
-                .map(|u| u.path().to_string())
-                .unwrap_or_else(|| "/".to_string());
+
+        // Case A: 2xx with MCP body — done, no auth even needed.
+        if (200..300).contains(&status) && parse_initialize_protocol_version(&body_text).is_some() {
+            tracing::debug!(
+                target: "connections",
+                "[mcp-probe] {candidate} no-auth → 200 with MCP body, no token needed"
+            );
             return Ok(McpProbeOutcome {
                 url: candidate.clone(),
-                matched_path,
+                matched_path: matched_path_from(candidate),
                 corrected: candidate != user_endpoint,
                 tried,
             });
         }
+
+        // Case B: 2xx but body isn't MCP-shape — generic landing page,
+        // S3 bucket, parked domain. Do NOT send the token here.
+        if (200..300).contains(&status) {
+            tracing::debug!(
+                target: "connections",
+                "[mcp-probe] {candidate} no-auth → 200 but body lacks JSON-RPC; skipping (NOT sending token)"
+            );
+            continue;
+        }
+
+        // Case C: 401/403 — endpoint exists and demands auth. Only retry
+        // with the bearer when the response carries MCP-shape evidence
+        // (JSON-RPC body or Bearer challenge accompanied by a JSON
+        // content-type). Otherwise this could be a generic admin panel
+        // / S3 / Cloudflare auth gate and we refuse to send the token.
+        if status == 401 || status == 403 {
+            let safe_to_authenticate =
+                looks_like_mcp_auth_challenge(www_auth.as_deref(), &body_text);
+            if !safe_to_authenticate {
+                tracing::warn!(
+                    target: "connections",
+                    "[mcp-probe] {candidate} no-auth → HTTP {status} but response doesn't look like MCP \
+                     (no JSON-RPC body, no Bearer challenge). REFUSING to retry with auth — \
+                     this is likely not an MCP server."
+                );
+                continue;
+            }
+            // Phase 2: retry with auth.
+            tracing::debug!(
+                target: "connections",
+                "[mcp-probe] {candidate} no-auth → HTTP {status} with MCP-shape challenge; \
+                 retrying with credentials"
+            );
+            let auth_req = client
+                .post(candidate)
+                .header(reqwest::header::CONTENT_TYPE, "application/json")
+                .header(
+                    reqwest::header::ACCEPT,
+                    "application/json, text/event-stream",
+                );
+            let auth_req = apply_probe_auth(auth_req, auth);
+            let resp_auth = match auth_req.body(body.to_string()).send().await {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::debug!(
+                        target: "connections",
+                        "[mcp-probe] {candidate} auth → request failed: {e}"
+                    );
+                    continue;
+                }
+            };
+            let auth_status = resp_auth.status().as_u16();
+            last_status = Some(auth_status);
+            if auth_status == 401 || auth_status == 403 {
+                auth_failed_url = Some(candidate.clone());
+                tracing::debug!(
+                    target: "connections",
+                    "[mcp-probe] {candidate} auth → HTTP {auth_status} (token rejected)"
+                );
+                break;
+            }
+            if !(200..300).contains(&auth_status) {
+                tracing::debug!(
+                    target: "connections",
+                    "[mcp-probe] {candidate} auth → HTTP {auth_status}"
+                );
+                continue;
+            }
+            let auth_body = match resp_auth.text().await {
+                Ok(t) => t,
+                Err(e) => {
+                    tracing::debug!(
+                        target: "connections",
+                        "[mcp-probe] {candidate} auth → body read failed: {e}"
+                    );
+                    continue;
+                }
+            };
+            if parse_initialize_protocol_version(&auth_body).is_some() {
+                return Ok(McpProbeOutcome {
+                    url: candidate.clone(),
+                    matched_path: matched_path_from(candidate),
+                    corrected: candidate != user_endpoint,
+                    tried,
+                });
+            }
+            tracing::debug!(
+                target: "connections",
+                "[mcp-probe] {candidate} auth → HTTP {auth_status} but body didn't carry initialize result"
+            );
+            continue;
+        }
+
+        // Anything else (404, 5xx, etc.) — definitely not the right
+        // path. Move on without sending the token.
         tracing::debug!(
             target: "connections",
-            "[mcp-probe] {candidate} → HTTP {status} but body didn't carry initialize result"
+            "[mcp-probe] {candidate} no-auth → HTTP {status}"
         );
     }
 
@@ -812,29 +920,78 @@ pub async fn probe_mcp_endpoint(
              Last HTTP status: {}. Check the URL and the server's MCP path conventions \
              (Higgsfield = /mcp, GitBook = /~gitbook/mcp, Linear = /sse, etc.)",
             tried.join(", "),
-            last_status.map(|s| s.to_string()).unwrap_or_else(|| "none".to_string())
+            last_status
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| "none".to_string())
         ))
     }
 }
 
-fn apply_probe_auth(
-    req: reqwest::RequestBuilder,
-    auth: &McpAuthConfig,
-) -> reqwest::RequestBuilder {
+fn matched_path_from(candidate: &str) -> String {
+    url::Url::parse(candidate)
+        .ok()
+        .map(|u| u.path().to_string())
+        .unwrap_or_else(|| "/".to_string())
+}
+
+/// Returns true when a 401/403 response from a no-auth probe carries
+/// enough MCP-shape evidence that retrying the request with auth is
+/// safe. Two signals count as MCP-shape:
+///
+/// 1. **Body contains JSON-RPC structure** — `"jsonrpc"`, `"-32"` (JSON-RPC
+///    error code prefix), or the literal string `mcp`. This is the
+///    strong signal: an MCP server's 401 typically returns a JSON-RPC
+///    error envelope.
+/// 2. **`WWW-Authenticate: Bearer` header** AND the body looks like
+///    JSON (starts with `{`). This catches MCP servers that return an
+///    empty-body 401 with just a Bearer challenge.
+///
+/// Anything else (HTML body with `<html>`, Basic-auth challenge from
+/// nginx, S3-style XML error) is treated as NOT MCP, and the token is
+/// never sent. Conservative on purpose — the cost of a false-negative
+/// is "probe fails on a real MCP server with an unusual 401 shape";
+/// the cost of a false-positive is "user's bearer token gets shipped
+/// to an attacker-controlled host on a typo".
+fn looks_like_mcp_auth_challenge(www_authenticate: Option<&str>, body: &str) -> bool {
+    let body_trimmed = body.trim();
+    let body_lower = body_trimmed.to_ascii_lowercase();
+
+    // Signal 1: JSON-RPC-shaped body.
+    if body_lower.contains("\"jsonrpc\"")
+        || body_lower.contains("\"-32")
+        || body_lower.contains("\"mcp\"")
+        || body_lower.contains("protocolversion")
+    {
+        return true;
+    }
+
+    // Signal 2: Bearer challenge + JSON-looking body (or empty body).
+    let bearer_challenge = www_authenticate
+        .map(|v| v.to_ascii_lowercase().starts_with("bearer"))
+        .unwrap_or(false);
+    if bearer_challenge {
+        let body_is_json_or_empty = body_trimmed.is_empty()
+            || body_trimmed.starts_with('{')
+            || body_trimmed.starts_with('[');
+        if body_is_json_or_empty {
+            return true;
+        }
+    }
+
+    false
+}
+
+fn apply_probe_auth(req: reqwest::RequestBuilder, auth: &McpAuthConfig) -> reqwest::RequestBuilder {
     match auth {
         McpAuthConfig::None => req,
-        McpAuthConfig::BearerToken { token } => req.header(
-            reqwest::header::AUTHORIZATION,
-            format!("Bearer {token}"),
-        ),
+        McpAuthConfig::BearerToken { token } => {
+            req.header(reqwest::header::AUTHORIZATION, format!("Bearer {token}"))
+        }
         McpAuthConfig::Basic { username, password } => {
             use base64::Engine;
-            let encoded = base64::engine::general_purpose::STANDARD
-                .encode(format!("{username}:{password}"));
-            req.header(
-                reqwest::header::AUTHORIZATION,
-                format!("Basic {encoded}"),
-            )
+            let encoded =
+                base64::engine::general_purpose::STANDARD.encode(format!("{username}:{password}"));
+            req.header(reqwest::header::AUTHORIZATION, format!("Basic {encoded}"))
         }
         McpAuthConfig::Header { name, value } => {
             if let (Ok(n), Ok(v)) = (
@@ -846,9 +1003,7 @@ fn apply_probe_auth(
                 req
             }
         }
-        McpAuthConfig::QueryParam { name, value } => {
-            req.query(&[(name.as_str(), value.as_str())])
-        }
+        McpAuthConfig::QueryParam { name, value } => req.query(&[(name.as_str(), value.as_str())]),
     }
 }
 
@@ -1020,12 +1175,24 @@ pub fn list_mcp_orphans_at(
                 Some(t) => t,
                 None => continue,
             };
-            let name = table.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let name = table
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
             if name.is_empty() {
                 continue;
             }
-            let endpoint = table.get("endpoint").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let command = table.get("command").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let endpoint = table
+                .get("endpoint")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let command = table
+                .get("command")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
             let args: Vec<String> = table
                 .get("args")
                 .and_then(|v| v.as_array())
@@ -1035,7 +1202,10 @@ pub fn list_mcp_orphans_at(
                         .collect()
                 })
                 .unwrap_or_default();
-            let enabled = table.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
+            let enabled = table
+                .get("enabled")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
             let timeout_secs = table
                 .get("timeout_secs")
                 .and_then(|v| v.as_integer())
@@ -1104,8 +1274,8 @@ pub async fn migrate_mcp_orphan(
         ));
     }
 
-    let source_path = crate::openhuman::config::user_openhuman_dir(&root, source_user_id)
-        .join("config.toml");
+    let source_path =
+        crate::openhuman::config::user_openhuman_dir(&root, source_user_id).join("config.toml");
     let toml_str = std::fs::read_to_string(&source_path).with_context(|| {
         format!(
             "could not read source config at {} (source_user_id may not exist)",

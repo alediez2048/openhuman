@@ -14,6 +14,7 @@
 //! delegator agents stay lean and the integrations_agent-specific wording
 //! isn't a branch on `agent_id` somewhere else.
 
+use crate::openhuman::agent::prompts::structured_tool_errors_fragment;
 use crate::openhuman::context::prompt::{
     render_safety, render_tools, render_user_files, render_workspace, ConnectedIntegration,
     PromptContext,
@@ -59,6 +60,15 @@ pub fn build(ctx: &PromptContext<'_>) -> Result<String> {
         out.push_str(tools.trim_end());
         out.push_str("\n\n");
     }
+
+    // F-21 fix 2: shared verbatim-render fragment so this agent surfaces
+    // composio_execute failures with the same kind/detail/suggestion
+    // discipline as the orchestrator. Pre-F-21 the rule lived twice (one
+    // copy in orchestrator/prompt.md, a smaller copy in this agent's
+    // prompt.md); drift between them was an open risk. Now both pull
+    // from `agent/prompts/structured_tool_errors.md`.
+    out.push_str(structured_tool_errors_fragment().trim_end());
+    out.push_str("\n\n");
 
     let safety = render_safety();
     out.push_str(safety.trim_end());

@@ -36,9 +36,12 @@ The only acceptable substitutes for calling the tool are:
 2. The required arguments are missing and you have no way to infer them — in which case ask the caller specifically for the missing fields.
 3. An auth error already fired — in which case return `Connection error, try to authenticate`.
 
-## When a `composio_execute` call fails
+<!-- F-21 fix 2: the "When a `composio_execute` call fails" block lived
+     here as a smaller copy of the orchestrator's verbatim-render rule.
+     It's now sourced canonically from
+     `agent/prompts/structured_tool_errors.md` and appended in
+     `prompt.rs::build`, so the two agents share one source of truth. -->
 
-The runtime returns a structured block starting with `⚠ Composio tool error` and carrying `tool`, `kind`, `detail`, `suggestion` lines. **Pass that block back to the orchestrator verbatim.** Do not summarise it, do not paraphrase the detail, do not substitute your own remediation suggestion. The orchestrator and the user both rely on the stable shape to triage; rewriting it defeats F-20's anti-confabulation contract.
 
 ## Handling large tool results
 

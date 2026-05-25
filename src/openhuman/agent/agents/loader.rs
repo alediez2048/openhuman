@@ -438,6 +438,117 @@ mod tests {
         }
     }
 
+    /// F-21 fix 2: every agent that calls `mcp_call_tool` or
+    /// `composio_execute` (the surfaces that emit the structured
+    /// `⚠ ... tool error` blocks) MUST ship the verbatim-render rule to
+    /// its LLM. Pre-F-21 the rule lived only in `orchestrator/prompt.md`;
+    /// a future agent grown with these tools but without the section
+    /// would silently confabulate failures and we'd repeat the
+    /// hours-of-debugging incidents F-19 / F-20 closed.
+    ///
+    /// Enforcement strategy: build each agent's prompt with a stub
+    /// PromptContext, then grep for the canonical marker constant
+    /// exported by `agent::prompts`. The shared fragment is the only
+    /// thing in the tree that emits that exact string, so a passing
+    /// check proves the agent will surface MCP/Composio failures
+    /// correctly.
+    #[test]
+    fn structured_tool_errors_fragment_must_be_included_by_every_agent_with_mcp_or_composio_tools()
+    {
+        use crate::openhuman::agent::prompts::STRUCTURED_TOOL_ERRORS_MARKER;
+        use crate::openhuman::context::prompt::{
+            ConnectedIntegration, LearnedContextData, PromptContext, PromptTool, ToolCallFormat,
+        };
+
+        // Tool names whose presence in an allowlist means the agent
+        // can surface a structured `⚠` block to its LLM. `mcp_list_tools`
+        // and `mcp_list_servers` also emit structured errors via F-19's
+        // classifier, so they count too.
+        const TOOLS_THAT_EMIT_STRUCTURED_ERRORS: &[&str] = &[
+            "mcp_call_tool",
+            "mcp_list_tools",
+            "mcp_list_servers",
+            "composio_execute",
+        ];
+
+        let empty_tools: Vec<PromptTool<'_>> = Vec::new();
+        let empty_integrations: Vec<ConnectedIntegration> = Vec::new();
+        let empty_visible: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+        let mut offenders: Vec<String> = Vec::new();
+
+        for def in load_builtins().unwrap() {
+            let allowlist: Vec<&str> = match &def.tools {
+                ToolScope::Named(names) => names.iter().map(|s| s.as_str()).collect(),
+                _ => continue,
+            };
+            let needs_fragment = allowlist
+                .iter()
+                .any(|t| TOOLS_THAT_EMIT_STRUCTURED_ERRORS.contains(t));
+            if !needs_fragment {
+                continue;
+            }
+
+            // Build the agent's prompt with a stub context and check
+            // for the marker. Sub-agents that route through a static
+            // PromptSource (Inline / File) get their body inspected
+            // directly — the test's stub context covers Dynamic agents
+            // (orchestrator, integrations_agent, welcome) which is
+            // where the include lives anyway.
+            let body = match &def.system_prompt {
+                PromptSource::Dynamic(build) => {
+                    let ctx = PromptContext {
+                        workspace_dir: std::path::Path::new("."),
+                        model_name: "test",
+                        agent_id: &def.id,
+                        tools: &empty_tools,
+                        skills: &[],
+                        dispatcher_instructions: "",
+                        learned: LearnedContextData::default(),
+                        visible_tool_names: &empty_visible,
+                        tool_call_format: ToolCallFormat::PFormat,
+                        connected_integrations: &empty_integrations,
+                        connected_identities_md: String::new(),
+                        include_profile: false,
+                        include_memory_md: false,
+                        curated_snapshot: None,
+                        user_identity: None,
+                    };
+                    build(&ctx).unwrap_or_default()
+                }
+                PromptSource::Inline(body) => body.clone(),
+                PromptSource::File { path } => {
+                    // Built-in File sources live under `src/openhuman/agent/prompts/`.
+                    // Read the bytes directly so the test pins the
+                    // checked-in markdown — no spawn-time resolution.
+                    let full = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                        .join("src/openhuman/agent/prompts")
+                        .join(path);
+                    std::fs::read_to_string(&full).unwrap_or_else(|e| {
+                        panic!(
+                            "could not read prompt file `{}` for `{}`: {e}",
+                            full.display(),
+                            def.id
+                        )
+                    })
+                }
+            };
+            if !body.contains(STRUCTURED_TOOL_ERRORS_MARKER) {
+                offenders.push(def.id.clone());
+            }
+        }
+
+        assert!(
+            offenders.is_empty(),
+            "F-21 fix 2 contract violation: the following agents have {{mcp_*|composio_execute}} \
+             in their allowlist but their assembled system prompt does NOT include the \
+             `agent/prompts/structured_tool_errors.md` fragment (marker: `{STRUCTURED_TOOL_ERRORS_MARKER}`). \
+             Either add `out.push_str(structured_tool_errors_fragment());` to the agent's \
+             `prompt.rs::build` (Dynamic) or paste the fragment into the agent's `prompt.md` \
+             (Inline/File). Offenders: {offenders:?}"
+        );
+    }
+
     fn find(id: &str) -> AgentDefinition {
         load_builtins()
             .unwrap()

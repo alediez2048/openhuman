@@ -446,3 +446,182 @@ fn orphan_scanner_with_no_active_user_treats_all_non_prelogin_as_orphans() {
     assert_eq!(listing.orphans.len(), 1);
     assert_eq!(listing.orphans[0].name, "ServerX");
 }
+
+// ── F-21 Fix 1: probe-then-auth helpers ─────────────────────────────
+
+#[test]
+fn looks_like_mcp_auth_challenge_accepts_json_rpc_body() {
+    // Real MCP server returning a JSON-RPC error envelope on 401.
+    assert!(super::looks_like_mcp_auth_challenge(
+        None,
+        r#"{"jsonrpc":"2.0","error":{"code":-32001,"message":"Unauthorized"},"id":1}"#,
+    ));
+}
+
+#[test]
+fn looks_like_mcp_auth_challenge_accepts_protocolversion_in_body() {
+    // Server that leaks `protocolVersion` even on auth-required 401.
+    assert!(super::looks_like_mcp_auth_challenge(
+        None,
+        r#"{"protocolVersion":"2025-11-25","error":"need auth"}"#,
+    ));
+}
+
+#[test]
+fn looks_like_mcp_auth_challenge_accepts_bearer_challenge_with_json_body() {
+    // 401 with WWW-Authenticate: Bearer + empty/short JSON body.
+    assert!(super::looks_like_mcp_auth_challenge(
+        Some("Bearer realm=\"mcp\""),
+        "{}",
+    ));
+    assert!(super::looks_like_mcp_auth_challenge(
+        Some("Bearer realm=\"mcp\", error=\"invalid_token\""),
+        "",
+    ));
+}
+
+#[test]
+fn looks_like_mcp_auth_challenge_rejects_html_admin_panel() {
+    // User typo'd hostname → admin panel returns HTML 401. Token must
+    // NOT be retried here.
+    assert!(!super::looks_like_mcp_auth_challenge(
+        Some("Basic realm=\"Restricted\""),
+        "<html><head><title>Login</title></head><body>...</body></html>",
+    ));
+}
+
+#[test]
+fn looks_like_mcp_auth_challenge_rejects_s3_xml() {
+    // Pointing at an S3 bucket's signed-url endpoint by accident.
+    assert!(!super::looks_like_mcp_auth_challenge(
+        None,
+        r#"<?xml version="1.0"?><Error><Code>AccessDenied</Code></Error>"#,
+    ));
+}
+
+#[test]
+fn looks_like_mcp_auth_challenge_rejects_plain_basic_auth_challenge() {
+    // Generic nginx Basic-auth 401 — no JSON, no MCP shape. Refuse.
+    assert!(!super::looks_like_mcp_auth_challenge(
+        Some("Basic realm=\"internal\""),
+        "401 Authorization Required",
+    ));
+}
+
+#[test]
+fn looks_like_mcp_auth_challenge_accepts_jsonrpc_error_code_pattern() {
+    // Some MCP servers omit "jsonrpc" but include the -32 error code
+    // family in the body. Catch that as MCP-shape.
+    assert!(super::looks_like_mcp_auth_challenge(
+        None,
+        r#"{"error":{"code":"-32600","message":"Invalid Request"}}"#,
+    ));
+}
+
+#[tokio::test]
+async fn probe_rejects_unrelated_200_html_landing_page() {
+    // The "user typo'd hostname → squatter / parked page" scenario.
+    // Mock HTTP server returns generic HTML on 200; the probe must
+    // refuse to send the bearer token AND surface a "no MCP endpoint"
+    // error rather than silently leaking the secret. Pre-F-21-fix-1
+    // the probe would POST initialize WITH the bearer to every
+    // candidate path before realizing the target wasn't MCP.
+    use wiremock::matchers::method;
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("Content-Type", "text/html")
+                .set_body_string("<html><body>parked domain</body></html>"),
+        )
+        .mount(&server)
+        .await;
+
+    let endpoint = format!("{}/", server.uri());
+    let auth = super::McpAuthConfig::BearerToken {
+        token: "super-secret-token-must-not-leak".into(),
+    };
+    let result = super::probe_mcp_endpoint(&endpoint, &auth).await;
+    assert!(
+        result.is_err(),
+        "probe must fail when target serves HTML rather than MCP"
+    );
+
+    let received = server.received_requests().await.unwrap_or_default();
+    assert!(
+        !received.is_empty(),
+        "probe should have made at least one request"
+    );
+    for req in &received {
+        let auth_header = req
+            .headers
+            .get("authorization")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        assert!(
+            !auth_header.contains("super-secret-token-must-not-leak"),
+            "bearer token leaked to non-MCP target; got Authorization: {auth_header}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn probe_succeeds_against_legitimate_mcp_server_with_auth_required() {
+    // Sanity case: real MCP server returns 401 with JSON-RPC body on
+    // no-auth probe, then 200 with initialize result when bearer is
+    // attached. F-21 fix 1 must preserve this path or every protected
+    // MCP server breaks.
+    use wiremock::matchers::{header, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    let token = "valid-bearer-token-abc";
+
+    // Auth-bearing requests → real MCP initialize result. Mounted FIRST
+    // so it has higher matching priority than the catch-all 401.
+    Mock::given(method("POST"))
+        .and(path("/mcp"))
+        .and(header("authorization", format!("Bearer {token}").as_str()))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+                "protocolVersion": "2025-11-25",
+                "capabilities": {},
+                "serverInfo": { "name": "TestMcp", "version": "1.0" }
+            }
+        })))
+        .mount(&server)
+        .await;
+
+    // No-auth requests → 401 with JSON-RPC error body (MCP-shape).
+    Mock::given(method("POST"))
+        .and(path("/mcp"))
+        .respond_with(
+            ResponseTemplate::new(401)
+                .insert_header("WWW-Authenticate", "Bearer realm=\"mcp\"")
+                .set_body_json(serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "error": { "code": -32001, "message": "unauthorized" }
+                })),
+        )
+        .mount(&server)
+        .await;
+
+    let endpoint = format!("{}/mcp", server.uri());
+    let outcome = super::probe_mcp_endpoint(
+        &endpoint,
+        &super::McpAuthConfig::BearerToken {
+            token: token.into(),
+        },
+    )
+    .await
+    .expect("probe must succeed against real MCP server with valid auth");
+    assert_eq!(outcome.matched_path, "/mcp");
+    assert!(
+        !outcome.corrected,
+        "user-provided path matched — no correction"
+    );
+}
