@@ -399,6 +399,48 @@ pub async fn dispatch_run(
     dispatch_run_with_payload(config, workflow_id, trigger_source, None).await
 }
 
+/// F2-9b — OQ-22: 256 KB cap on the trigger payload exposed via
+/// `{{trigger.*}}`. Untrusted webhook / composio / channel bodies hit
+/// this gate before they ever land in `NodeContext.trigger_payload`.
+pub const TRIGGER_PAYLOAD_CAP_BYTES: usize = 256 * 1024;
+
+/// Apply the trigger-payload cap. Values under the cap pass through
+/// unchanged; oversize values are replaced with a structured marker
+/// (`{ truncated: true, original_bytes: N, preview: "..." }`) so
+/// downstream node bodies that template against `{{trigger.*}}` can
+/// still see SOMETHING (and can branch on `{{trigger.truncated}}` if
+/// they care).
+///
+/// Public so the F2-9b tests can drive the function directly without
+/// going through `dispatch_run_with_payload`.
+pub fn truncate_trigger_payload(payload: serde_json::Value) -> serde_json::Value {
+    let serialised = match serde_json::to_string(&payload) {
+        Ok(s) => s,
+        Err(_) => return payload,
+    };
+    let bytes = serialised.len();
+    if bytes <= TRIGGER_PAYLOAD_CAP_BYTES {
+        return payload;
+    }
+    // Slice on a UTF-8 char boundary so the preview is a valid string.
+    let preview_cap = TRIGGER_PAYLOAD_CAP_BYTES.min(serialised.len());
+    let mut cut = preview_cap;
+    while cut > 0 && !serialised.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    let preview = serialised[..cut].to_string();
+    tracing::warn!(
+        target: "workflows-run",
+        "[workflows-run] trigger payload truncated: {bytes} bytes > cap {TRIGGER_PAYLOAD_CAP_BYTES}; preview kept"
+    );
+    serde_json::json!({
+        "truncated": true,
+        "original_bytes": bytes,
+        "cap_bytes": TRIGGER_PAYLOAD_CAP_BYTES,
+        "preview": preview,
+    })
+}
+
 /// F2-9 extension: like [`dispatch_run`] but accepts an optional
 /// trigger payload (webhook body / composio event / channel message).
 /// The payload is plumbed into the run's `NodeContext.trigger_payload`
@@ -413,6 +455,12 @@ pub async fn dispatch_run_with_payload(
     trigger_source: TriggerSource,
     trigger_payload: Option<serde_json::Value>,
 ) -> Result<RunId> {
+    // F2-9b: OQ-22 256 KB trigger-payload cap. Applied at the single
+    // entry point so every triggered run (webhook, composio_event,
+    // channel_message) gets the same enforcement before any node
+    // body templates against `{{trigger.*}}`.
+    let trigger_payload = trigger_payload.map(truncate_trigger_payload);
+
     let workflow = match store::get_workflow(config, &workflow_id) {
         Ok(Some(w)) => w,
         Ok(None) => return Err(DispatchError::NotFound(workflow_id).into()),

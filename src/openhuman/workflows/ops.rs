@@ -610,3 +610,39 @@ fn summarize_trigger_value(value: &serde_json::Value) -> String {
             .unwrap_or_else(|| "Custom trigger".into()),
     }
 }
+
+/// F2-9b — boot-time reconcile for `Trigger::Webhook` workflows.
+///
+/// Mirror of [`scheduler::reconcile_at_startup`]: walks every enabled
+/// workflow whose trigger is a webhook + registers it against the
+/// live router. Without this, a workflow created in a prior session
+/// silently stops accepting inbound POSTs after the next core
+/// restart because the in-process router has no record of the
+/// tunnel UUID.
+///
+/// Bounded work — single SQL list + one router insert per enabled
+/// webhook workflow. Returns the count of webhooks re-registered so
+/// the boot log can surface "0 webhooks reconciled" vs "5
+/// reconciled" without grepping per-line tracing.
+pub async fn reconcile_webhooks_at_startup(config: &Config) -> anyhow::Result<usize> {
+    let workflows = store::list_workflows(
+        config,
+        &ListFilter {
+            enabled: Some(true),
+            ..Default::default()
+        },
+    )?;
+    let mut count = 0usize;
+    for wf in workflows {
+        if !matches!(wf.trigger, Trigger::Webhook { .. }) {
+            continue;
+        }
+        webhook_register_best_effort(&wf);
+        count += 1;
+    }
+    tracing::info!(
+        target: "workflows-rpc",
+        "[workflows-rpc] reconcile_webhooks_at_startup re-registered {count} webhook workflow(s)"
+    );
+    Ok(count)
+}

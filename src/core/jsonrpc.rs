@@ -1152,6 +1152,21 @@ fn register_domain_subscribers(
                 {
                     log::warn!("[workflows-scheduler] reconcile_at_startup failed: {err:#}");
                 }
+                // F2-9b: re-register every enabled Trigger::Webhook
+                // workflow against the live router. Without this, a
+                // workflow created in a prior session silently stops
+                // accepting inbound POSTs after a core restart.
+                match crate::openhuman::workflows::ops::reconcile_webhooks_at_startup(&config)
+                    .await
+                {
+                    Ok(n) if n > 0 => log::info!(
+                        "[workflows-rpc] reconcile_webhooks_at_startup re-registered {n} webhook workflow(s)"
+                    ),
+                    Ok(_) => {}
+                    Err(err) => log::warn!(
+                        "[workflows-rpc] reconcile_webhooks_at_startup failed: {err:#}"
+                    ),
+                }
                 // Boot-time health recompute. Catches stale
                 // `NeedsConnections` rows whose health was computed
                 // before a matching-rule fix (e.g. F-15's wildcard

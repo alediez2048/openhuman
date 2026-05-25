@@ -4180,3 +4180,193 @@ async fn execute_delay_clears_pending_resume_at_after_sleep() {
         "execute_delay MUST clear pending_resume_at on completion"
     );
 }
+
+// ── F2-9b: trigger payload cap (OQ-22 — 256 KB) ────────────────────────
+
+#[test]
+fn truncate_trigger_payload_passes_small_payloads_through_unchanged() {
+    let small = serde_json::json!({ "user": "jad", "amount": 42 });
+    let out = executor::truncate_trigger_payload(small.clone());
+    assert_eq!(
+        out, small,
+        "payloads under 256 KB MUST pass through verbatim"
+    );
+}
+
+#[test]
+fn truncate_trigger_payload_replaces_oversize_payload_with_marker() {
+    // Build a payload > 256 KB by stuffing a string field.
+    let big_str = "x".repeat(executor::TRIGGER_PAYLOAD_CAP_BYTES + 1024);
+    let oversize = serde_json::json!({ "body": big_str });
+    let out = executor::truncate_trigger_payload(oversize);
+    assert_eq!(out["truncated"], serde_json::Value::Bool(true));
+    let original_bytes = out["original_bytes"].as_u64().expect("original_bytes set");
+    assert!(
+        original_bytes > executor::TRIGGER_PAYLOAD_CAP_BYTES as u64,
+        "marker must report the original size; got {original_bytes}"
+    );
+    assert_eq!(
+        out["cap_bytes"].as_u64(),
+        Some(executor::TRIGGER_PAYLOAD_CAP_BYTES as u64)
+    );
+    let preview = out["preview"].as_str().expect("preview is a string");
+    assert!(
+        preview.len() <= executor::TRIGGER_PAYLOAD_CAP_BYTES,
+        "preview MUST stay under the cap; got {}",
+        preview.len()
+    );
+}
+
+#[test]
+fn truncate_trigger_payload_handles_payload_at_exact_cap_boundary() {
+    // Build a JSON payload whose serialised length equals exactly the cap.
+    // Trick: pad a string field so the resulting `{"body":"…"}` is the cap.
+    let frame_overhead = "{\"body\":\"\"}".len();
+    let body_len = executor::TRIGGER_PAYLOAD_CAP_BYTES - frame_overhead;
+    let at_cap = serde_json::json!({ "body": "x".repeat(body_len) });
+    let serialised_len = serde_json::to_string(&at_cap).unwrap().len();
+    assert_eq!(
+        serialised_len,
+        executor::TRIGGER_PAYLOAD_CAP_BYTES,
+        "test setup must hit the cap exactly"
+    );
+    let out = executor::truncate_trigger_payload(at_cap.clone());
+    assert_eq!(out, at_cap, "payload at exactly the cap MUST pass through");
+}
+
+#[tokio::test]
+async fn dispatch_run_with_payload_applies_the_cap_before_templating() {
+    use crate::openhuman::workflows::executor::{
+        clear_test_tool_call_override, set_test_tool_call_override,
+    };
+    let _lock = TOOL_CALL_TEST_LOCK.lock();
+    let captured: Arc<parking_lot::Mutex<Option<serde_json::Value>>> =
+        Arc::new(parking_lot::Mutex::new(None));
+    let writer = Arc::clone(&captured);
+    set_test_tool_call_override(move |_name, args, _ctx| {
+        let writer = Arc::clone(&writer);
+        let args = args.clone();
+        async move {
+            *writer.lock() = Some(args);
+            Ok(serde_json::json!({ "text": "ok", "is_error": false }))
+        }
+    });
+
+    let (_dir, config) = config_with_temp_workspace();
+    let workflow = f2_2_workflow(
+        &format!("wf-cap-{}", uuid::Uuid::new_v4()),
+        vec![Node {
+            id: "n1".into(),
+            kind: NodeKind::ToolCall,
+            config: NodeConfig::ToolCall(ToolCallConfig {
+                tool_name: "consume".into(),
+                arguments_template: serde_json::json!({
+                    "truncated_flag": "{{trigger.truncated}}",
+                    "original_bytes": "{{trigger.original_bytes}}"
+                }),
+            }),
+            position: None,
+            retry_policy: None,
+        }],
+        vec![],
+    );
+    store::insert_workflow(&config, &workflow).expect("insert");
+
+    let big_str = "y".repeat(executor::TRIGGER_PAYLOAD_CAP_BYTES + 4096);
+    let oversize = serde_json::json!({ "body": big_str });
+    executor::dispatch_run_with_payload(
+        &config,
+        workflow.id.clone(),
+        TriggerSource::Webhook,
+        Some(oversize),
+    )
+    .await
+    .expect("dispatch");
+    let run = wait_for_terminal_run(&config, &workflow.id).await;
+    clear_test_tool_call_override();
+
+    assert!(matches!(run.status, RunStatus::Succeeded));
+    let args = captured.lock().clone().expect("stub invoked");
+    // Single-token templating preserves the JSON type — bool stays bool,
+    // number stays number — proving the cap landed before templating ran.
+    assert_eq!(args["truncated_flag"], serde_json::Value::Bool(true));
+    assert!(
+        args["original_bytes"].as_u64().unwrap_or(0) > executor::TRIGGER_PAYLOAD_CAP_BYTES as u64
+    );
+}
+
+// ── F2-9b: webhook boot reconcile ──────────────────────────────────────
+
+#[tokio::test]
+async fn reconcile_webhooks_at_startup_re_registers_enabled_webhooks() {
+    use crate::openhuman::workflows::ops::reconcile_webhooks_at_startup;
+
+    let (_dir, config) = config_with_temp_workspace();
+
+    // Seed three workflows: two enabled webhooks, one disabled webhook,
+    // one enabled cron. Reconcile must touch only the two enabled
+    // webhooks.
+    let wh_a = Workflow {
+        id: "wf-wh-a".into(),
+        schema_version: 1,
+        name: "wh-a".into(),
+        description: None,
+        enabled: true,
+        origin: WorkflowOrigin::UserChat,
+        health: WorkflowHealth::Ready,
+        trigger: Trigger::Webhook {
+            tunnel_uuid: uuid::Uuid::new_v4(),
+            target_path: "/a".into(),
+        },
+        nodes: vec![f2_2_agent_node("n1", "x")],
+        edges: vec![],
+        settings: WorkflowSettings::default(),
+        created_at: chrono::Utc::now(),
+        updated_at: chrono::Utc::now(),
+        last_run_at: None,
+    };
+    let wh_b = Workflow {
+        id: "wf-wh-b".into(),
+        trigger: Trigger::Webhook {
+            tunnel_uuid: uuid::Uuid::new_v4(),
+            target_path: "/b".into(),
+        },
+        ..wh_a.clone()
+    };
+    let wh_disabled = Workflow {
+        id: "wf-wh-disabled".into(),
+        enabled: false,
+        trigger: Trigger::Webhook {
+            tunnel_uuid: uuid::Uuid::new_v4(),
+            target_path: "/c".into(),
+        },
+        ..wh_a.clone()
+    };
+    let cron = Workflow {
+        id: "wf-cron".into(),
+        trigger: Trigger::Cron {
+            expr: "0 8 * * *".into(),
+            tz: None,
+            active_hours: None,
+        },
+        ..wh_a.clone()
+    };
+    for wf in [&wh_a, &wh_b, &wh_disabled, &cron] {
+        store::insert_workflow(&config, wf).unwrap();
+    }
+
+    let count = reconcile_webhooks_at_startup(&config)
+        .await
+        .expect("reconcile");
+    assert_eq!(
+        count, 2,
+        "reconcile MUST count only enabled webhook workflows; got {count}"
+    );
+}
+
+#[tokio::test]
+async fn reconcile_webhooks_at_startup_returns_zero_on_empty_workspace() {
+    use crate::openhuman::workflows::ops::reconcile_webhooks_at_startup;
+    let (_dir, config) = config_with_temp_workspace();
+    assert_eq!(reconcile_webhooks_at_startup(&config).await.unwrap(), 0);
+}
