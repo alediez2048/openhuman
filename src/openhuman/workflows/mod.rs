@@ -47,6 +47,7 @@ pub mod scheduler;
 pub mod schemas;
 pub mod store;
 pub mod templates;
+pub mod templating;
 pub mod types;
 pub mod validator;
 

@@ -402,7 +402,7 @@ pub async fn dispatch_run(
         Err(err) => return Err(DispatchError::Store(format!("{err:#}")).into()),
     };
 
-    validate_phase_1_workflow(&workflow)?;
+    validate_workflow_shape(&workflow)?;
 
     let run_id = Uuid::new_v4().to_string();
 
@@ -557,41 +557,178 @@ pub async fn orphan_recovery_sweep(config: &Config) -> Result<usize> {
 
 // ── execute_inner ──────────────────────────────────────────────────────
 
-/// Phase 1 invariant: exactly one node, kind = AgentPrompt. The
-/// validator (F-11) catches this at create time; the executor
-/// belts-and-suspenders the runtime check so a direct-RPC client can't
-/// bypass it.
-fn validate_phase_1_workflow(workflow: &Workflow) -> Result<(), DispatchError> {
-    if workflow.nodes.len() != 1 {
+/// Dispatch-time workflow-shape guard. Pre-F2-2 this hard-coded the
+/// Phase-1 single-node + AgentPrompt-only invariants. F2-2 swaps to
+/// the Phase-2 set:
+///   - At least one node.
+///   - Every node's kind is in `allowed_node_kinds(CURRENT_PHASE)`.
+///   - The edge set is a DAG (topological_sort below catches cycles).
+///
+/// The validator catches the same conditions at create time per F-11;
+/// this is the runtime belts-and-suspenders for direct-RPC clients.
+fn validate_workflow_shape(workflow: &Workflow) -> Result<(), DispatchError> {
+    if workflow.nodes.is_empty() {
         return Err(DispatchError::PhaseConstraint(workflow.id.clone()));
     }
-    let node = &workflow.nodes[0];
-    if !matches!(node.kind, NodeKind::AgentPrompt) {
-        return Err(DispatchError::UnsupportedNodeKind(
-            workflow.id.clone(),
-            node.kind,
-        ));
+    let allowed = crate::openhuman::workflows::validator::allowed_node_kinds(CURRENT_PHASE);
+    for node in &workflow.nodes {
+        if !allowed.contains(&node.kind) {
+            return Err(DispatchError::UnsupportedNodeKind(
+                workflow.id.clone(),
+                node.kind,
+            ));
+        }
     }
     Ok(())
+}
+
+/// Phase-1 anchor for `validate_workflow_shape` — the only constant
+/// referenced from the dispatcher. Bumping this to `2` unlocks
+/// multi-kind dispatch end-to-end once F2-3..F2-7 are done.
+const CURRENT_PHASE: u32 = 1;
+
+/// Order nodes by a topological sort over `edges`, returning the
+/// execution order. Phase 2 chains are linear (single ancestor per
+/// node), but the sort works for any DAG so Phase 3 (branching) can
+/// reuse the same call path. Cycles return
+/// [`DispatchError::PhaseConstraint`] so the run finalises as
+/// `Failed` with a clear "workflow graph has a cycle" terminal error.
+///
+/// Nodes not referenced by any edge land at the end of the sort in
+/// their declaration order — supports the common "one-node, no edges"
+/// case that today's Phase-1 workflows ship with.
+pub(crate) fn topological_sort(
+    workflow_id: &WorkflowId,
+    nodes: &[Node],
+    edges: &[crate::openhuman::workflows::types::Edge],
+) -> Result<Vec<crate::openhuman::workflows::types::NodeId>, DispatchError> {
+    use crate::openhuman::workflows::types::NodeId;
+    use std::collections::{HashMap, HashSet, VecDeque};
+
+    // Build adjacency + in-degree maps.
+    let mut in_degree: HashMap<NodeId, usize> = HashMap::new();
+    let mut adjacency: HashMap<NodeId, Vec<NodeId>> = HashMap::new();
+    for node in nodes {
+        in_degree.insert(node.id.clone(), 0);
+        adjacency.insert(node.id.clone(), Vec::new());
+    }
+    for edge in edges {
+        // Edges referencing unknown ids are surfaced by the validator
+        // at create time; here we tolerate them by skipping so a
+        // malformed payload bypassing validate doesn't crash the
+        // sort. The shape guard above already rejected empty nodes.
+        if !in_degree.contains_key(&edge.from) || !in_degree.contains_key(&edge.to) {
+            continue;
+        }
+        adjacency
+            .get_mut(&edge.from)
+            .expect("from-id is in nodes (guarded above)")
+            .push(edge.to.clone());
+        *in_degree
+            .get_mut(&edge.to)
+            .expect("to-id is in nodes (guarded above)") += 1;
+    }
+
+    // Kahn's algorithm. Stable order by node-declaration sequence:
+    // tie-break by `nodes` index so the run-history view shows a
+    // deterministic order across replays.
+    let mut sorted: Vec<NodeId> = Vec::with_capacity(nodes.len());
+    let mut visited: HashSet<NodeId> = HashSet::new();
+    let mut queue: VecDeque<NodeId> = VecDeque::new();
+    for node in nodes {
+        if *in_degree
+            .get(&node.id)
+            .expect("in_degree initialised above")
+            == 0
+        {
+            queue.push_back(node.id.clone());
+        }
+    }
+    while let Some(id) = queue.pop_front() {
+        if !visited.insert(id.clone()) {
+            continue;
+        }
+        sorted.push(id.clone());
+        let successors = adjacency.get(&id).cloned().unwrap_or_default();
+        for next in successors {
+            let entry = in_degree
+                .get_mut(&next)
+                .expect("successor is in nodes (guarded above)");
+            *entry = entry.saturating_sub(1);
+            if *entry == 0 {
+                // Push in the order edges appear so a deterministic
+                // declaration sequence drives the runtime order for
+                // linear chains.
+                queue.push_back(next);
+            }
+        }
+    }
+
+    if sorted.len() != nodes.len() {
+        tracing::warn!(
+            target: "workflows-run",
+            workflow = %workflow_id,
+            sorted = sorted.len(),
+            total = nodes.len(),
+            "[workflows-run] topological_sort detected a cycle"
+        );
+        return Err(DispatchError::PhaseConstraint(workflow_id.clone()));
+    }
+    Ok(sorted)
 }
 
 /// Drives the run to a terminal status. Spawned on a tokio task by
 /// `dispatch_run`; doesn't return anything because every state
 /// transition flows through the event bus + the `workflow_runs` table.
 ///
+/// F2-2 rewrite — walks the topologically-sorted node list, builds a
+/// [`crate::openhuman::workflows::templating::NodeContext`] per
+/// iteration, calls `dispatch_node` per node, stuffs each output into
+/// the context so downstream nodes can template against it.
+///
 /// Soft-cancel observation (ADR-014, FR-1.6.9): between nodes the
 /// loop reads `workflow_runs.cancelled` via [`store::is_cancelled`].
-/// Phase 1 has one node so the practical effect is a check right
-/// before the agent starts and once after it returns; Phase 2's
-/// multi-node graphs reuse the same loop structure without changes
-/// here. The current node's LLM call is **not** aborted on cancel.
+/// Multi-node chains check the bit before each node; if cancel
+/// landed mid-chain, the current node completes (cooperative cancel)
+/// and the run terminates `Cancelled` before the next dispatch.
+///
+/// Error policy: F2-2 ships the `on_error = Halt` default — any
+/// node failure terminates the run as `Failed` with the failing
+/// node's error as `terminal_error`. F2-8 lands per-node `Continue`.
 async fn execute_inner(config: Config, workflow: Workflow, run: Run) {
     let timeout_secs = workflow.settings.timeout_secs.clamp(1, 3600);
-    let node = workflow.nodes[0].clone();
     let workflow_id = workflow.id.clone();
     let run_id = run.id.clone();
 
-    // Pre-node cancel check — handles the case where cancel_run fired
+    // Sort once; if the graph has a cycle, finalise as Failed.
+    let order = match topological_sort(&workflow.id, &workflow.nodes, &workflow.edges) {
+        Ok(order) => order,
+        Err(err) => {
+            finalize_run(
+                &config,
+                &workflow_id,
+                &run_id,
+                RunStatus::Failed,
+                Some(format!("workflow graph rejected by dispatcher: {err}")),
+            );
+            return;
+        }
+    };
+    // Index nodes by id for O(1) lookup during the walk.
+    let nodes_by_id: HashMap<_, _> = workflow
+        .nodes
+        .iter()
+        .map(|n| (n.id.clone(), n.clone()))
+        .collect();
+
+    // F2-2: NodeContext seeded with the trigger's payload. Today
+    // Cron / Manual triggers carry no payload (`Value::Null`); F2-9
+    // / F2-10 / F2-11 surface webhook / composio_event /
+    // channel_message payloads via the same field.
+    let mut ctx =
+        crate::openhuman::workflows::templating::NodeContext::new(serde_json::Value::Null);
+
+    // Pre-run cancel check — handles the case where cancel_run fired
     // between the dispatch and this task's first scheduling tick.
     if cancellation_observed(&config, &workflow_id, &run_id) {
         finalize_run(
@@ -604,31 +741,67 @@ async fn execute_inner(config: Config, workflow: Workflow, run: Run) {
         return;
     }
 
-    let outcome = tokio::time::timeout(
-        Duration::from_secs(timeout_secs as u64),
-        dispatch_node(&config, &run, &node),
-    )
-    .await;
+    let total_deadline = std::time::Instant::now() + Duration::from_secs(timeout_secs as u64);
+    let mut terminal_status = RunStatus::Succeeded;
+    let mut terminal_error: Option<String> = None;
 
-    let (terminal_status, terminal_error) = match outcome {
-        Ok(Ok(())) => {
-            // Between-nodes check (Phase 2 reuses this loop slot).
-            // Even with a single-node graph, a cancel that arrived
-            // during the agent body upgrades a successful return to
-            // a Cancelled terminal status — the FR-1.6.9 cooperative
-            // pattern (current node completes; status flips).
-            if cancellation_observed(&config, &workflow_id, &run_id) {
-                (RunStatus::Cancelled, Some("cancelled mid-run".into()))
-            } else {
-                (RunStatus::Succeeded, None)
+    for node_id in &order {
+        let node = nodes_by_id
+            .get(node_id)
+            .expect("topological_sort returns only node ids from `nodes`");
+
+        // Between-nodes cancel check — cooperative cancellation per
+        // FR-1.6.9. Triggers before dispatching the next node so the
+        // user sees Cancelled rather than waiting for the next step.
+        if cancellation_observed(&config, &workflow_id, &run_id) {
+            terminal_status = RunStatus::Cancelled;
+            terminal_error = Some("cancelled mid-run".into());
+            break;
+        }
+
+        // Per-run wall-clock check against the remaining timeout
+        // budget. Each node gets the REMAINING budget, not a fresh
+        // one — total run time stays bounded by `settings.timeout_secs`.
+        let remaining = total_deadline.saturating_duration_since(std::time::Instant::now());
+        if remaining.is_zero() {
+            terminal_status = RunStatus::TimedOut;
+            terminal_error = Some(format!("run exceeded {timeout_secs}s timeout"));
+            break;
+        }
+
+        let outcome =
+            tokio::time::timeout(remaining, dispatch_node(&config, &run, node, &ctx)).await;
+
+        match outcome {
+            Ok(Ok(body)) => {
+                ctx.record_output(node_id.clone(), body);
+                continue;
+            }
+            Ok(Err(err)) => {
+                // F2-2 `on_error: Halt` (workflow-level default) —
+                // first failure terminates. F2-8 will branch here on
+                // per-node Continue policy.
+                terminal_status = RunStatus::Failed;
+                terminal_error = Some(format!("node `{}` failed: {err}", node.id));
+                break;
+            }
+            Err(_elapsed) => {
+                terminal_status = RunStatus::TimedOut;
+                terminal_error = Some(format!("run exceeded {timeout_secs}s timeout"));
+                break;
             }
         }
-        Ok(Err(err)) => (RunStatus::Failed, Some(err.to_string())),
-        Err(_elapsed) => (
-            RunStatus::TimedOut,
-            Some(format!("run exceeded {timeout_secs}s timeout")),
-        ),
-    };
+    }
+
+    // Post-walk cancel check — same FR-1.6.9 cooperative pattern. A
+    // cancel that landed during the final node's body upgrades a
+    // successful return to Cancelled.
+    if matches!(terminal_status, RunStatus::Succeeded)
+        && cancellation_observed(&config, &workflow_id, &run_id)
+    {
+        terminal_status = RunStatus::Cancelled;
+        terminal_error = Some("cancelled mid-run".into());
+    }
 
     finalize_run(
         &config,
@@ -714,9 +887,9 @@ pub enum NodeDispatchError {
     NotImplementedYet(NodeKind),
 }
 
-/// F2-1 dispatcher: matches `node.config` and routes to the per-kind
-/// executor. Phase 1's single-node loop calls this; F2-2's multi-node
-/// chain loop calls it once per node.
+/// F2-2 dispatcher: matches `node.config`, routes to the per-kind
+/// executor, and returns the node's output body as a JSON `Value`
+/// for the multi-node loop to stuff into [`NodeContext::outputs`].
 ///
 /// Today only `AgentPrompt` has a real body. Every other Phase 2
 /// variant returns `NodeDispatchError::NotImplementedYet` — the
@@ -726,10 +899,20 @@ pub enum NodeDispatchError {
 ///
 /// Wiring contract for F2-3..F2-7: each ticket adds its arm by
 /// replacing the matching `Err(NotImplementedYet(_))` with a real
-/// `execute_<kind>(config, run, node).await` call.
-pub(crate) async fn dispatch_node(config: &Config, run: &Run, node: &Node) -> Result<()> {
+/// `execute_<kind>(config, run, node, ctx).await` call.
+///
+/// `ctx` carries the trigger payload + every prior node's output body
+/// for OQ-7 templating substitution. Per-kind bodies call
+/// `templating::substitute` on their string fields before invoking
+/// the underlying tool / HTTP / channel surface.
+pub(crate) async fn dispatch_node(
+    config: &Config,
+    run: &Run,
+    node: &Node,
+    ctx: &crate::openhuman::workflows::templating::NodeContext,
+) -> Result<serde_json::Value> {
     match &node.config {
-        NodeConfig::AgentPrompt(_) => execute_agent_prompt(config, run, node).await,
+        NodeConfig::AgentPrompt(_) => execute_agent_prompt(config, run, node, ctx).await,
         NodeConfig::ToolCall(_) => {
             Err(NodeDispatchError::NotImplementedYet(NodeKind::ToolCall).into())
         }
@@ -751,7 +934,12 @@ pub(crate) async fn dispatch_node(config: &Config, run: &Run, node: &Node) -> Re
 /// Phase 1 node body: persist a step row, fire `WorkflowRunStepStarted`,
 /// run the agent (PLACEHOLDER per the module-doc), truncate + persist
 /// output, fire `WorkflowRunStepCompleted`.
-async fn execute_agent_prompt(config: &Config, run: &Run, node: &Node) -> Result<()> {
+async fn execute_agent_prompt(
+    config: &Config,
+    run: &Run,
+    node: &Node,
+    ctx: &crate::openhuman::workflows::templating::NodeContext,
+) -> Result<serde_json::Value> {
     let agent_prompt_config = match &node.config {
         NodeConfig::AgentPrompt(cfg) => cfg,
         other => {
@@ -763,6 +951,31 @@ async fn execute_agent_prompt(config: &Config, run: &Run, node: &Node) -> Result
                 std::mem::discriminant(other)
             );
         }
+    };
+    // F2-2: OQ-7 templating substitution on the prompt string. The
+    // substituted prompt + the original config are passed downstream;
+    // `run_agent_prompt` reads its prompt from the config by reference,
+    // so we build a thin override that swaps the resolved prompt in.
+    let templated =
+        crate::openhuman::workflows::templating::substitute(&agent_prompt_config.prompt, ctx);
+    if !templated.unresolved.is_empty() {
+        tracing::warn!(
+            target: "workflows-run",
+            run = %run.id,
+            node = %node.id,
+            unresolved = templated.unresolved.len(),
+            "[workflows-run] agent_prompt has unresolved template refs; \
+             passing through literally — the agent will see the `{{...}}` tokens"
+        );
+    }
+    // The agent-config we hand to `run_agent_prompt` carries the
+    // substituted prompt; `allowed_connections` / `iteration_cap` /
+    // `model_tier` pass through unchanged. Cheap clone.
+    let resolved_prompt_config = AgentPromptConfig {
+        prompt: templated.resolved,
+        allowed_connections: agent_prompt_config.allowed_connections.clone(),
+        iteration_cap: agent_prompt_config.iteration_cap,
+        model_tier: agent_prompt_config.model_tier.clone(),
     };
     let step_id: RunStepId = Uuid::new_v4().to_string();
     let started_at = Utc::now();
@@ -789,13 +1002,13 @@ async fn execute_agent_prompt(config: &Config, run: &Run, node: &Node) -> Result
         "[workflows-run] step started run={} node={} prompt_chars={}",
         run.id,
         node.id,
-        agent_prompt_config.prompt.chars().count()
+        resolved_prompt_config.prompt.chars().count()
     );
 
     let agent_def = build_node_agent_definition(
-        &agent_prompt_config.allowed_connections,
-        agent_prompt_config.iteration_cap,
-        agent_prompt_config.model_tier.clone(),
+        &resolved_prompt_config.allowed_connections,
+        resolved_prompt_config.iteration_cap,
+        resolved_prompt_config.model_tier.clone(),
     );
 
     let (terminal_status, output_json, error, agent_narrative, observed_tool_calls) =
@@ -803,7 +1016,7 @@ async fn execute_agent_prompt(config: &Config, run: &Run, node: &Node) -> Result
             config,
             &run.workflow_id,
             &run.id,
-            agent_prompt_config,
+            &resolved_prompt_config,
             &agent_def,
         )
         .await
@@ -854,7 +1067,7 @@ async fn execute_agent_prompt(config: &Config, run: &Run, node: &Node) -> Result
         terminal_status,
         &agent_narrative,
         &observed_tool_calls,
-        &agent_prompt_config.allowed_connections,
+        &resolved_prompt_config.allowed_connections,
         error.as_deref(),
     )
     .await;
@@ -864,7 +1077,7 @@ async fn execute_agent_prompt(config: &Config, run: &Run, node: &Node) -> Result
         &step_id,
         terminal_status,
         Utc::now(),
-        output_json,
+        output_json.clone(),
         error.clone(),
     ) {
         anyhow::bail!("update_run_step_terminal failed: {err:#}");
@@ -889,7 +1102,16 @@ async fn execute_agent_prompt(config: &Config, run: &Run, node: &Node) -> Result
         }
         anyhow::bail!("agent_prompt step failed");
     }
-    Ok(())
+    // F2-2: bubble the body to the multi-node dispatcher so downstream
+    // nodes can template `{{node.<this>.output...}}`. Parse the JSON
+    // back to Value so the templating walker can index it; on parse
+    // failure fall back to `Null` (defensive — the body we just built
+    // came from `serde_json::to_string` and should always re-parse).
+    let body_value = output_json
+        .as_deref()
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
+        .unwrap_or(serde_json::Value::Null);
+    Ok(body_value)
 }
 
 /// One tool-call observation captured by the F-16 event-bus tap during

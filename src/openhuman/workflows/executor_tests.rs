@@ -1222,7 +1222,8 @@ async fn dispatch_node_returns_not_implemented_for_tool_call() {
             arguments_template: serde_json::json!({}),
         }),
     );
-    let err = executor::dispatch_node(&config, &run, &node)
+    let ctx = crate::openhuman::workflows::templating::NodeContext::default();
+    let err = executor::dispatch_node(&config, &run, &node, &ctx)
         .await
         .expect_err("ToolCall must return NotImplementedYet in F2-1");
     let msg = err.to_string();
@@ -1246,7 +1247,8 @@ async fn dispatch_node_returns_not_implemented_for_http_request() {
             body_template: None,
         }),
     );
-    let err = executor::dispatch_node(&config, &run, &node)
+    let ctx = crate::openhuman::workflows::templating::NodeContext::default();
+    let err = executor::dispatch_node(&config, &run, &node, &ctx)
         .await
         .unwrap_err();
     assert!(err.to_string().contains("HttpRequest"));
@@ -1264,7 +1266,8 @@ async fn dispatch_node_returns_not_implemented_for_channel_message() {
             body_template: "hi".into(),
         }),
     );
-    let err = executor::dispatch_node(&config, &run, &node)
+    let ctx = crate::openhuman::workflows::templating::NodeContext::default();
+    let err = executor::dispatch_node(&config, &run, &node, &ctx)
         .await
         .unwrap_err();
     assert!(err.to_string().contains("ChannelMessage"));
@@ -1280,7 +1283,8 @@ async fn dispatch_node_returns_not_implemented_for_condition() {
             expression: "x > 1".into(),
         }),
     );
-    let err = executor::dispatch_node(&config, &run, &node)
+    let ctx = crate::openhuman::workflows::templating::NodeContext::default();
+    let err = executor::dispatch_node(&config, &run, &node, &ctx)
         .await
         .unwrap_err();
     assert!(err.to_string().contains("Condition"));
@@ -1294,8 +1298,438 @@ async fn dispatch_node_returns_not_implemented_for_delay() {
         NodeKind::Delay,
         NodeConfig::Delay(DelayConfig { seconds: 60 }),
     );
-    let err = executor::dispatch_node(&config, &run, &node)
+    let ctx = crate::openhuman::workflows::templating::NodeContext::default();
+    let err = executor::dispatch_node(&config, &run, &node, &ctx)
         .await
         .unwrap_err();
     assert!(err.to_string().contains("Delay"));
+}
+
+// ── F2-2: topological_sort ─────────────────────────────────────────────
+
+#[test]
+fn topological_sort_single_node_no_edges() {
+    let nodes = vec![Node {
+        id: "n1".into(),
+        kind: NodeKind::AgentPrompt,
+        config: NodeConfig::AgentPrompt(AgentPromptConfig {
+            prompt: "x".into(),
+            allowed_connections: vec![],
+            iteration_cap: 12,
+            model_tier: None,
+        }),
+        position: None,
+    }];
+    let order = executor::topological_sort(&"wf".to_string(), &nodes, &[]).unwrap();
+    assert_eq!(order, vec!["n1".to_string()]);
+}
+
+#[test]
+fn topological_sort_linear_chain_three_nodes() {
+    let nodes = vec![
+        Node {
+            id: "a".into(),
+            kind: NodeKind::AgentPrompt,
+            config: NodeConfig::AgentPrompt(AgentPromptConfig {
+                prompt: "x".into(),
+                allowed_connections: vec![],
+                iteration_cap: 12,
+                model_tier: None,
+            }),
+            position: None,
+        },
+        Node {
+            id: "b".into(),
+            kind: NodeKind::AgentPrompt,
+            config: NodeConfig::AgentPrompt(AgentPromptConfig {
+                prompt: "y".into(),
+                allowed_connections: vec![],
+                iteration_cap: 12,
+                model_tier: None,
+            }),
+            position: None,
+        },
+        Node {
+            id: "c".into(),
+            kind: NodeKind::AgentPrompt,
+            config: NodeConfig::AgentPrompt(AgentPromptConfig {
+                prompt: "z".into(),
+                allowed_connections: vec![],
+                iteration_cap: 12,
+                model_tier: None,
+            }),
+            position: None,
+        },
+    ];
+    let edges = vec![
+        Edge {
+            from: "a".into(),
+            to: "b".into(),
+        },
+        Edge {
+            from: "b".into(),
+            to: "c".into(),
+        },
+    ];
+    let order = executor::topological_sort(&"wf".to_string(), &nodes, &edges).unwrap();
+    assert_eq!(
+        order,
+        vec!["a".to_string(), "b".to_string(), "c".to_string()]
+    );
+}
+
+#[test]
+fn topological_sort_rejects_cycle() {
+    let nodes = vec![
+        Node {
+            id: "a".into(),
+            kind: NodeKind::AgentPrompt,
+            config: NodeConfig::AgentPrompt(AgentPromptConfig {
+                prompt: "x".into(),
+                allowed_connections: vec![],
+                iteration_cap: 12,
+                model_tier: None,
+            }),
+            position: None,
+        },
+        Node {
+            id: "b".into(),
+            kind: NodeKind::AgentPrompt,
+            config: NodeConfig::AgentPrompt(AgentPromptConfig {
+                prompt: "y".into(),
+                allowed_connections: vec![],
+                iteration_cap: 12,
+                model_tier: None,
+            }),
+            position: None,
+        },
+    ];
+    // a → b → a cycle.
+    let edges = vec![
+        Edge {
+            from: "a".into(),
+            to: "b".into(),
+        },
+        Edge {
+            from: "b".into(),
+            to: "a".into(),
+        },
+    ];
+    let result = executor::topological_sort(&"wf".to_string(), &nodes, &edges);
+    assert!(
+        result.is_err(),
+        "cycle must produce DispatchError::PhaseConstraint"
+    );
+}
+
+#[test]
+fn topological_sort_orphan_nodes_appear_in_declaration_order() {
+    // Two unrelated subgraphs: `a → b` and isolated `c`. Both should
+    // sort; the isolated `c` rides alongside.
+    let nodes = vec![
+        Node {
+            id: "a".into(),
+            kind: NodeKind::AgentPrompt,
+            config: NodeConfig::AgentPrompt(AgentPromptConfig {
+                prompt: "x".into(),
+                allowed_connections: vec![],
+                iteration_cap: 12,
+                model_tier: None,
+            }),
+            position: None,
+        },
+        Node {
+            id: "b".into(),
+            kind: NodeKind::AgentPrompt,
+            config: NodeConfig::AgentPrompt(AgentPromptConfig {
+                prompt: "y".into(),
+                allowed_connections: vec![],
+                iteration_cap: 12,
+                model_tier: None,
+            }),
+            position: None,
+        },
+        Node {
+            id: "c".into(),
+            kind: NodeKind::AgentPrompt,
+            config: NodeConfig::AgentPrompt(AgentPromptConfig {
+                prompt: "z".into(),
+                allowed_connections: vec![],
+                iteration_cap: 12,
+                model_tier: None,
+            }),
+            position: None,
+        },
+    ];
+    let edges = vec![Edge {
+        from: "a".into(),
+        to: "b".into(),
+    }];
+    let order = executor::topological_sort(&"wf".to_string(), &nodes, &edges).unwrap();
+    // a + c both have in-degree 0 → queued in declaration order.
+    // b waits for a. So: a, c, b is the deterministic shape (Kahn's
+    // queue pops in insertion order).
+    assert_eq!(
+        order,
+        vec!["a".to_string(), "c".to_string(), "b".to_string()]
+    );
+}
+
+// ── F2-2: multi-node execution (end-to-end via stub agent) ─────────────
+
+/// Build a minimal multi-node Workflow that bypasses validation —
+/// used to exercise the executor end-to-end with Phase 2 NodeKinds
+/// before the validator's `CURRENT_PHASE` gets bumped.
+fn f2_2_workflow(id: &str, nodes: Vec<Node>, edges: Vec<Edge>) -> Workflow {
+    Workflow {
+        id: id.into(),
+        schema_version: 1,
+        name: format!("F2-2 {id}"),
+        description: None,
+        enabled: false,
+        origin: WorkflowOrigin::UserChat,
+        health: WorkflowHealth::Ready,
+        trigger: Trigger::Manual,
+        nodes,
+        edges,
+        settings: WorkflowSettings::default(),
+        created_at: chrono::Utc::now(),
+        updated_at: chrono::Utc::now(),
+        last_run_at: None,
+    }
+}
+
+fn f2_2_agent_node(id: &str, prompt: &str) -> Node {
+    Node {
+        id: id.into(),
+        kind: NodeKind::AgentPrompt,
+        config: NodeConfig::AgentPrompt(AgentPromptConfig {
+            prompt: prompt.into(),
+            allowed_connections: vec![],
+            iteration_cap: 12,
+            model_tier: None,
+        }),
+        position: None,
+    }
+}
+
+/// Two-node chain where node `b`'s prompt references node `a`'s
+/// output via `{{node.a.output.text}}`. The stub agent echoes the
+/// prompt verbatim, so the substituted text MUST appear in the
+/// prompt captured by the stub on node b's turn.
+#[tokio::test]
+async fn multi_node_chain_templates_upstream_output_into_downstream_prompt() {
+    let (_dir, config) = config_with_temp_workspace();
+    let workflow = f2_2_workflow(
+        &format!("wf-multinode-{}", uuid::Uuid::new_v4()),
+        vec![
+            f2_2_agent_node("a", "produce a value"),
+            f2_2_agent_node("b", "consume: {{node.a.output.text}}"),
+        ],
+        vec![Edge {
+            from: "a".into(),
+            to: "b".into(),
+        }],
+    );
+    store::insert_workflow(&config, &workflow).expect("insert_workflow");
+
+    executor::dispatch_run(
+        &config,
+        workflow.id.clone(),
+        TriggerSource::Manual {
+            initiator: "test".into(),
+        },
+    )
+    .await
+    .expect("dispatch_run");
+    let run = wait_for_terminal_run(&config, &workflow.id).await;
+
+    assert!(
+        matches!(run.status, RunStatus::Succeeded),
+        "chain must succeed; got {:?} (err: {:?})",
+        run.status,
+        run.error
+    );
+
+    // Two step rows landed, one per node, in walk order.
+    let (_run, steps) = store::get_run(&config, &run.id).unwrap().expect("run row");
+    assert_eq!(steps.len(), 2, "two step rows must land");
+    assert_eq!(steps[0].node_id, "a".to_string());
+    assert_eq!(steps[1].node_id, "b".to_string());
+
+    // `captured_prompts()` is a process-wide static; other tests
+    // running in parallel push entries too. Filter by our distinctive
+    // markers instead of slicing by index — workflow ids + prompt
+    // bodies are unique to this test so no false positives.
+    let prompts = captured_prompts().lock().clone();
+    assert!(
+        prompts.iter().any(|p| p.contains("produce a value")),
+        "node a's prompt must have hit the stub"
+    );
+    // Find the prompt that came from node b — it carries the literal
+    // word `consume:` in its body. The substituted text appears
+    // somewhere AFTER `consume:` (the rest of the line may carry the
+    // stub's echo metadata + F-17 recall block additions).
+    let b_prompt = prompts
+        .iter()
+        .find(|p| p.contains("consume:"))
+        .unwrap_or_else(|| panic!("could not find node b's prompt in: {prompts:#?}"));
+    assert!(
+        b_prompt.contains("produce a value"),
+        "node b's prompt must contain the substituted text from node a's output \
+         (which echoed `produce a value`); got prompt:\n{b_prompt}"
+    );
+    // Defence-in-depth: the literal `{{node.a.output.text}}` must
+    // NEVER reach the stub, because that would mean templating
+    // skipped node b's prompt entirely.
+    assert!(
+        prompts
+            .iter()
+            .all(|p| !p.contains("{{node.a.output.text}}")),
+        "raw `{{...}}` template token must never reach the stub"
+    );
+}
+
+/// Multi-node chain where node `a` reports a tool failure via the
+/// F-16 D path — the workflow-level `on_error: Halt` default
+/// terminates the run as `Failed` without dispatching node `b`.
+/// (F2-8 lands per-node Continue policy.) Reproduces the same
+/// synthetic-failure pattern the F-16 tests use.
+#[tokio::test]
+async fn multi_node_chain_halts_on_first_node_failure() {
+    let (_dir, config) = config_with_temp_workspace();
+
+    let workflow = f2_2_workflow(
+        &format!("wf-halt-{}", uuid::Uuid::new_v4()),
+        vec![
+            f2_2_agent_node("a", "node-a body"),
+            f2_2_agent_node("b", "should never run"),
+        ],
+        vec![Edge {
+            from: "a".into(),
+            to: "b".into(),
+        }],
+    );
+    store::insert_workflow(&config, &workflow).expect("insert_workflow");
+
+    let run_id = executor::dispatch_run(
+        &config,
+        workflow.id.clone(),
+        TriggerSource::Manual {
+            initiator: "test".into(),
+        },
+    )
+    .await
+    .expect("dispatch_run");
+
+    // Spin a publish loop tagged with this run's id so the F-16 D
+    // subscriber observes a synthetic tool failure during node a's
+    // body. Same shape as the F-16 regression test.
+    let publish_run_id = run_id.clone();
+    let publish_handle = tokio::spawn(async move {
+        for _ in 0..50 {
+            publish_synthetic_tool_failure(&publish_run_id);
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    });
+    let run = wait_for_terminal_run(&config, &workflow.id).await;
+    publish_handle.abort();
+
+    assert!(
+        matches!(run.status, RunStatus::Failed),
+        "chain must halt as Failed when first node errors; got {:?} (err: {:?})",
+        run.status,
+        run.error
+    );
+    let err = run.error.as_deref().unwrap_or("");
+    assert!(
+        err.contains("node `a` failed"),
+        "terminal_error must name the failing node; got: {err}"
+    );
+
+    // Step rows: node a inserted + flipped to Failed (F-16 D path);
+    // node b NEVER inserted because halt skips downstream nodes.
+    let (_run, steps) = store::get_run(&config, &run.id).unwrap().expect("run row");
+    let has_b = steps.iter().any(|s| s.node_id == "b");
+    assert!(
+        !has_b,
+        "node b's step row must NOT exist after first-node halt; got steps: {:?}",
+        steps.iter().map(|s| &s.node_id).collect::<Vec<_>>()
+    );
+    let a_step = steps
+        .iter()
+        .find(|s| s.node_id == "a")
+        .expect("node a's step row must exist");
+    assert!(
+        matches!(a_step.status, RunStatus::Failed),
+        "node a's step must be Failed; got {:?}",
+        a_step.status
+    );
+}
+
+/// Cycle in the edge set causes `topological_sort` to return Err →
+/// the run finalises as `Failed` with a clear "workflow graph"
+/// terminal error.
+#[tokio::test]
+async fn multi_node_chain_with_cycle_finalises_as_failed() {
+    let (_dir, config) = config_with_temp_workspace();
+    let workflow = f2_2_workflow(
+        &format!("wf-cycle-{}", uuid::Uuid::new_v4()),
+        vec![f2_2_agent_node("a", "x"), f2_2_agent_node("b", "y")],
+        // a → b → a forms a cycle.
+        vec![
+            Edge {
+                from: "a".into(),
+                to: "b".into(),
+            },
+            Edge {
+                from: "b".into(),
+                to: "a".into(),
+            },
+        ],
+    );
+    store::insert_workflow(&config, &workflow).expect("insert_workflow");
+
+    executor::dispatch_run(
+        &config,
+        workflow.id.clone(),
+        TriggerSource::Manual {
+            initiator: "test".into(),
+        },
+    )
+    .await
+    .expect("dispatch_run");
+    let run = wait_for_terminal_run(&config, &workflow.id).await;
+
+    assert!(matches!(run.status, RunStatus::Failed));
+    let err = run.error.as_deref().unwrap_or("");
+    assert!(
+        err.contains("workflow graph rejected"),
+        "cycle must surface as 'workflow graph rejected'; got: {err}"
+    );
+}
+
+/// Single-node workflow with no edges is the Phase 1 baseline —
+/// must still run correctly under the new multi-node executor.
+#[tokio::test]
+async fn single_node_workflow_with_no_edges_still_runs() {
+    let (_dir, config) = config_with_temp_workspace();
+    let workflow = f2_2_workflow(
+        &format!("wf-single-{}", uuid::Uuid::new_v4()),
+        vec![f2_2_agent_node("lonely", "do the thing")],
+        vec![],
+    );
+    store::insert_workflow(&config, &workflow).expect("insert_workflow");
+
+    executor::dispatch_run(
+        &config,
+        workflow.id.clone(),
+        TriggerSource::Manual {
+            initiator: "test".into(),
+        },
+    )
+    .await
+    .expect("dispatch_run");
+    let run = wait_for_terminal_run(&config, &workflow.id).await;
+    assert!(matches!(run.status, RunStatus::Succeeded));
 }
