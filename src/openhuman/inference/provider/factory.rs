@@ -468,11 +468,19 @@ fn make_openai_compatible_provider_with_config(
     } else {
         Some(api_key)
     };
-    Ok(Box::new(
-        OpenAiCompatibleProvider::new("cloud", endpoint, key, auth_style)
-            .with_temperature_unsupported_models(temperature_unsupported_models.to_vec())
-            .with_temperature_override(temperature_override),
-    ))
+    let is_anthropic = matches!(auth_style, CompatAuthStyle::Anthropic);
+    let mut provider = OpenAiCompatibleProvider::new("cloud", endpoint, key, auth_style)
+        .with_temperature_unsupported_models(temperature_unsupported_models.to_vec())
+        .with_temperature_override(temperature_override);
+    if is_anthropic {
+        // Anthropic doesn't host `/v1/responses` — the Responses API is
+        // OpenAI-specific. Leaving the fallback enabled cascades a
+        // chat-completions timeout into a misleading 404 not_found and
+        // bricks the chat UI. Confirmed against `api.anthropic.com` on
+        // 2026-05-26 (req_011CbRNfaDrEuUharVAtBPo7).
+        provider = provider.without_responses_fallback();
+    }
+    Ok(Box::new(provider))
 }
 
 /// Return a safe-to-log representation of a URL endpoint: `scheme://host` only.

@@ -196,6 +196,17 @@ impl OpenAiCompatibleProvider {
         self
     }
 
+    /// Disable the `/v1/responses` fallback. Use for providers that
+    /// don't host the Responses API at all (Anthropic returns 404 +
+    /// `not_found_error` when called against `/v1/responses` — the
+    /// surface is OpenAI-specific). With the fallback enabled, a
+    /// timeout on `/v1/chat/completions` cascades into a misleading
+    /// "Not found" error after the second leg fails.
+    pub fn without_responses_fallback(mut self) -> Self {
+        self.supports_responses_fallback = false;
+        self
+    }
+
     /// Resolve the effective temperature for `model`. Returns `None` when the
     /// model matches a pattern in `temperature_unsupported_models` (causing the
     /// field to be omitted from the serialised request). Otherwise yields the

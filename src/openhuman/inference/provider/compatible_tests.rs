@@ -1184,6 +1184,31 @@ fn normalize_function_arguments_object_value_serializes() {
     assert_eq!(normalize_function_arguments(v), r#"{"path":"/tmp"}"#);
 }
 
+/// Regression: post-F2 fix. Anthropic returns 404 + `not_found_error`
+/// when called against `/v1/responses` (the Responses API is OpenAI-
+/// specific). The factory disables the fallback for the Anthropic
+/// auth style so a chat-completions timeout doesn't cascade into a
+/// misleading "Not found" error. Confirmed against `api.anthropic.com`
+/// on 2026-05-26 (req_011CbRNfaDrEuUharVAtBPo7).
+#[test]
+fn without_responses_fallback_disables_the_v1_responses_leg() {
+    let provider = OpenAiCompatibleProvider::new(
+        "test",
+        "https://api.anthropic.com/v1",
+        Some("dummy-key"),
+        AuthStyle::Anthropic,
+    );
+    assert!(
+        provider.supports_responses_fallback,
+        "default ::new MUST leave the fallback enabled — confirms the test setup"
+    );
+    let provider = provider.without_responses_fallback();
+    assert!(
+        !provider.supports_responses_fallback,
+        "without_responses_fallback MUST flip the flag off"
+    );
+}
+
 #[test]
 fn parse_provider_tool_call_from_value_guards_malformed_arguments() {
     // OPENHUMAN-TAURI-6F: the early-return path in
