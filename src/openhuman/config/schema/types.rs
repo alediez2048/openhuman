@@ -351,14 +351,19 @@ fn default_temperature_value() -> f64 {
 }
 
 /// Returns the default list of model glob patterns that do not support the
-/// `temperature` parameter. These cover OpenAI o-series and GPT-5 reasoning
-/// models that return an error when `temperature` is included in the request.
+/// `temperature` parameter. These cover reasoning-class models that 400
+/// when `temperature` is included in the request:
+///   - OpenAI o-series (`o1*`, `o3*`, `o4*`) and GPT-5 (`gpt-5*`).
+///   - Anthropic Claude Opus 4.x reasoning models (`claude-opus-4*`)
+///     — confirmed against `claude-opus-4-7` returning
+///     `"temperature is deprecated for this model"` on 2026-05-25.
 fn default_temperature_unsupported_models() -> Vec<String> {
     vec![
         "o1*".to_string(),
         "o3*".to_string(),
         "o4*".to_string(),
         "gpt-5*".to_string(),
+        "claude-opus-4*".to_string(),
     ]
 }
 

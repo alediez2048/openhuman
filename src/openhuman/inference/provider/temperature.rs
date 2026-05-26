@@ -179,6 +179,29 @@ mod tests {
         assert_eq!(temperature_for_model("gpt-5-turbo", 0.7, &config), None);
     }
 
+    /// Regression: Anthropic Claude Opus 4.x reasoning models return
+    /// `400 "temperature is deprecated for this model"` when the
+    /// field is included. The default unsupported list MUST cover
+    /// the family so a fresh user config doesn't fail every
+    /// inference call.
+    #[test]
+    fn temperature_suppressed_for_claude_opus_4_family() {
+        let config = Config::default();
+        assert_eq!(temperature_for_model("claude-opus-4-7", 0.7, &config), None);
+        assert_eq!(temperature_for_model("claude-opus-4-1", 0.7, &config), None);
+        assert_eq!(temperature_for_model("claude-opus-4", 0.7, &config), None);
+        // Sibling Claude families NOT in the list — they should still
+        // accept temperature today. Pin to catch accidental overreach.
+        assert_eq!(
+            temperature_for_model("claude-sonnet-4-6", 0.7, &config),
+            Some(0.7)
+        );
+        assert_eq!(
+            temperature_for_model("claude-haiku-4-5-20251001", 0.7, &config),
+            Some(0.7)
+        );
+    }
+
     #[test]
     fn temperature_uses_custom_unsupported_list() {
         let config = config_with_unsupported(vec!["custom-*".to_string()]);
