@@ -1,7 +1,7 @@
 # Workflows & Automations — Current State
 
-**Last updated:** 2026-05-24 (post-F-21)
-**Branch:** `main` on `alediez2048/openhuman` (the user's fork). Upstream `tinyhumansai/openhuman` not pushed to yet — this is private dev so far. Phase 1 rollup PR is the next upstream push.
+**Last updated:** 2026-05-26 (post-Phase 2 closure + Phase 4 Campaigns drafted)
+**Branch:** `main` on `alediez2048/openhuman` (the user's fork). Upstream `tinyhumansai/openhuman` not pushed to yet — this is private dev so far. Phase 1 + 2 rollup PR is the next upstream push.
 
 A fresh session should read this file first to know where the initiative stands.
 
@@ -11,15 +11,26 @@ A fresh session should read this file first to know where the initiative stands.
 
 **Phase 0 (Connections Hub) is SHIPPED** to `alediez2048/main`. Unified `/connections` with all 6 mechanisms + honest verification.
 
-**Phase 1 (Workflows Foundation) is SHIPPED** to `alediez2048/main`, including the Phase 1.5 polish that locked the chat-driven create flow end-to-end (real agent invocation in the drafter, `<workflow-preview>` tag parsing in `AgentMessageBubble`, orchestrator allowlist, channel/webview send stubs).
+**Phase 1 (Workflows Foundation) is SHIPPED** to `alediez2048/main`, including the Phase 1.5 polish that locked the chat-driven create flow end-to-end.
 
-**Implementation order (decided 2026-05-22, Option B):** Phase 2 → Phase 3 (Browser Agent) → maybe Phase 4 (Canvas, demand-gated). The prior numbering had Browser Agent as Phase 4 and Canvas as Phase 3; they were swapped on 2026-05-22 to reflect the actual implementation priority. Canvas is gated on user demand per `prd.md §5.3` and may never ship.
+**Phase 2 (Execution Depth) is SHIPPED** to `alediez2048/main` on 2026-05-26 (F2-1 → F2-17 + F2-7b + F2-9b + F2-16b). Multi-node chains, webhook/composio/channel triggers, retry policy, active_hours gate, 30-day soft-delete + retention sweep, 5 starter templates RU-5..RU-9, Appium live-test spec. See `Automations/Tickets/phase-2-execution/DEVLOG.md` for the full closure log.
 
-**Phase 2 (Execution Depth) ticket set DRAFTED** under `Automations/Tickets/phase-2-execution/` (16 tickets). Starts AFTER F-17 lands — the 2026-05-22 grill established that F-17's memory loop should land before Phase 2's multi-node chains compound the cost of NOT having memory.
+**Implementation order (revised 2026-05-26):** Phase 2 ✅ → **Phase 4 (Campaigns)** → Phase 3 (Browser Agent) → Phase 5 (Business Entities) → Phase 6 (Proactive Agent). Phase 4's slot was previously held by Canvas but Canvas was demand-gated and the demand never materialised; the 2026-05-26 grill replaced it with **Campaigns + Workflow UX** which is the user's actual ask. Canvas drafts preserved at `phase-4-canvas/` but marked superseded.
 
-**Phase 3 (Browser Agent) ticket set DRAFTED** under `Automations/Tickets/phase-3-browser-agent/` — `F3-overview.md` + 7 sub-tickets (`F3-1` through `F3-7`). Do NOT start until Phase 2 is on `main`; Phase 4 (canvas) is **NOT a prerequisite**. The thesis is a CEF-native CDP-driven browser agent (Stagehand-style `act`/`extract`/`observe` API) that drives the user's already-authenticated webview sessions. Additive to Composio, not a replacement. Read `phase-3-browser-agent/F3-overview.md` for the full architecture + capability gap analysis + reference-repo notes.
+**🟡 NEXT WORK: start Phase 4 (Campaigns).** 18 sub-tickets drafted at `Automations/Tickets/phase-4-campaigns/` (`F4-overview.md` + `F4-1.md` through `F4-18.md`). Locked architecture decisions from the 2026-05-26 grill:
+1. Conversation handling = (B) Draft mode first.
+2. Architecture shape = β — Campaigns as first-class entity owning workflows.
+3. Entity store = Option 3 — pluggable `EntityStore` trait, Google Sheets + Attio adapters at MVP.
+4. Creation surface = Option Y — chat-primary, Canvas explicitly deferred.
+5. Workflow detail editor = (D) Hybrid — form for trivial fields, chat for non-trivial.
+6. Connection-add UX = (i) Modal launch.
+7. Chat-panel for updates = (y) Pinned workflow context in global chat.
 
-**Phase 4 (Canvas Editor) ticket set DRAFTED** under `Automations/Tickets/phase-4-canvas/` (10 tickets). **Gated on explicit user demand** — do not start unless a user asks for canvas editing in a way the existing chat + Linear-row list view can't satisfy. Per `prd.md §5.3`. The current chat-driven creation flow + the expanded inline workflow card UI may already cover the need.
+Start with F4-1 (Campaign types + lifecycle); see `phase-4-campaigns/README.md` for the full architecture rationale.
+
+**Phase 3 (Browser Agent) ticket set DRAFTED** under `Automations/Tickets/phase-3-browser-agent/` — `F3-overview.md` + 7 sub-tickets. Executes AFTER Phase 4 per the 2026-05-26 ordering. The thesis is a CEF-native CDP-driven browser agent (Stagehand-style `act`/`extract`/`observe`) that drives the user's already-authenticated webview sessions. Additive to Composio, not a replacement.
+
+**Canvas (originally Phase 4) SUPERSEDED** by Phase 4 Campaigns. Drafts preserved at `Automations/Tickets/phase-4-canvas/` for reference but the Phase 4 slot now belongs to Campaigns. Canvas remains demand-gated per `prd.md §5.3`; Phase 4's hybrid detail editor (F4-12..F4-16) may make Canvas permanently unnecessary.
 
 **Phase 5 (Structured Business Entities + Outcome Observability) PLACEHOLDER** at `Automations/Tickets/phase-5-business-entities/PLACEHOLDER.md` — not drafted. Forward-compat hook landing in F-17 via `entity_tags` so the structured layer can be built later from real data. Earliest start: after Phase 3 ships AND 3–6 months of `entity_tags` data has accumulated in the Memory Tree. Schemas emerge from observation, not theory. Surfaced by the 2026-05-22 grill when the user's vision pivoted from personal-productivity to "autonomous business-growth agent" — leads, deals, proposals, payments need structured queryability that Memory Tree's chunk model doesn't natively support.
 

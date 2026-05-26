@@ -1,13 +1,19 @@
-# Phase 4 — Visual Canvas (Deferred)
+# Canvas (deferred — superseded by Phase 4 Campaigns)
 
 Power-user surface for inspecting and tweaking workflows visually.
-**Not required for the core product story** — agent + chat already
-cover creation and editing.
 
-> **Status:** Drafted — deferred per `prd.md §5.3`. Revisit only if
-> users repeatedly ask for it after Phase 1 + Phase 2 land. This
-> ticket set exists so a Phase 4 kickoff doesn't start from a blank
-> slate.
+> **Status (updated 2026-05-26):** 🔵 **Superseded.** The Phase 4 slot
+> is now occupied by [`phase-4-campaigns/`](../phase-4-campaigns/) per
+> the 2026-05-26 grill. Canvas remains demand-gated per `prd.md §5.3`
+> but the demand never materialised — the user's actual ask was
+> Campaigns + a hybrid workflow detail editor, not a visual graph.
+> The detail view + per-node form editors in Phase 4 Campaigns (F4-12
+> through F4-16) may make Canvas permanently unnecessary.
+>
+> **Original status:** Drafted — deferred per `prd.md §5.3`. Revisit
+> only if users repeatedly ask for it after Phase 1 + Phase 2 land.
+> This ticket set exists so a Canvas kickoff doesn't start from a
+> blank slate if demand materialises post-Phase-4.
 
 ---
 
