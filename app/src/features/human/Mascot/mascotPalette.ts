@@ -68,6 +68,16 @@ const palettes: Record<MascotColor, MascotPalette> = {
   },
 };
 
-export function getMascotPalette(color: MascotColor): MascotPalette {
-  return palettes[color];
+export function getMascotPalette(color: MascotColor | undefined | null): MascotPalette {
+  // Defensive fallback: an older persisted state may store a mascot
+  // color value that's no longer in the supported set (e.g. a deprecated
+  // variant, a typo, or `undefined` from a partial migration). Returning
+  // `palettes[color]` would yield `undefined` and crash every caller
+  // with `Cannot read properties of undefined (reading 'bodyFill')`.
+  // YELLOW is the safe default — matches `DEFAULT_MASCOT_COLOR` in the
+  // mascot slice.
+  if (color && palettes[color as MascotColor]) {
+    return palettes[color as MascotColor];
+  }
+  return palettes.yellow;
 }
