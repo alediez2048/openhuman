@@ -637,7 +637,7 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 FieldSchema {
                     name: "api_key",
                     ty: TypeSchema::String,
-                    comment: "The Composio API key from https://app.composio.dev/api-keys.",
+                    comment: "The Composio API key — generated in the Composio dashboard at https://composio.dev (sign in, look for the API Keys section under Developer / Settings).",
                     required: true,
                 },
                 FieldSchema {
