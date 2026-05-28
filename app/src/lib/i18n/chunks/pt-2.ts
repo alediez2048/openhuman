@@ -208,7 +208,7 @@ const pt2: TranslationMap = {
   'autocomplete.disabledApps': 'Apps Desativados (um bundle/token de app por linha)',
   'autocomplete.saveSettings': 'Salvar Configurações',
   'autocomplete.saving': 'Salvando…',
-  'autocomplete.runtime': 'Runtime',
+  'autocomplete.runtime': 'Tempo de execução',
   'autocomplete.running': 'Rodando',
   'autocomplete.start': 'Iniciar',
   'autocomplete.stop': 'Parar',
@@ -251,6 +251,16 @@ const pt2: TranslationMap = {
     'Chave mestre. Desligado por padrão — Ollama fica inativo. Quando ligado, o sumarizador de árvore, inteligência de tela e autocompletar sempre usam o modelo local.',
   'localModel.advancedSettings': 'Configurações avançadas',
   'localModel.debugTitle': 'Depuração de Modelo Local',
+  'localModel.ollamaServer.helperText': 'Exemplo: http://192.168.1.5:11434',
+  'localModel.ollamaServer.label': 'URL do servidor Ollama',
+  'localModel.ollamaServer.modelCount': 'modelos',
+  'localModel.ollamaServer.placeholder': 'http://localhost:11434',
+  'localModel.ollamaServer.reachable': 'Acessível',
+  'localModel.ollamaServer.resetButton': 'Redefinir para padrão',
+  'localModel.ollamaServer.saveButton': 'Salvar',
+  'localModel.ollamaServer.testButton': 'Testar conexão',
+  'localModel.ollamaServer.unreachable': 'Inacessível',
+  'localModel.ollamaServer.validationError': 'Deve ser uma URL http:// ou https:// válida',
   'screenAwareness.debugTitle': 'Depuração de Reconhecimento de Tela',
   'memory.debugTitle': 'Depuração de Memória',
   'webhooks.debugTitle': 'Depuração de Webhooks',
@@ -265,7 +275,7 @@ const pt2: TranslationMap = {
   'chat.filter.work': 'Trabalho',
   'chat.filter.briefing': 'Resumo',
   'chat.filter.notification': 'Notificação',
-  'chat.filter.workers': 'Workers',
+  'chat.filter.workers': 'Trabalhadores',
   'chat.selectThread': 'Selecione uma conversa',
   'chat.threads': 'Conversas',
   'chat.noThreads': 'Nenhuma conversa ainda',
@@ -274,6 +284,7 @@ const pt2: TranslationMap = {
   'chat.deleteThread': 'Excluir conversa',
   'chat.deleteThreadConfirm': 'Tem certeza de que deseja excluir "{title}"?',
   'chat.untitledThread': 'Conversa sem título',
+  'chat.editThreadTitle': 'Edit thread title',
   'chat.hideSidebar': 'Ocultar barra lateral',
   'chat.showSidebar': 'Mostrar barra lateral',
   'chat.newThreadShortcut': 'Nova conversa (/new)',
@@ -313,7 +324,7 @@ const pt2: TranslationMap = {
   'memory.sourceFilter.telegram': 'Telegram',
   'memory.sourceFilter.aiInsight': 'Insight de IA',
   'memory.sourceFilter.system': 'Sistema',
-  'memory.sourceFilter.trading': 'Trading',
+  'memory.sourceFilter.trading': 'Negociação',
   'memory.sourceFilter.security': 'Segurança',
   'memory.ingestionActivity': 'Atividade de Ingestão',
   'memory.events': 'eventos',
@@ -365,7 +376,7 @@ const pt2: TranslationMap = {
   'navigator.sources': 'Fontes',
   'navigator.email': 'E-mail',
   'navigator.slack': 'Slack',
-  'navigator.chat': 'Chat',
+  'navigator.chat': 'Bate-papo',
   'navigator.documents': 'Documentos',
   'navigator.people': 'Pessoas',
   'navigator.topics': 'Tópicos',
@@ -374,7 +385,7 @@ const pt2: TranslationMap = {
   'dreams.comingSoon': 'Em breve',
   'assignment.memoryLlm': 'LLM de Memória',
   'assignment.memoryLlmAria': 'Seleção de LLM de memória',
-  'assignment.embedder': 'Embedder',
+  'assignment.embedder': 'Incorporador',
   'assignment.loaded': 'Carregado',
   'assignment.notDownloaded': 'Não baixado',
   'assignment.usedForExtractSummarise': 'Usado para extração e sumarização',
@@ -383,6 +394,48 @@ const pt2: TranslationMap = {
   'insights.relationships': 'Relacionamentos',
   'insights.skills': 'Habilidades',
   'insights.opinions': 'Opiniões',
+  // Developer options menu items (#2225) — English stubs; native translations welcome
+  'devOptions.menuAi': 'Configuração de IA',
+  'devOptions.menuAiDesc':
+    'Provedores de nuvem, modelos Ollama locais e roteamento por carga de trabalho',
+  'devOptions.menuScreenAware': 'Reconhecimento de tela',
+  'devOptions.menuScreenAwareDesc':
+    'Permissões de captura de tela, política de monitoramento e controles de sessão',
+  'devOptions.menuMessaging': 'Canais de mensagens',
+  'devOptions.menuMessagingDesc':
+    'Configurar modos de autenticação Telegram/Discord e roteamento de canal padrão',
+  'devOptions.menuTools': 'Ferramentas',
+  'devOptions.menuToolsDesc':
+    'Habilitar ou desabilitar recursos que OpenHuman pode usar em seu nome',
+  'devOptions.menuAgentChat': 'Bate-papo do agente',
+  'devOptions.menuAgentChatDesc':
+    'Testar conversação do agente com substituições de modelo e temperatura',
+  'devOptions.menuCronJobs': 'Cron Jobs',
+  'devOptions.menuCronJobsDesc':
+    'Visualizar e configurar trabalhos agendados para habilidades de tempo de execução',
+  'devOptions.menuLocalModelDebug': 'Depuração de modelo local',
+  'devOptions.menuLocalModelDebugDesc':
+    'Configuração de Ollama, downloads de ativos, testes de modelo e diagnósticos',
+  'devOptions.menuWebhooksDebug': 'Webhooks',
+  'devOptions.menuWebhooksDebugDesc':
+    'Inspecione registros de webhook em tempo de execução e logs de solicitação capturados',
+  'devOptions.menuIntelligence': 'Inteligência',
+  'devOptions.menuIntelligenceDesc':
+    'Espaço de trabalho de memória, mecanismo subconsciente, sonhos e configurações',
+  'devOptions.menuNotificationRouting': 'Roteamento de notificação',
+  'devOptions.menuNotificationRoutingDesc':
+    'AI pontuação de importância e escalonamento do orquestrador para alertas de integração',
+  'devOptions.menuComposeIOTriggers': 'Acionadores do ComposeIO',
+  'devOptions.menuComposeIOTriggersDesc':
+    'Visualizar histórico e arquivo do acionador do ComposeIO',
+  'devOptions.menuComposioRouting': 'Composio Roteamento (modo direto)',
+  'devOptions.menuComposioRoutingDesc':
+    'Traga sua própria chave Composio API e encaminhar chamadas diretamente para backend.composio.dev',
+  'devOptions.menuComposioTriggers': 'Gatilhos de integração',
+  'devOptions.menuComposioTriggersDesc':
+    'Definir configurações de triagem de IA para gatilhos de integração Composio',
+  'mic.deviceSelector': 'Dispositivo de microfone',
+  'mic.tapToSendCountdown': 'Toque para enviar ({seconds}s)',
 };
 
 export default pt2;

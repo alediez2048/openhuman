@@ -246,6 +246,16 @@ const hi2: TranslationMap = {
     'मास्टर स्विच। डिफ़ॉल्ट रूप से बंद — Ollama आइडल रहता है। चालू होने पर tree summarizer, screen intelligence और autocomplete हमेशा लोकल मॉडल इस्तेमाल करते हैं।',
   'localModel.advancedSettings': 'एडवांस्ड सेटिंग्स',
   'localModel.debugTitle': 'लोकल मॉडल डिबग',
+  'localModel.ollamaServer.helperText': 'उदाहरण: http://192.168.1.5:11434',
+  'localModel.ollamaServer.label': 'Ollama सर्वर URL',
+  'localModel.ollamaServer.modelCount': 'मॉडल',
+  'localModel.ollamaServer.placeholder': 'http://localhost:11434',
+  'localModel.ollamaServer.reachable': 'पहुंचने योग्य',
+  'localModel.ollamaServer.resetButton': 'डिफ़ॉल्ट पर रीसेट करें',
+  'localModel.ollamaServer.saveButton': 'सहेजें',
+  'localModel.ollamaServer.testButton': 'कनेक्शन जांचें',
+  'localModel.ollamaServer.unreachable': 'पहुंचने योग्य नहीं',
+  'localModel.ollamaServer.validationError': 'एक मान्य http:// या https:// URL होना चाहिए',
   'screenAwareness.debugTitle': 'स्क्रीन अवेयरनेस डिबग',
   'memory.debugTitle': 'मेमोरी डिबग',
   'webhooks.debugTitle': 'Webhooks डिबग',
@@ -269,6 +279,7 @@ const hi2: TranslationMap = {
   'chat.deleteThread': 'थ्रेड डिलीट करें',
   'chat.deleteThreadConfirm': 'क्या आप वाकई "{title}" डिलीट करना चाहते हैं?',
   'chat.untitledThread': 'बिना शीर्षक की थ्रेड',
+  'chat.editThreadTitle': 'Edit thread title',
   'chat.hideSidebar': 'साइडबार छुपाएं',
   'chat.showSidebar': 'साइडबार दिखाएं',
   'chat.newThreadShortcut': 'नई थ्रेड (/new)',
@@ -377,6 +388,42 @@ const hi2: TranslationMap = {
   'insights.relationships': 'रिश्ते',
   'insights.skills': 'स्किल्स',
   'insights.opinions': 'राय',
+  // Developer options menu items (#2225) — English stubs; native translations welcome
+  'devOptions.menuAi': 'एआई कॉन्फ़िगरेशन',
+  'devOptions.menuAiDesc': 'क्लाउड प्रदाता, स्थानीय Ollama मॉडल, और प्रति-वर्कलोड रूटिंग',
+  'devOptions.menuScreenAware': 'स्क्रीन जागरूकता',
+  'devOptions.menuScreenAwareDesc': 'स्क्रीन कैप्चर अनुमतियाँ, निगरानी नीति और सत्र नियंत्रण',
+  'devOptions.menuMessaging': 'मैसेजिंग चैनल',
+  'devOptions.menuMessagingDesc':
+    'Telegram/Discord प्रमाणीकरण मोड और डिफ़ॉल्ट चैनल रूटिंग कॉन्फ़िगर करें',
+  'devOptions.menuTools': 'उपकरण',
+  'devOptions.menuToolsDesc':
+    'क्षमताओं को सक्षम या अक्षम करें OpenHuman आपकी ओर से उपयोग कर सकते हैं',
+  'devOptions.menuAgentChat': 'एजेंट चैट',
+  'devOptions.menuAgentChatDesc': 'मॉडल और तापमान ओवरराइड के साथ परीक्षण एजेंट की बातचीत',
+  'devOptions.menuCronJobs': 'क्रॉन जॉब्स',
+  'devOptions.menuCronJobsDesc': 'रनटाइम कौशल के लिए निर्धारित कार्य देखें और कॉन्फ़िगर करें',
+  'devOptions.menuLocalModelDebug': 'स्थानीय मॉडल डीबग',
+  'devOptions.menuLocalModelDebugDesc':
+    'Ollama कॉन्फ़िगरेशन, एसेट डाउनलोड, मॉडल परीक्षण और डायग्नोस्टिक्स',
+  'devOptions.menuWebhooksDebug': 'वेबहुक',
+  'devOptions.menuWebhooksDebugDesc':
+    'रनटाइम वेबहुक पंजीकरण और कैप्चर किए गए अनुरोध लॉग का निरीक्षण करें',
+  'devOptions.menuIntelligence': 'बुद्धि',
+  'devOptions.menuIntelligenceDesc': 'मेमोरी कार्यक्षेत्र, अवचेतन इंजन, सपने और सेटिंग्स',
+  'devOptions.menuNotificationRouting': 'अधिसूचना रूटिंग',
+  'devOptions.menuNotificationRoutingDesc':
+    'एकीकरण अलर्ट के लिए एआई महत्व स्कोरिंग और ऑर्केस्ट्रेटर एस्केलेशन',
+  'devOptions.menuComposeIOTriggers': 'कंपोज़आईओ ट्रिगर्स',
+  'devOptions.menuComposeIOTriggersDesc': 'ComposeIO ट्रिगर इतिहास और संग्रह देखें',
+  'devOptions.menuComposioRouting': 'Composio रूटिंग (डायरेक्ट मोड)',
+  'devOptions.menuComposioRoutingDesc':
+    'अपनी स्वयं की Composio API कुंजी लाएँ और कॉल को सीधे Backend.composio.dev पर रूट करें',
+  'devOptions.menuComposioTriggers': 'एकीकरण ट्रिगर',
+  'devOptions.menuComposioTriggersDesc':
+    'Composio एकीकरण ट्रिगर के लिए AI ट्राइएज सेटिंग्स कॉन्फ़िगर करें',
+  'mic.deviceSelector': 'माइक्रोफोन डिवाइस',
+  'mic.tapToSendCountdown': 'भेजने के लिए टैप करें ({seconds}स)',
 };
 
 export default hi2;

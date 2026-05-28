@@ -246,6 +246,17 @@ const ru2: TranslationMap = {
     'Главный переключатель. По умолчанию выключен — Ollama простаивает. При включении суммаризатор деревьев, интеллект экрана и автодополнение всегда используют локальную модель.',
   'localModel.advancedSettings': 'Дополнительные настройки',
   'localModel.debugTitle': 'Отладка локальной модели',
+  'localModel.ollamaServer.helperText': 'Пример: http://192.168.1.5:11434',
+  'localModel.ollamaServer.label': 'URL сервера Ollama',
+  'localModel.ollamaServer.modelCount': 'моделей',
+  'localModel.ollamaServer.placeholder': 'http://localhost:11434',
+  'localModel.ollamaServer.reachable': 'Доступен',
+  'localModel.ollamaServer.resetButton': 'Сбросить до значения по умолчанию',
+  'localModel.ollamaServer.saveButton': 'Сохранить',
+  'localModel.ollamaServer.testButton': 'Проверить соединение',
+  'localModel.ollamaServer.unreachable': 'Недоступен',
+  'localModel.ollamaServer.validationError':
+    'Должен быть допустимым URL с протоколом http:// или https://',
   'screenAwareness.debugTitle': 'Отладка слежения за экраном',
   'memory.debugTitle': 'Отладка памяти',
   'webhooks.debugTitle': 'Отладка вебхуков',
@@ -269,6 +280,7 @@ const ru2: TranslationMap = {
   'chat.deleteThread': 'Удалить чат',
   'chat.deleteThreadConfirm': 'Удалить «{title}»?',
   'chat.untitledThread': 'Чат без названия',
+  'chat.editThreadTitle': 'Edit thread title',
   'chat.hideSidebar': 'Скрыть боковую панель',
   'chat.showSidebar': 'Показать боковую панель',
   'chat.newThreadShortcut': 'Новый чат (/new)',
@@ -303,7 +315,7 @@ const ru2: TranslationMap = {
   'memory.searchAria': 'Поиск в памяти',
   'memory.searchPlaceholder': 'Поиск записей памяти...',
   'memory.sourceFilter.all': 'Все источники',
-  'memory.sourceFilter.email': 'Email',
+  'memory.sourceFilter.email': 'Электронная почта',
   'memory.sourceFilter.calendar': 'Календарь',
   'memory.sourceFilter.telegram': 'Telegram',
   'memory.sourceFilter.aiInsight': 'AI-инсайт',
@@ -358,7 +370,7 @@ const ru2: TranslationMap = {
   'navigator.today': 'Сегодня',
   'navigator.thisWeek': 'На этой неделе',
   'navigator.sources': 'Источники',
-  'navigator.email': 'Email',
+  'navigator.email': 'Электронная почта',
   'navigator.slack': 'Slack',
   'navigator.chat': 'Чат',
   'navigator.documents': 'Документы',
@@ -378,6 +390,47 @@ const ru2: TranslationMap = {
   'insights.relationships': 'Отношения',
   'insights.skills': 'Навыки',
   'insights.opinions': 'Мнения',
+  // Developer options menu items (#2225) — English stubs; native translations welcome
+  'devOptions.menuAi': 'Конфигурация AI',
+  'devOptions.menuAiDesc':
+    'Облачные поставщики, локальные модели Ollama и маршрутизация для каждой рабочей нагрузки',
+  'devOptions.menuScreenAware': 'Функция Screen Aware',
+  'devOptions.menuScreenAwareDesc':
+    'Разрешения на захват экрана, мониторинг политика и элементы управления сеансом',
+  'devOptions.menuMessaging': 'Каналы обмена сообщениями',
+  'devOptions.menuMessagingDesc':
+    'Настройка режимов аутентификации Telegram/Discord и маршрутизации каналов по умолчанию',
+  'devOptions.menuTools': 'Инструменты',
+  'devOptions.menuToolsDesc':
+    'Включение или отключение возможностей, которые OpenHuman может использовать от вашего имени',
+  'devOptions.menuAgentChat': 'Чат агента',
+  'devOptions.menuAgentChatDesc':
+    'Диалог агента тестирования с переопределением модели и температуры',
+  'devOptions.menuCronJobs': 'Задания Cron',
+  'devOptions.menuCronJobsDesc':
+    'Просмотр и настройка запланированных заданий для навыков выполнения',
+  'devOptions.menuLocalModelDebug': 'Отладка локальной модели',
+  'devOptions.menuLocalModelDebugDesc':
+    'Конфигурация Ollama, загрузка ресурсов, тесты моделей и диагностика',
+  'devOptions.menuWebhooksDebug': 'Веб-перехватчики',
+  'devOptions.menuWebhooksDebugDesc':
+    'Проверка регистрации веб-перехватчиков во время выполнения и записанные журналы запросов',
+  'devOptions.menuIntelligence': 'Аналитика',
+  'devOptions.menuIntelligenceDesc':
+    'Рабочая область памяти, механизм подсознания, сны и настройки',
+  'devOptions.menuNotificationRouting': 'Маршрутизация уведомлений',
+  'devOptions.menuNotificationRoutingDesc':
+    'Оценка важности ИИ и эскалация оркестратора для предупреждений интеграции',
+  'devOptions.menuComposeIOTriggers': 'Триггеры ComposeIO',
+  'devOptions.menuComposeIOTriggersDesc': 'Просмотр истории и архива триггеров ComposeIO.',
+  'devOptions.menuComposioRouting': 'Composio Маршрутизация (прямой режим)',
+  'devOptions.menuComposioRoutingDesc':
+    'Используйте свой собственный ключ Composio API и направляйте вызовы непосредственно на backend.composio.dev',
+  'devOptions.menuComposioTriggers': 'Интеграция Триггеры',
+  'devOptions.menuComposioTriggersDesc':
+    'Настройка параметров сортировки AI для триггеров интеграции Composio',
+  'mic.deviceSelector': 'Микрофонное устройство',
+  'mic.tapToSendCountdown': 'Нажми для отправки ({seconds}с)',
 };
 
 export default ru2;

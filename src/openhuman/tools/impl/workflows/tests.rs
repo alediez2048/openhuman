@@ -292,14 +292,16 @@ fn registered_tools_contain_no_mutating_workflow_names() {
         ..MemoryConfig::default()
     };
     let memory: Arc<dyn Memory> =
-        Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, dir.path()).unwrap());
+        Arc::from(crate::openhuman::memory_store::create_memory(&mem_cfg, dir.path()).unwrap());
     let browser = BrowserConfig::default();
     let http = HttpRequestConfig::default();
     let agents = HashMap::new();
+    let audit = crate::openhuman::security::AuditLogger::disabled();
 
     let tools = crate::openhuman::tools::all_tools(
         config.clone(),
         &security,
+        audit,
         memory,
         &browser,
         &http,
@@ -608,14 +610,16 @@ async fn propose_tools_appear_alongside_read_only_in_registered_set() {
         ..MemoryConfig::default()
     };
     let memory: Arc<dyn Memory> =
-        Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, dir.path()).unwrap());
+        Arc::from(crate::openhuman::memory_store::create_memory(&mem_cfg, dir.path()).unwrap());
     let browser = BrowserConfig::default();
     let http = HttpRequestConfig::default();
     let agents = HashMap::new();
+    let audit = crate::openhuman::security::AuditLogger::disabled();
 
     let tools = crate::openhuman::tools::all_tools(
         config.clone(),
         &security,
+        audit,
         memory,
         &browser,
         &http,

@@ -46,6 +46,15 @@ const id4: TranslationMap = {
   'composio.connect.subdomainInvalid':
     'Masukkan hanya subdomain pendek (mis. "acme"), bukan URL lengkap. Hanya boleh berisi huruf, angka, dan tanda hubung.',
   'composio.connect.subdomainRequired': 'Masukkan subdomain Atlassian Anda untuk melanjutkan.',
+  'composio.connect.dynamicsOrgNameLabel': 'Nama Organisasi Dynamics 365',
+  'composio.connect.dynamicsOrgNameHint':
+    'Misalnya, "myorg" untuk myorg.crm.dynamics.com. Masukkan nama organisasi pendek saja, bukan URL lengkap.',
+  'composio.connect.needsFieldsPrefix': 'Untuk menghubungkan',
+  'composio.connect.needsFieldsSuffix':
+    'kami memerlukan informasi tambahan. Isi bidang yang hilang di bawah dan coba lagi.',
+  'composio.connect.requiredFieldEmpty': 'Bidang ini wajib diisi.',
+  'composio.connect.wabaIdHint':
+    'Temukan melalui GET /me/businesses lalu GET /{business_id}/owned_whatsapp_business_accounts menggunakan token akses Meta Anda.',
   'composio.connect.wabaIdLabel': 'Label ID WABA',
   'composio.connect.wabaIdRequired':
     'Masukkan ID Akun Bisnis WhatsApp (WABA ID) Anda untuk melanjutkan.',
@@ -80,13 +89,13 @@ const id4: TranslationMap = {
   'home.banners.promoCreditsBody': 'Isi kredit promo',
   'home.banners.promoCreditsTitle': '{amount}',
   'home.banners.promoCreditsUsage': 'Penggunaan kredit promo',
-  'intelligence.memoryChunk.detail.chunk': 'Chunk',
+  'intelligence.memoryChunk.detail.chunk': 'Potongan',
   'intelligence.memoryChunk.detail.copyChunkId': 'Salin ID chunk',
   'intelligence.memoryChunk.detail.embeddingInfo': 'bge-m3 1024dim',
   'intelligence.memoryChunk.detail.noEmbedding': 'Tidak ada embedding',
   'intelligence.memoryChunk.letterhead.from': 'dari',
   'intelligence.memoryChunk.letterhead.to': 'ke',
-  'intelligence.memoryChunk.mentioned.chunkOne': '1 chunk',
+  'intelligence.memoryChunk.mentioned.chunkOne': '1 potongan',
   'intelligence.memoryChunk.mentioned.chunkOther': '{count} chunk',
   'intelligence.memoryChunk.mentioned.heading': 'd i s e b u t k a n',
   'intelligence.memoryChunk.scoreBars.ariaScore': '{name} skor {pct} persen',
@@ -104,7 +113,7 @@ const id4: TranslationMap = {
   'intelligence.screenDebug.captureTest': 'Tes tangkapan',
   'intelligence.screenDebug.capturing': 'Menangkap',
   'intelligence.screenDebug.frames': 'Frame',
-  'intelligence.screenDebug.idle': 'Idle',
+  'intelligence.screenDebug.idle': 'Siaga',
   'intelligence.screenDebug.lastApp': 'Aplikasi Terakhir',
   'intelligence.screenDebug.mode': 'Mode',
   'intelligence.screenDebug.permAccessibility': 'Izin aksesibilitas',
@@ -129,7 +138,7 @@ const id4: TranslationMap = {
   'intelligence.tasks.failedToLoad': 'Gagal memuat',
   'intelligence.tasks.live': 'langsung',
   'intelligence.tasks.loadingBoards': 'Memuat papan tugas...',
-  'intelligence.tasks.threadPrefix': 'Thread {thread}',
+  'intelligence.tasks.threadPrefix': 'Utas {thread}',
   'notifications.card.dismiss': 'Abaikan notifikasi',
   'notifications.card.importanceTitle': 'Tingkat penting: {pct}%',
   'notifications.center.empty': 'Belum ada notifikasi',
@@ -137,6 +146,8 @@ const id4: TranslationMap = {
   'notifications.center.filterAll': 'Filter semua',
   'notifications.center.markAllRead': 'Tandai semua sudah dibaca',
   'notifications.center.title': 'Notifikasi',
+  'oauth.button.loopbackTimeout':
+    'Masuk habis waktu — browser tidak menyelesaikan pengalihan OAuth. Silakan coba lagi.',
   'oauth.button.connecting': 'Menghubungkan...',
   'oauth.login.continueWith': 'Lanjutkan dengan',
   'onboarding.contextGathering.buildingDesc': 'Deskripsi pembangunan',
@@ -144,11 +155,25 @@ const id4: TranslationMap = {
   'onboarding.contextGathering.continueToChat': 'Lanjutkan ke chat',
   'onboarding.contextGathering.errorDesc':
     'Kami tidak bisa membangun profil lengkap Anda sekarang, tapi tidak apa-apa — Anda bisa lanjut dan profil Anda akan terbentuk seiring waktu.',
+  'onboarding.contextGathering.coreAlive':
+    'Core dapat diakses — peluncuran pertama bisa memakan waktu satu menit.',
+  'onboarding.contextGathering.coreAliveProbing': 'Memeriksa koneksi core…',
+  'onboarding.contextGathering.coreUnreachable':
+    'Core tidak merespons. Anda bisa melanjutkan dan coba lagi nanti.',
+  'onboarding.contextGathering.stillWorkingDesc':
+    'Peluncuran pertama bisa memakan waktu 30–60 detik sementara kami menyiapkan model dan alat lokal Anda. Anda bisa melanjutkan ke chat kapan saja — pembuatan profil tetap berjalan di latar belakang.',
+  'onboarding.contextGathering.stillWorkingTitle': 'Masih membangun profil Anda…',
   'onboarding.contextGathering.title': 'Pengumpulan Konteks',
   'openhuman.team_list_teams': 'Daftar tim',
   'overlay.ariaAttention': 'Pesan perhatian',
+  'overlay.ariaCompanion': 'Pendamping aktif',
   'overlay.ariaOrb': 'Overlay OpenHuman',
   'overlay.ariaVoiceActive': 'Input suara aktif',
+  'overlay.companion.error': 'Kesalahan',
+  'overlay.companion.listening': 'Mendengarkan…',
+  'overlay.companion.pointing': 'Menunjuk…',
+  'overlay.companion.speaking': 'Berbicara…',
+  'overlay.companion.thinking': 'Berpikir…',
   'overlay.orbTitle': 'Seret untuk memindahkan · Klik dua kali untuk mereset posisi',
   'pages.settings.account.connections': 'Koneksi',
   'pages.settings.account.connectionsDesc': 'Deskripsi koneksi',
@@ -165,9 +190,14 @@ const id4: TranslationMap = {
   'pages.settings.ai.llmDesc': 'Deskripsi LLM',
   'pages.settings.ai.voice': 'Suara',
   'pages.settings.ai.voiceDesc': 'Deskripsi suara',
+  'pages.settings.ai.embeddings': 'Penyematan',
+  'pages.settings.ai.embeddingsDesc': 'Model encoding vektor untuk pengambilan memori',
   'pages.settings.aiSection.description':
     'Penyedia model bahasa, Ollama lokal, dan suara (STT / TTS).',
   'pages.settings.aiSection.title': 'AI',
+  'pages.settings.features.desktopCompanion': 'Pendamping Desktop',
+  'pages.settings.features.desktopCompanionDesc':
+    'Asisten suara dengan kesadaran layar — mendengar, melihat, berbicara, menunjuk',
   'pages.settings.features.messagingChannels': 'Kanal pesan',
   'pages.settings.features.messagingChannelsDesc': 'Deskripsi kanal pesan',
   'pages.settings.features.notifications': 'Notifikasi',
@@ -273,10 +303,22 @@ const id4: TranslationMap = {
   'settings.ai.localOllama': 'Lokal (Ollama)',
   'settings.ai.modelLabel': 'Model',
   'settings.ai.noCustomProviders': 'Tidak ada penyedia kustom',
+  'settings.ai.openAiCompat.authHeaderExample': 'Otorisasi: Pembawa <kunci Anda>',
+  'settings.ai.openAiCompat.authHeaderLabel': 'Header autentikasi',
+  'settings.ai.openAiCompat.baseUrlLabel': 'Basis URL',
+  'settings.ai.openAiCompat.baseUrlUnavailable': 'Tidak tersedia',
+  'settings.ai.openAiCompat.clearKey': 'Hapus kunci',
+  'settings.ai.openAiCompat.description':
+    "Point local harnesses at this /v1 server to route through the providers configured below. Authentication uses a stable key you set here, not the app's internal core bearer.",
+  'settings.ai.openAiCompat.keyConfigured': 'Kunci dikonfigurasi',
+  'settings.ai.openAiCompat.keyRequired': 'Kunci diperlukan',
+  'settings.ai.openAiCompat.rotateKey': 'Tombol putar',
+  'settings.ai.openAiCompat.setKey': 'Setel kunci',
+  'settings.ai.openAiCompat.title': 'Titik akhir yang kompatibel dengan OpenAI',
   'settings.ai.providerLabel': 'Penyedia',
-  'settings.ai.routing': 'Routing',
+  'settings.ai.routing': 'Perutean',
   'settings.ai.routingCustom': 'Routing kustom',
-  'settings.ai.routingDefault': 'Default',
+  'settings.ai.routingDefault': 'Bawaan',
   'settings.ai.routingDesc': 'Deskripsi routing',
   'settings.ai.saveChanges': 'Menyimpan...',
   'settings.ai.saving': 'Menyimpan...',
@@ -292,7 +334,7 @@ const id4: TranslationMap = {
   'settings.autocomplete.appFilter.noLogs': ') :',
   'settings.autocomplete.appFilter.refreshStatus': 'Menyegarkan...',
   'settings.autocomplete.appFilter.refreshing': 'Menyegarkan...',
-  'settings.autocomplete.appFilter.runtime': 'Runtime',
+  'settings.autocomplete.appFilter.runtime': 'Waktu proses',
   'settings.autocomplete.appFilter.test': 'Tes',
   'settings.autocomplete.completionStyle.acceptedCompletion':
     '{count} pelengkapan diterima tersimpan — digunakan untuk mempersonalisasi saran berikutnya.',
@@ -300,7 +342,7 @@ const id4: TranslationMap = {
     '{count} pelengkapan diterima tersimpan — digunakan untuk mempersonalisasi saran berikutnya.',
   'settings.autocomplete.completionStyle.clearHistory': 'Membersihkan...',
   'settings.autocomplete.completionStyle.clearing': 'Membersihkan...',
-  'settings.autocomplete.completionStyle.debounce': 'Debounce (ms)',
+  'settings.autocomplete.completionStyle.debounce': 'Tunda input (ms)',
   'settings.autocomplete.completionStyle.enabled': 'Diaktifkan',
   'settings.autocomplete.completionStyle.maxChars': 'Maks Karakter',
   'settings.autocomplete.completionStyle.noHistory':
@@ -364,6 +406,20 @@ const id4: TranslationMap = {
   'settings.billing.subscription.paymentConfirmed': 'Pembayaran dikonfirmasi',
   'settings.billing.subscription.perMonth': 'Per bulan',
   'settings.billing.subscription.popular': 'Populer',
+  'pages.settings.account.migration': 'Impor dari asisten lain',
+  'pages.settings.account.migrationDesc':
+    'Migrasikan memori dan catatan dari OpenClaw (dan, segera, Hermes) ke ruang kerja ini.',
+  'composio.connect.scope.read': 'Baca',
+  'composio.connect.scope.readHint': 'Izinkan agen membaca data dari koneksi ini.',
+  'composio.connect.scope.write': 'Tulis',
+  'composio.connect.scope.writeHint':
+    'Izinkan agen membuat atau mengubah data melalui koneksi ini.',
+  'composio.connect.scope.admin': 'Admin',
+  'composio.connect.scope.adminHint':
+    'Mengizinkan agen mengelola pengaturan, izin, atau tindakan destruktif.',
+  'pages.settings.composioSection.title': 'Composio',
+  'pages.settings.composioSection.description':
+    'Perutean, pemicu, dan riwayat untuk integrasi yang didukung oleh Composio.',
 };
 
 export default id4;

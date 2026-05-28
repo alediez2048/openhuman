@@ -16,6 +16,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { agentProfilesApi } from '../../services/api/agentProfilesApi';
 import { threadApi } from '../../services/api/threadApi';
 import { chatSend } from '../../services/chatService';
+import { CoreRpcError } from '../../services/coreRpcClient';
 import agentProfileReducer from '../../store/agentProfileSlice';
 import chatRuntimeReducer from '../../store/chatRuntimeSlice';
 import socketReducer from '../../store/socketSlice';
@@ -74,6 +75,7 @@ vi.mock('../../services/api/threadApi', () => ({
     updateMessage: vi.fn().mockResolvedValue({}),
     purge: vi.fn().mockResolvedValue({}),
     updateLabels: vi.fn().mockResolvedValue({}),
+    updateTitle: vi.fn().mockResolvedValue({}),
     persistReaction: vi.fn().mockResolvedValue({}),
   },
 }));
@@ -196,6 +198,15 @@ async function renderConversations(preload: Record<string, unknown> = {}) {
   return store;
 }
 
+/** Click the sidebar toggle so the thread list becomes visible.
+ *  The sidebar starts hidden (showSidebar=false) in this PR. */
+async function openSidebar() {
+  const toggleBtn = screen.getByTitle('Show sidebar');
+  await act(async () => {
+    fireEvent.click(toggleBtn);
+  });
+}
+
 // Default empty state
 const emptyThreadState = {
   threads: [],
@@ -300,6 +311,9 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
       await renderConversations({ thread: emptyThreadState });
     });
 
+    // Sidebar is hidden by default — open it first.
+    await openSidebar();
+
     // The "Threads" header is always rendered in page mode (sidebar guard removed)
     expect(screen.getByText('Threads')).toBeInTheDocument();
   });
@@ -309,6 +323,9 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     await act(async () => {
       await renderConversations({ thread: emptyThreadState });
     });
+
+    // Sidebar is hidden by default — open it first.
+    await openSidebar();
 
     expect(screen.getByText('No threads yet')).toBeInTheDocument();
   });
@@ -326,6 +343,9 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     await act(async () => {
       await renderConversations({ thread: emptyThreadState });
     });
+
+    // Sidebar is hidden by default — open it first.
+    await openSidebar();
 
     // Wait for loadThreads to complete and the thread list to render.
     // Use getAllByText because the title may appear in both the sidebar list
@@ -435,6 +455,9 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
       await renderConversations({ thread: emptyThreadState });
     });
 
+    // Sidebar is hidden by default — open it first.
+    await openSidebar();
+
     // The sidebar "New thread" button has title="New thread"
     const newThreadBtn = screen.getByTitle('New thread');
     await act(async () => {
@@ -476,6 +499,9 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     await act(async () => {
       await renderConversations({ thread: emptyThreadState });
     });
+
+    // Sidebar is hidden by default — open it first.
+    await openSidebar();
 
     // Wait for the thread to appear in the sidebar
     await waitFor(() => {
@@ -643,6 +669,166 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
       model: 'reasoning-v1',
       profileId: 'default',
       locale: 'en',
+    });
+  });
+
+  it('blocks duplicate sends while the first send is still pending', async () => {
+    let resolveSend: (() => void) | undefined;
+    vi.mocked(chatSend).mockImplementationOnce(
+      () =>
+        new Promise<void>(resolve => {
+          resolveSend = resolve;
+        })
+    );
+    const { textarea, thread } = await renderSelectedConversation();
+
+    await act(async () => {
+      fireEvent.change(textarea, { target: { value: 'slow backend' } });
+    });
+    await waitFor(() => {
+      expect(textarea).toHaveValue('slow backend');
+      expect(screen.getByRole('button', { name: 'Send message' })).not.toBeDisabled();
+    });
+
+    const sendButton = screen.getByRole('button', { name: 'Send message' });
+    await act(async () => {
+      fireEvent.click(sendButton);
+      fireEvent.click(sendButton);
+      fireEvent.click(sendButton);
+    });
+
+    await waitFor(() => {
+      expect(chatSend).toHaveBeenCalledTimes(1);
+    });
+    expect(threadApi.appendMessage).toHaveBeenCalledTimes(1);
+    expect(chatSend).toHaveBeenCalledWith({
+      threadId: thread.id,
+      message: 'slow backend',
+      model: 'reasoning-v1',
+      profileId: 'default',
+      locale: 'en',
+    });
+    expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
+    resolveSend?.();
+  });
+
+  it('releases the pending-send lock when appendMessage rejects with a generic error', async () => {
+    vi.mocked(threadApi.appendMessage).mockRejectedValueOnce(new Error('disk full'));
+    const { textarea } = await renderSelectedConversation();
+
+    await act(async () => {
+      fireEvent.change(textarea, { target: { value: 'will fail locally' } });
+    });
+    const sendButton = screen.getByRole('button', { name: 'Send message' });
+    await act(async () => {
+      fireEvent.click(sendButton);
+    });
+
+    // chatSend never runs because the local append failed first.
+    await waitFor(() => {
+      expect(threadApi.appendMessage).toHaveBeenCalledTimes(1);
+    });
+    expect(chatSend).not.toHaveBeenCalled();
+
+    // Pending guard released: the user can re-enter text and the send button
+    // enables again.
+    await act(async () => {
+      fireEvent.change(textarea, { target: { value: 'retry' } });
+    });
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Send message' })).not.toBeDisabled();
+    });
+  });
+
+  it('releases the pending-send lock when appendMessage hits a stale-thread error', async () => {
+    vi.mocked(threadApi.appendMessage).mockRejectedValueOnce(
+      new CoreRpcError('thread missing', 'thread_not_found')
+    );
+    const { textarea } = await renderSelectedConversation();
+
+    await act(async () => {
+      fireEvent.change(textarea, { target: { value: 'stale thread send' } });
+    });
+    const sendButton = screen.getByRole('button', { name: 'Send message' });
+    await act(async () => {
+      fireEvent.click(sendButton);
+    });
+
+    await waitFor(() => {
+      expect(threadApi.appendMessage).toHaveBeenCalledTimes(1);
+    });
+    expect(chatSend).not.toHaveBeenCalled();
+
+    // Stale-thread branch silently clears the guard; typing must re-enable Send.
+    await act(async () => {
+      fireEvent.change(textarea, { target: { value: 'retry' } });
+    });
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Send message' })).not.toBeDisabled();
+    });
+  });
+
+  it('clears the pending guard when the 120s silence timer fires', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { textarea } = await renderSelectedConversation();
+
+      await act(async () => {
+        fireEvent.change(textarea, { target: { value: 'hang the backend' } });
+      });
+      const sendButton = screen.getByRole('button', { name: 'Send message' });
+      await act(async () => {
+        fireEvent.click(sendButton);
+      });
+      await waitFor(() => {
+        expect(chatSend).toHaveBeenCalledTimes(1);
+      });
+
+      // Fast-forward past the 120s silence window with no inference signals.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(120_000);
+      });
+
+      // After the safety timeout, typing should re-enable Send — proves the
+      // pending guard was reset inside the timeout callback.
+      await act(async () => {
+        fireEvent.change(textarea, { target: { value: 'retry after timeout' } });
+      });
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: 'Send message' })).not.toBeDisabled();
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('releases the pending-send lock when chatSend rejects', async () => {
+    vi.mocked(chatSend).mockRejectedValueOnce(new Error('emit failed'));
+    const { textarea } = await renderSelectedConversation();
+
+    await act(async () => {
+      fireEvent.change(textarea, { target: { value: 'doomed send' } });
+    });
+    await waitFor(() => {
+      expect(textarea).toHaveValue('doomed send');
+    });
+
+    const sendButton = screen.getByRole('button', { name: 'Send message' });
+    await act(async () => {
+      fireEvent.click(sendButton);
+    });
+
+    await waitFor(() => {
+      expect(chatSend).toHaveBeenCalledTimes(1);
+    });
+
+    // After the failed send, typing again should leave the composer enabled so
+    // the user can retry — proves the pending guard was released.
+    await act(async () => {
+      fireEvent.change(textarea, { target: { value: 'retry send' } });
+    });
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Send message' })).not.toBeDisabled();
     });
   });
 
@@ -865,6 +1051,9 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
       await renderConversations({ thread: emptyThreadState });
     });
 
+    // Sidebar is hidden by default — open it first.
+    await openSidebar();
+
     // All four tabs must be present regardless of thread count.
     expect(screen.getByRole('tab', { name: 'All' })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: 'Work' })).toBeInTheDocument();
@@ -877,6 +1066,9 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
       await renderConversations({ thread: emptyThreadState });
     });
 
+    // Sidebar is hidden by default — open it first.
+    await openSidebar();
+
     expect(screen.getByRole('tab', { name: 'All' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByRole('tab', { name: 'Work' })).toHaveAttribute('aria-selected', 'false');
   });
@@ -886,6 +1078,9 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
       await renderConversations({ thread: emptyThreadState });
     });
 
+    // Sidebar is hidden by default — open it first.
+    await openSidebar();
+
     expect(screen.getByText('No threads yet')).toBeInTheDocument();
   });
 
@@ -893,6 +1088,9 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     await act(async () => {
       await renderConversations({ thread: emptyThreadState });
     });
+
+    // Sidebar is hidden by default — open it first.
+    await openSidebar();
 
     fireEvent.click(screen.getByRole('tab', { name: 'Work' }));
 
@@ -909,6 +1107,9 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     await act(async () => {
       await renderConversations({ thread: emptyThreadState });
     });
+
+    // Sidebar is hidden by default — open it first.
+    await openSidebar();
 
     fireEvent.click(screen.getByRole('tab', { name: 'Workers' }));
 
@@ -1108,5 +1309,138 @@ describe('Conversations — worker thread back-to-parent navigation (#1624)', ()
 
     // Loading span with animate-pulse is present when teamUsage=null and loading
     expect(screen.getByText('Loading…')).toBeInTheDocument();
+  });
+});
+
+describe('Conversations — thread title editing', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockUseUsageState.mockReturnValue({
+      teamUsage: null,
+      currentPlan: null,
+      currentTier: 'FREE' as const,
+      isFreeTier: true,
+      usagePct: 0,
+      isNearLimit: false,
+      isAtLimit: false,
+      isBudgetExhausted: false,
+      shouldShowBudgetCompletedMessage: false,
+      isLoading: false,
+      refresh: vi.fn(),
+    });
+    mockGetThreadMessages.mockResolvedValue({ messages: [], count: 0 });
+  });
+
+  it('shows pencil icon on hover and enters edit mode on click', async () => {
+    const thread = makeThread({ id: 'edit-title-thread', title: 'Original Title' });
+    mockGetThreads.mockResolvedValue({ threads: [thread], count: 1 });
+
+    await act(async () => {
+      await renderConversations({
+        thread: selectedThreadState(thread),
+        socket: socketState('connected'),
+      });
+    });
+
+    expect(screen.getByText('Original Title')).toBeInTheDocument();
+
+    const editBtn = screen.getByRole('button', { name: 'Edit thread title' });
+    expect(editBtn).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(editBtn);
+    });
+
+    const input = screen.getByLabelText('Edit thread title');
+    expect(input).toBeInTheDocument();
+    expect(input).toHaveValue('Original Title');
+  });
+
+  it('commits edited title on Enter and dispatches updateThreadTitle', async () => {
+    const thread = makeThread({ id: 'commit-title-thread', title: 'Old Title' });
+    mockGetThreads.mockResolvedValue({ threads: [thread], count: 1 });
+    (threadApi.updateTitle as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...thread,
+      title: 'New Title',
+    });
+
+    await act(async () => {
+      await renderConversations({
+        thread: selectedThreadState(thread),
+        socket: socketState('connected'),
+      });
+    });
+
+    const editBtn = screen.getByRole('button', { name: 'Edit thread title' });
+    await act(async () => {
+      fireEvent.click(editBtn);
+    });
+
+    const input = screen.getByLabelText('Edit thread title');
+    await act(async () => {
+      fireEvent.change(input, { target: { value: 'New Title' } });
+    });
+    await act(async () => {
+      fireEvent.keyDown(input, { key: 'Enter' });
+    });
+
+    await waitFor(() => {
+      expect(threadApi.updateTitle).toHaveBeenCalledWith('commit-title-thread', 'New Title');
+    });
+  });
+
+  it('cancels editing on Escape without dispatching', async () => {
+    const thread = makeThread({ id: 'cancel-title-thread', title: 'Keep Me' });
+    mockGetThreads.mockResolvedValue({ threads: [thread], count: 1 });
+
+    await act(async () => {
+      await renderConversations({
+        thread: selectedThreadState(thread),
+        socket: socketState('connected'),
+      });
+    });
+
+    const editBtn = screen.getByRole('button', { name: 'Edit thread title' });
+    await act(async () => {
+      fireEvent.click(editBtn);
+    });
+
+    const input = screen.getByLabelText('Edit thread title');
+    await act(async () => {
+      fireEvent.change(input, { target: { value: 'Changed' } });
+    });
+    await act(async () => {
+      fireEvent.keyDown(input, { key: 'Escape' });
+    });
+
+    expect(screen.getByText('Keep Me')).toBeInTheDocument();
+    expect(threadApi.updateTitle).not.toHaveBeenCalled();
+  });
+
+  it('does not dispatch when title is empty after trim', async () => {
+    const thread = makeThread({ id: 'empty-title-thread', title: 'Has Title' });
+    mockGetThreads.mockResolvedValue({ threads: [thread], count: 1 });
+
+    await act(async () => {
+      await renderConversations({
+        thread: selectedThreadState(thread),
+        socket: socketState('connected'),
+      });
+    });
+
+    const editBtn = screen.getByRole('button', { name: 'Edit thread title' });
+    await act(async () => {
+      fireEvent.click(editBtn);
+    });
+
+    const input = screen.getByLabelText('Edit thread title');
+    await act(async () => {
+      fireEvent.change(input, { target: { value: '   ' } });
+    });
+    await act(async () => {
+      fireEvent.keyDown(input, { key: 'Enter' });
+    });
+
+    expect(threadApi.updateTitle).not.toHaveBeenCalled();
   });
 });

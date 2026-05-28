@@ -248,6 +248,16 @@ const bn2: TranslationMap = {
     'মাস্টার সুইচ। ডিফল্টে বন্ধ — Ollama নিষ্ক্রিয় থাকে। চালু হলে, ট্রি সামারাইজার, স্ক্রিন ইন্টেলিজেন্স এবং অটোকমপ্লিট সর্বদা লোকাল মডেল ব্যবহার করে।',
   'localModel.advancedSettings': 'অ্যাডভান্সড সেটিংস',
   'localModel.debugTitle': 'লোকাল মডেল ডিবাগ',
+  'localModel.ollamaServer.helperText': 'উদাহরণ: http://192.168.1.5:11434',
+  'localModel.ollamaServer.label': 'Ollama সার্ভার URL',
+  'localModel.ollamaServer.modelCount': 'মডেল',
+  'localModel.ollamaServer.placeholder': 'http://localhost:11434',
+  'localModel.ollamaServer.reachable': 'পৌঁছানো যাচ্ছে',
+  'localModel.ollamaServer.resetButton': 'ডিফল্টে পুনরায় সেট করুন',
+  'localModel.ollamaServer.saveButton': 'সংরক্ষণ করুন',
+  'localModel.ollamaServer.testButton': 'সংযোগ পরীক্ষা করুন',
+  'localModel.ollamaServer.unreachable': 'পৌঁছানো যাচ্ছে না',
+  'localModel.ollamaServer.validationError': 'একটি বৈধ http:// বা https:// URL হতে হবে',
   'screenAwareness.debugTitle': 'স্ক্রিন সচেতনতা ডিবাগ',
   'memory.debugTitle': 'মেমোরি ডিবাগ',
   'webhooks.debugTitle': 'Webhooks ডিবাগ',
@@ -271,6 +281,7 @@ const bn2: TranslationMap = {
   'chat.deleteThread': 'থ্রেড মুছুন',
   'chat.deleteThreadConfirm': 'আপনি কি "{title}" মুছতে চান?',
   'chat.untitledThread': 'শিরোনামহীন থ্রেড',
+  'chat.editThreadTitle': 'Edit thread title',
   'chat.hideSidebar': 'সাইডবার লুকান',
   'chat.showSidebar': 'সাইডবার দেখান',
   'chat.newThreadShortcut': 'নতুন থ্রেড (/new)',
@@ -380,6 +391,41 @@ const bn2: TranslationMap = {
   'insights.relationships': 'সম্পর্ক',
   'insights.skills': 'দক্ষতা',
   'insights.opinions': 'মতামত',
+  // Developer options menu items (#2225) — English stubs; native translations welcome
+  'devOptions.menuAi': 'AI কনফিগারেশন',
+  'devOptions.menuAiDesc': 'ক্লাউড প্রদানকারী, স্থানীয় Ollama মডেল, এবং প্রতি-ওয়ার্কলোড রাউটিং',
+  'devOptions.menuScreenAware': 'স্ক্রীন সচেতনতা',
+  'devOptions.menuScreenAwareDesc': 'স্ক্রীন ক্যাপচার অনুমতি এবং সেশন নিয়ন্ত্রণ, নিরীক্ষণ নীতি',
+  'devOptions.menuMessaging': 'মেসেজিং চ্যানেলগুলি',
+  'devOptions.menuMessagingDesc':
+    'কনফিগার করুন Telegram/Discord প্রমাণীকরণ মোড এবং ডিফল্ট চ্যানেল রাউটিং',
+  'devOptions.menuTools': 'টুলগুলি',
+  'devOptions.menuToolsDesc':
+    'টুলগুলি [[I18N_SEP_92731] BR__7 সক্ষম করতে সক্ষম]__3 সক্ষম করতে পারে। আপনার পক্ষে ব্যবহার করুন',
+  'devOptions.menuAgentChat': 'এজেন্ট চ্যাট',
+  'devOptions.menuAgentChatDesc': 'মডেল এবং তাপমাত্রা ওভাররাইডের সাথে পরীক্ষা এজেন্ট কথোপকথন',
+  'devOptions.menuCronJobs': 'ক্রোন জবস',
+  'devOptions.menuCronJobsDesc': 'কাজের সময়সূচী চালনার সময়সূচী কনফিগার করুন',
+  'devOptions.menuLocalModelDebug': 'স্থানীয় মডেল ডিবাগ',
+  'devOptions.menuLocalModelDebugDesc':
+    'Ollama কনফিগারেশন, সম্পদ ডাউনলোড, মডেল পরীক্ষা, এবং ডায়াগনস্টিকস',
+  'devOptions.menuWebhooksDebug': 'ওয়েবহুক',
+  'devOptions.menuWebhooksDebugDesc':
+    'রানটাইম ওয়েবহুক নিবন্ধন এবং ক্যাপচার করা অনুরোধ লগগুলি পরিদর্শন করুন',
+  'devOptions.menuIntelligence': 'বুদ্ধিমত্তা',
+  'devOptions.menuIntelligenceDesc': 'মেমরি ওয়ার্কস্পেস, অবচেতন ইঞ্জিন, স্বপ্ন এবং সেটিংস',
+  'devOptions.menuNotificationRouting': 'বিজ্ঞপ্তি রাউটিং',
+  'devOptions.menuNotificationRoutingDesc': 'এআই গুরুত্ব স্কোরিং এবং অর্কেস্ট্রেটর বৃদ্ধির জন্য',
+  'devOptions.menuComposeIOTriggers': 'ComposeIO ট্রিগারগুলি',
+  'devOptions.menuComposeIOTriggersDesc': 'ComposeIO ট্রিগার ইতিহাস দেখুন এবং সংরক্ষণাগার',
+  'devOptions.menuComposioRouting': 'Composio রাউটিং (ডাইরেক্ট মোড)',
+  'devOptions.menuComposioRoutingDesc':
+    'আপনার নিজের Composio এবং Composio Composio __বিরুট সরাসরি কল করুন।',
+  'devOptions.menuComposioTriggers': 'ইন্টিগ্রেশন ট্রিগার',
+  'devOptions.menuComposioTriggersDesc':
+    'Composio ইন্টিগ্রেশন ট্রিগারের জন্য AI ট্রাইজ সেটিংস কনফিগার করুন',
+  'mic.deviceSelector': 'মাইক্রোফোন ডিভাইস',
+  'mic.tapToSendCountdown': 'পাঠাতে ট্যাপ করুন ({seconds}স)',
 };
 
 export default bn2;

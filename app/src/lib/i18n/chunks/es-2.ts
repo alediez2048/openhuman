@@ -97,12 +97,12 @@ const es2: TranslationMap = {
   'devOptions.coreModeNotSet': 'Modo core: no establecido',
   'devOptions.coreModeNotSetDesc':
     'El selector de verificación de arranque aún no se ha confirmado. Usa Cambiar modo en el selector para elegir Local o Cloud.',
-  'devOptions.local': 'Local',
+  'devOptions.local': 'locales',
   'devOptions.embeddedCoreSidecar': 'Core sidecar integrado',
   'devOptions.sidecarSpawned': 'Iniciado en proceso por el shell de Tauri al arrancar la app.',
   'devOptions.cloud': 'Nube',
   'devOptions.remoteCoreRpc': 'RPC de core remoto',
-  'devOptions.token': 'Token',
+  'devOptions.token': 'ficha',
   'devOptions.tokenNotSet': 'no establecido — RPC devolverá 401',
   'devOptions.triggerSentryTest': 'Activar prueba de Sentry (staging)',
   'devOptions.triggerSentryTestDesc':
@@ -201,13 +201,13 @@ const es2: TranslationMap = {
   'autocomplete.stylePreset': 'Estilo predeterminado',
   'autocomplete.style.balanced': 'Equilibrado',
   'autocomplete.style.concise': 'Conciso',
-  'autocomplete.style.formal': 'Formal',
-  'autocomplete.style.casual': 'Casual',
+  'autocomplete.style.formal': 'formales',
+  'autocomplete.style.casual': 'Informal',
   'autocomplete.style.custom': 'Personalizado',
   'autocomplete.disabledApps': 'Apps desactivadas (un bundle/token de app por línea)',
   'autocomplete.saveSettings': 'Guardar configuración',
   'autocomplete.saving': 'Guardando…',
-  'autocomplete.runtime': 'Runtime',
+  'autocomplete.runtime': 'Tiempo de ejecución',
   'autocomplete.running': 'Ejecutándose',
   'autocomplete.start': 'Iniciar',
   'autocomplete.stop': 'Detener',
@@ -251,6 +251,16 @@ const es2: TranslationMap = {
     'Interruptor principal. Desactivado por defecto — Ollama permanece inactivo. Cuando está activado, el resumidor de árbol, la inteligencia de pantalla y el autocompletado siempre usan el modelo local.',
   'localModel.advancedSettings': 'Configuración avanzada',
   'localModel.debugTitle': 'Depuración de modelo local',
+  'localModel.ollamaServer.helperText': 'Ejemplo: http://192.168.1.5:11434',
+  'localModel.ollamaServer.label': 'URL del servidor Ollama',
+  'localModel.ollamaServer.modelCount': 'modelos',
+  'localModel.ollamaServer.placeholder': 'http://localhost:11434',
+  'localModel.ollamaServer.reachable': 'Accesible',
+  'localModel.ollamaServer.resetButton': 'Restablecer al valor predeterminado',
+  'localModel.ollamaServer.saveButton': 'Guardar',
+  'localModel.ollamaServer.testButton': 'Probar conexión',
+  'localModel.ollamaServer.unreachable': 'No accesible',
+  'localModel.ollamaServer.validationError': 'Debe ser una URL http:// o https:// válida',
   'screenAwareness.debugTitle': 'Depuración de Conciencia de pantalla',
   'memory.debugTitle': 'Depuración de memoria',
   'webhooks.debugTitle': 'Depuración de webhooks',
@@ -265,7 +275,7 @@ const es2: TranslationMap = {
   'chat.filter.work': 'Trabajo',
   'chat.filter.briefing': 'Resumen',
   'chat.filter.notification': 'Notificación',
-  'chat.filter.workers': 'Workers',
+  'chat.filter.workers': 'Trabajadores',
   'chat.selectThread': 'Selecciona un hilo',
   'chat.threads': 'Hilos',
   'chat.noThreads': 'Sin hilos aún',
@@ -274,6 +284,7 @@ const es2: TranslationMap = {
   'chat.deleteThread': 'Eliminar hilo',
   'chat.deleteThreadConfirm': '¿Seguro que quieres eliminar "{title}"?',
   'chat.untitledThread': 'Hilo sin título',
+  'chat.editThreadTitle': 'Edit thread title',
   'chat.hideSidebar': 'Ocultar barra lateral',
   'chat.showSidebar': 'Mostrar barra lateral',
   'chat.newThreadShortcut': 'Nuevo hilo (/new)',
@@ -313,7 +324,7 @@ const es2: TranslationMap = {
   'memory.sourceFilter.telegram': 'Telegram',
   'memory.sourceFilter.aiInsight': 'Insight de IA',
   'memory.sourceFilter.system': 'Sistema',
-  'memory.sourceFilter.trading': 'Trading',
+  'memory.sourceFilter.trading': 'Comercio',
   'memory.sourceFilter.security': 'Seguridad',
   'memory.ingestionActivity': 'Actividad de ingesta',
   'memory.events': 'eventos',
@@ -365,7 +376,7 @@ const es2: TranslationMap = {
   'navigator.sources': 'Fuentes',
   'navigator.email': 'Correo',
   'navigator.slack': 'Slack',
-  'navigator.chat': 'Chat',
+  'navigator.chat': 'Charla',
   'navigator.documents': 'Documentos',
   'navigator.people': 'Personas',
   'navigator.topics': 'Temas',
@@ -374,7 +385,7 @@ const es2: TranslationMap = {
   'dreams.comingSoon': 'Próximamente',
   'assignment.memoryLlm': 'LLM de memoria',
   'assignment.memoryLlmAria': 'Selección de LLM de memoria',
-  'assignment.embedder': 'Embedder',
+  'assignment.embedder': 'Incrustador',
   'assignment.loaded': 'Cargado',
   'assignment.notDownloaded': 'No descargado',
   'assignment.usedForExtractSummarise': 'Usado para extracción y resumen',
@@ -383,6 +394,48 @@ const es2: TranslationMap = {
   'insights.relationships': 'Relaciones',
   'insights.skills': 'Habilidades',
   'insights.opinions': 'Opiniones',
+  // Developer options menu items (#2225) — English stubs; native translations welcome
+  'devOptions.menuAi': 'Configuración de IA',
+  'devOptions.menuAiDesc':
+    'Proveedores de nube, modelos Ollama locales y enrutamiento por carga de trabajo',
+  'devOptions.menuScreenAware': 'Conciencia de pantalla',
+  'devOptions.menuScreenAwareDesc':
+    'Permisos de captura de pantalla, política de monitoreo y controles de sesión',
+  'devOptions.menuMessaging': 'Canales de mensajería',
+  'devOptions.menuMessagingDesc':
+    'Configurar los modos de autenticación Telegram/Discord y el enrutamiento de canales predeterminado',
+  'devOptions.menuTools': 'Herramientas',
+  'devOptions.menuToolsDesc':
+    'Habilitar o deshabilitar capacidades que OpenHuman puede usar en su nombre',
+  'devOptions.menuAgentChat': 'Chat de agente',
+  'devOptions.menuAgentChatDesc':
+    'Conversación del agente de prueba con anulaciones de modelo y temperatura',
+  'devOptions.menuCronJobs': 'Trabajos cronificados',
+  'devOptions.menuCronJobsDesc':
+    'Ver y configurar trabajos programados para habilidades en tiempo de ejecución',
+  'devOptions.menuLocalModelDebug': 'Depuración del modelo local',
+  'devOptions.menuLocalModelDebugDesc':
+    'Ollama configuración, descargas de activos, pruebas de modelos y diagnósticos',
+  'devOptions.menuWebhooksDebug': 'Ganchos web',
+  'devOptions.menuWebhooksDebugDesc':
+    'Inspeccionar los registros de webhooks en tiempo de ejecución y los registros de solicitudes capturados',
+  'devOptions.menuIntelligence': 'Inteligencia',
+  'devOptions.menuIntelligenceDesc':
+    'Espacio de trabajo de la memoria, motor subconsciente, sueños y escenarios.',
+  'devOptions.menuNotificationRouting': 'Enrutamiento de notificaciones',
+  'devOptions.menuNotificationRoutingDesc':
+    'Puntuación de importancia de la IA y escalamiento del orquestador para alertas de integración',
+  'devOptions.menuComposeIOTriggers': 'Activadores de ComposeIO',
+  'devOptions.menuComposeIOTriggersDesc':
+    'Ver el historial y el archivo de activadores de ComposeIO',
+  'devOptions.menuComposioRouting': 'Composio Enrutamiento (modo directo)',
+  'devOptions.menuComposioRoutingDesc':
+    'Traiga su propia clave Composio API y enrute las llamadas directamente a backend.composio.dev',
+  'devOptions.menuComposioTriggers': 'Desencadenantes de integración',
+  'devOptions.menuComposioTriggersDesc':
+    'Configurar los ajustes de clasificación de IA para los activadores de integración Composio',
+  'mic.deviceSelector': 'Dispositivo de micrófono',
+  'mic.tapToSendCountdown': 'Toca para enviar ({seconds}s)',
 };
 
 export default es2;

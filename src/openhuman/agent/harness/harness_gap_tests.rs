@@ -11,9 +11,11 @@
 //!    fallback formats).
 //! 6. `DateTimeSection` produces an ISO-8601-like timestamp with a timezone token.
 //! 7. `parse_tool_timeout_secs` default and boundary cases.
+//! 8. Spawn-depth gate (`SpawnDepthExceeded`) is covered in
+//!    `subagent_runner/ops_tests.rs` because it lives at the `run_subagent`
+//!    boundary.
 //!
 //! Items that have NO underlying code and therefore cannot be tested:
-//! - Spawn-depth gate (SpawnDepthExceeded) — no depth counter or variant exists.
 //! - Follow-up resolution ("yes"/"no" disambiguation) — not implemented.
 //! - Silence timer (SilenceTimeout, 600 s) — not implemented.
 //! - `<invoke tool=…>` XML attribute form — the parser does not parse attributes;
@@ -140,7 +142,6 @@ async fn full_turn_cycle_user_llm_tool_result_final() {
         "model",
         0.0,
         true,
-        None,
         "channel",
         &multimodal_cfg(),
         2,
@@ -149,6 +150,7 @@ async fn full_turn_cycle_user_llm_tool_result_final() {
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .expect("full turn cycle should succeed");
@@ -199,7 +201,6 @@ async fn max_iterations_exceeded_downcasts_to_typed_agent_error() {
         "model",
         0.0,
         true,
-        None,
         "channel",
         &multimodal_cfg(),
         1,
@@ -208,6 +209,7 @@ async fn max_iterations_exceeded_downcasts_to_typed_agent_error() {
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .expect_err("loop must fail when iterations exhausted");
@@ -274,7 +276,6 @@ async fn visible_tool_names_rejects_tool_outside_whitelist() {
         "model",
         0.0,
         true,
-        None,
         "channel",
         &multimodal_cfg(),
         2,
@@ -283,6 +284,7 @@ async fn visible_tool_names_rejects_tool_outside_whitelist() {
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .expect("loop should recover after whitelisted-out tool call");
@@ -331,7 +333,6 @@ async fn visible_tool_names_allows_tool_inside_whitelist() {
         "model",
         0.0,
         true,
-        None,
         "channel",
         &multimodal_cfg(),
         2,
@@ -340,6 +341,7 @@ async fn visible_tool_names_allows_tool_inside_whitelist() {
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .expect("whitelisted tool should execute");

@@ -46,6 +46,15 @@ const fr4: TranslationMap = {
   'composio.connect.subdomainInvalid':
     'Saisissez uniquement le sous-domaine court (par ex. "acme"), pas l\'URL complète. Il doit contenir uniquement des lettres, chiffres et tirets.',
   'composio.connect.subdomainRequired': 'Saisis ton sous-domaine Atlassian pour continuer.',
+  'composio.connect.dynamicsOrgNameLabel': "Nom de l'organisation Dynamics 365",
+  'composio.connect.dynamicsOrgNameHint':
+    'Par exemple, "myorg" pour myorg.crm.dynamics.com. Saisis uniquement le nom court de l\'organisation, pas l\'URL complète.',
+  'composio.connect.needsFieldsPrefix': 'Pour connecter',
+  'composio.connect.needsFieldsSuffix':
+    "nous avons besoin d'un peu plus d'informations. Remplis les champs manquants ci-dessous et réessaie.",
+  'composio.connect.requiredFieldEmpty': 'Ce champ est obligatoire.',
+  'composio.connect.wabaIdHint':
+    "Trouve-le via GET /me/businesses puis GET /{business_id}/owned_whatsapp_business_accounts en utilisant ton jeton d'accès Meta.",
   'composio.connect.wabaIdLabel': "Libellé de l'identifiant WABA",
   'composio.connect.wabaIdRequired':
     'Saisis ton identifiant WhatsApp Business Account (WABA ID) pour continuer.',
@@ -96,7 +105,7 @@ const fr4: TranslationMap = {
   'intelligence.memoryChunk.scoreBars.kept': 'conservé',
   'intelligence.memoryText.entityTypePrefix': "Type d'entité",
   'intelligence.screenDebug.active': 'Actif',
-  'intelligence.screenDebug.app': 'App',
+  'intelligence.screenDebug.app': 'Application',
   'intelligence.screenDebug.bounds': 'Limites',
   'intelligence.screenDebug.captureAlt': 'Résultat du test de capture',
   'intelligence.screenDebug.captureFailed': 'Échec',
@@ -137,6 +146,8 @@ const fr4: TranslationMap = {
   'notifications.center.filterAll': 'Tout filtrer',
   'notifications.center.markAllRead': 'Tout marquer comme lu',
   'notifications.center.title': 'Notifications',
+  'oauth.button.loopbackTimeout':
+    "La connexion a expiré — le navigateur n'a pas complété la redirection OAuth. Veuillez réessayer.",
   'oauth.button.connecting': 'Connexion en cours…',
   'oauth.login.continueWith': 'Continuer avec',
   'onboarding.contextGathering.buildingDesc': 'Description de la construction',
@@ -144,11 +155,25 @@ const fr4: TranslationMap = {
   'onboarding.contextGathering.continueToChat': 'Accéder au chat',
   'onboarding.contextGathering.errorDesc':
     "Nous n'avons pas pu créer votre profil complet pour l'instant, mais ce n'est pas grave — vous pouvez continuer et votre profil se construira au fil du temps.",
+  'onboarding.contextGathering.coreAlive':
+    'Le cœur est accessible — le premier lancement peut prendre une minute.',
+  'onboarding.contextGathering.coreAliveProbing': 'Vérification de la connexion au cœur…',
+  'onboarding.contextGathering.coreUnreachable':
+    'Le cœur ne répond pas. Tu peux continuer et réessayer plus tard.',
+  'onboarding.contextGathering.stillWorkingDesc':
+    'Le premier lancement peut prendre 30 à 60 secondes pendant que nous préparons ton modèle local et tes outils. Tu peux accéder au chat à tout moment — la construction du profil continue en arrière-plan.',
+  'onboarding.contextGathering.stillWorkingTitle': 'Construction de ton profil en cours…',
   'onboarding.contextGathering.title': 'Collecte de contexte',
   'openhuman.team_list_teams': 'Liste des équipes',
   'overlay.ariaAttention': "Message d'attention",
+  'overlay.ariaCompanion': 'Compagnon actif',
   'overlay.ariaOrb': 'Overlay OpenHuman',
   'overlay.ariaVoiceActive': 'Saisie vocale active',
+  'overlay.companion.error': 'Erreur',
+  'overlay.companion.listening': 'À l’écoute…',
+  'overlay.companion.pointing': 'En train de pointer…',
+  'overlay.companion.speaking': 'En train de parler…',
+  'overlay.companion.thinking': 'Réflexion…',
   'overlay.orbTitle': 'Glisse pour déplacer · Double-clique pour réinitialiser la position',
   'pages.settings.account.connections': 'Connexions',
   'pages.settings.account.connectionsDesc': 'Description des connexions',
@@ -165,9 +190,15 @@ const fr4: TranslationMap = {
   'pages.settings.ai.llmDesc': 'Description du LLM',
   'pages.settings.ai.voice': 'Voix',
   'pages.settings.ai.voiceDesc': 'Description de la voix',
+  'pages.settings.ai.embeddings': 'Intégrations',
+  'pages.settings.ai.embeddingsDesc':
+    "Modèle d'encodage vectoriel pour la récupération de la mémoire",
   'pages.settings.aiSection.description':
     'Fournisseurs de modèles de langage, Ollama local et voix (STT / TTS).',
   'pages.settings.aiSection.title': 'IA',
+  'pages.settings.features.desktopCompanion': 'Compagnon de bureau',
+  'pages.settings.features.desktopCompanionDesc':
+    "Assistant vocal avec conscience de l'écran — écoute, voit, parle, pointe",
   'pages.settings.features.messagingChannels': 'Canaux de messagerie',
   'pages.settings.features.messagingChannelsDesc': 'Description des canaux de messagerie',
   'pages.settings.features.notifications': 'Notifications',
@@ -273,6 +304,18 @@ const fr4: TranslationMap = {
   'settings.ai.localOllama': 'Local (Ollama)',
   'settings.ai.modelLabel': 'Modèle',
   'settings.ai.noCustomProviders': 'Aucun fournisseur personnalisé',
+  'settings.ai.openAiCompat.authHeaderExample': 'Autorisation : Porteur <votre clé>',
+  'settings.ai.openAiCompat.authHeaderLabel': "En-tête d'authentification",
+  'settings.ai.openAiCompat.baseUrlLabel': 'Base URL',
+  'settings.ai.openAiCompat.baseUrlUnavailable': 'Indisponible',
+  'settings.ai.openAiCompat.clearKey': 'Effacer la clé',
+  'settings.ai.openAiCompat.description':
+    "Point local harnesses at this /v1 server to route through the providers configured below. Authentication uses a stable key you set here, not the app's internal core bearer.",
+  'settings.ai.openAiCompat.keyConfigured': 'Clé configurée',
+  'settings.ai.openAiCompat.keyRequired': 'Clé requise',
+  'settings.ai.openAiCompat.rotateKey': 'Rotation key',
+  'settings.ai.openAiCompat.setKey': 'Définir la clé',
+  'settings.ai.openAiCompat.title': 'Point de terminaison compatible OpenAI',
   'settings.ai.providerLabel': 'Fournisseur',
   'settings.ai.routing': 'Routage',
   'settings.ai.routingCustom': 'Routage personnalisé',
@@ -364,6 +407,20 @@ const fr4: TranslationMap = {
   'settings.billing.subscription.paymentConfirmed': 'Paiement confirmé',
   'settings.billing.subscription.perMonth': 'Par mois',
   'settings.billing.subscription.popular': 'Populaire',
+  'pages.settings.account.migration': 'Importer depuis un autre assistant',
+  'pages.settings.account.migrationDesc':
+    'Migrez la mémoire et les notes depuis OpenClaw (et bientôt Hermes) vers cet espace de travail.',
+  'composio.connect.scope.read': 'Lire',
+  'composio.connect.scope.readHint': "Autoriser l'agent à lire les données de cette connexion.",
+  'composio.connect.scope.write': 'Ecriture',
+  'composio.connect.scope.writeHint':
+    "Autoriser l'agent à créer ou modifier des données via cette connexion.",
+  'composio.connect.scope.admin': 'Administrateur',
+  'composio.connect.scope.adminHint':
+    "Autoriser l'agent à gérer les paramètres, les autorisations ou les actions destructrices.",
+  'pages.settings.composioSection.title': 'Composio',
+  'pages.settings.composioSection.description':
+    'Routage, déclencheurs et historique pour les intégrations optimisées par Composio.',
 };
 
 export default fr4;

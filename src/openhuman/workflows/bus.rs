@@ -473,6 +473,7 @@ impl EventHandler for ChannelMessageSubscriber {
             content,
             thread_ts,
             is_direct,
+            workspace_dir: _,
         } = event
         else {
             return;

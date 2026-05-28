@@ -44,6 +44,10 @@ const LEGACY_ALIASES: &[(&str, &str)] = &[
         "openhuman.config_update_analytics_settings",
     ),
     (
+        "openhuman.update_autonomy_settings",
+        "openhuman.config_update_autonomy_settings",
+    ),
+    (
         "openhuman.update_browser_settings",
         "openhuman.config_update_browser_settings",
     ),
@@ -91,6 +95,7 @@ const LEGACY_ALIASES: &[(&str, &str)] = &[
         "openhuman.local_ai_diagnostics",
         "openhuman.inference_diagnostics",
     ),
+    ("openhuman.inference_embed", "openhuman.embeddings_embed"),
     ("openhuman.local_ai_presets", "openhuman.inference_presets"),
     (
         "openhuman.providers_list_models",

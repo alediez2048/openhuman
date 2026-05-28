@@ -24,7 +24,13 @@ export interface ModelRoute {
 export type AuthStyle = 'bearer' | 'anthropic' | 'openhuman_jwt' | 'none';
 
 /** @deprecated Use AuthStyle. Kept for back-compat with old wire format. */
-export type CloudProviderType = 'openhuman' | 'openai' | 'anthropic' | 'openrouter' | 'custom';
+export type CloudProviderType =
+  | 'openhuman'
+  | 'openai'
+  | 'anthropic'
+  | 'openrouter'
+  | 'orcarouter'
+  | 'custom';
 
 /**
  * Endpoint config for one cloud LLM provider (new slug-keyed shape).
@@ -291,6 +297,63 @@ export async function openhumanUpdateScreenIntelligenceSettings(
   });
 }
 
+// ── Agent access mode (autonomy / filesystem permissions) ───────────────────
+
+export type AutonomyLevel = 'readonly' | 'supervised' | 'full';
+export type TrustedAccess = 'read' | 'readwrite';
+
+export interface TrustedRoot {
+  path: string;
+  access: TrustedAccess;
+}
+
+/** The full [autonomy] block as returned by config_get_autonomy_settings. */
+export interface AutonomySettings {
+  level: AutonomyLevel;
+  workspace_only: boolean;
+  allowed_commands: string[];
+  forbidden_paths: string[];
+  trusted_roots: TrustedRoot[];
+  allow_tool_install: boolean;
+  max_actions_per_hour: number;
+  /** "Always allow" allowlist — tool names the agent runs without a prompt. */
+  auto_approve: string[];
+}
+
+/** Partial update — omitted fields are left unchanged. */
+export interface AutonomySettingsUpdate {
+  level?: AutonomyLevel;
+  workspace_only?: boolean;
+  allowed_commands?: string[];
+  forbidden_paths?: string[];
+  trusted_roots?: TrustedRoot[];
+  allow_tool_install?: boolean;
+  max_actions_per_hour?: number;
+  /** Replaces the "Always allow" allowlist wholesale. */
+  auto_approve?: string[];
+}
+
+export async function openhumanGetAutonomySettings(): Promise<CommandResponse<AutonomySettings>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await callCoreRpc<CommandResponse<AutonomySettings>>({
+    method: CORE_RPC_METHODS.configGetAutonomySettings,
+  });
+}
+
+export async function openhumanUpdateAutonomySettings(
+  update: AutonomySettingsUpdate
+): Promise<CommandResponse<ConfigSnapshot>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await callCoreRpc<CommandResponse<ConfigSnapshot>>({
+    method: CORE_RPC_METHODS.configUpdateAutonomySettings,
+    params: update,
+  });
+}
+
 export async function openhumanUpdateLocalAiSettings(
   update: LocalAiSettingsUpdate
 ): Promise<CommandResponse<ConfigSnapshot>> {
@@ -346,6 +409,65 @@ export async function openhumanGetMeetSettings(): Promise<
   }
   return await callCoreRpc<CommandResponse<{ auto_orchestrator_handoff: boolean }>>({
     method: 'openhuman.config_get_meet_settings',
+  });
+}
+
+export type SearchEngineId = 'managed' | 'parallel' | 'brave';
+
+export interface SearchSettingsUpdate {
+  engine?: SearchEngineId;
+  max_results?: number;
+  timeout_secs?: number;
+  /** Empty string clears the stored key. */
+  parallel_api_key?: string;
+  /** Empty string clears the stored key. */
+  brave_api_key?: string;
+  /**
+   * Websites the assistant may open/read (web_fetch / curl). Exact hosts
+   * match their subdomains; `"*"` allows all public sites; an empty list
+   * blocks all web access.
+   */
+  allowed_domains?: string[];
+  /**
+   * "Allow all sites" toggle. true → allowlist becomes `["*"]`.
+   * NOTE: `allow_all` is applied AFTER `allowed_domains` server-side, so when
+   * both are sent in one patch `allow_all` wins (true → `["*"]`, false → the
+   * `"*"` wildcard is dropped). Don't send both with conflicting intent.
+   */
+  allow_all?: boolean;
+}
+
+export interface SearchSettings {
+  engine: SearchEngineId | string;
+  effective_engine: SearchEngineId;
+  max_results: number;
+  timeout_secs: number;
+  parallel_configured: boolean;
+  brave_configured: boolean;
+  /** Current allowed-websites host list (may contain `"*"`). */
+  allowed_domains: string[];
+  /** True when the allowlist contains the `"*"` wildcard. */
+  allow_all: boolean;
+}
+
+export async function openhumanGetSearchSettings(): Promise<CommandResponse<SearchSettings>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await callCoreRpc<CommandResponse<SearchSettings>>({
+    method: CORE_RPC_METHODS.configGetSearchSettings,
+  });
+}
+
+export async function openhumanUpdateSearchSettings(
+  update: SearchSettingsUpdate
+): Promise<CommandResponse<ConfigSnapshot>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await callCoreRpc<CommandResponse<ConfigSnapshot>>({
+    method: CORE_RPC_METHODS.configUpdateSearchSettings,
+    params: update,
   });
 }
 

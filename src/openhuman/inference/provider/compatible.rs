@@ -115,6 +115,17 @@ impl OpenAiCompatibleProvider {
         Self::new_with_options(name, base_url, credential, auth_style, false, None, false)
     }
 
+    fn enrich_404_message(&self, base: String, status: reqwest::StatusCode) -> String {
+        if status == reqwest::StatusCode::NOT_FOUND && !self.supports_responses_fallback {
+            format!(
+                "{base}; check that your endpoint URL is correct \
+                 and the model name exists on your provider"
+            )
+        } else {
+            base
+        }
+    }
+
     /// Create a provider with a custom User-Agent header.
     ///
     /// Some providers (for example Kimi Code) require a specific User-Agent
@@ -278,8 +289,8 @@ impl OpenAiCompatibleProvider {
                 headers.insert(USER_AGENT, value);
             }
 
-            let builder = Client::builder()
-                .use_rustls_tls()
+            // Platform-appropriate TLS backend — see [`crate::openhuman::tls`].
+            let builder = crate::openhuman::tls::tls_client_builder()
                 .timeout(std::time::Duration::from_secs(120))
                 .connect_timeout(std::time::Duration::from_secs(10))
                 .default_headers(headers);
@@ -290,12 +301,14 @@ impl OpenAiCompatibleProvider {
 
             return builder.build().unwrap_or_else(|error| {
                 tracing::warn!("Failed to build proxied timeout client with user-agent: {error}");
-                Client::new()
+                crate::openhuman::tls::tls_client_builder()
+                    .build()
+                    .unwrap_or_default()
             });
         }
 
-        let builder = Client::builder()
-            .use_rustls_tls()
+        // Platform-appropriate TLS backend — see [`crate::openhuman::tls`].
+        let builder = crate::openhuman::tls::tls_client_builder()
             .timeout(std::time::Duration::from_secs(120))
             .connect_timeout(std::time::Duration::from_secs(10));
         let builder = crate::openhuman::config::apply_runtime_proxy_to_builder(
@@ -304,7 +317,9 @@ impl OpenAiCompatibleProvider {
         );
         builder.build().unwrap_or_else(|error| {
             tracing::warn!("Failed to build proxied timeout client: {error}");
-            Client::new()
+            crate::openhuman::tls::tls_client_builder()
+                .build()
+                .unwrap_or_default()
         })
     }
 
@@ -472,6 +487,31 @@ impl OpenAiCompatibleProvider {
                     Some(model),
                     status,
                 );
+            } else if super::is_custom_openai_upstream_bad_request_http_400(
+                self.name.as_str(),
+                status,
+                &error,
+            ) {
+                super::log_custom_openai_upstream_bad_request_http_400(
+                    "responses_api",
+                    self.name.as_str(),
+                    Some(model),
+                    status,
+                );
+            } else if super::is_provider_access_policy_denied_http_403(status, &error) {
+                super::log_provider_access_policy_denied_http_403(
+                    "responses_api",
+                    self.name.as_str(),
+                    Some(model),
+                    status,
+                );
+            } else if super::is_provider_config_rejection_http(status, self.name.as_str(), &error) {
+                super::log_provider_config_rejection(
+                    "responses_api",
+                    self.name.as_str(),
+                    Some(model),
+                    status,
+                );
             } else if super::should_report_provider_http_failure(status) {
                 crate::core::observability::report_error(
                     message.as_str(),
@@ -516,79 +556,186 @@ impl OpenAiCompatibleProvider {
     }
 
     fn convert_messages_for_native(messages: &[ChatMessage]) -> Vec<NativeMessage> {
-        messages
-            .iter()
-            .map(|message| {
-                if message.role == "assistant" {
-                    if let Ok(value) = serde_json::from_str::<serde_json::Value>(&message.content)
-                    {
-                        if let Some(tool_calls_value) = value.get("tool_calls") {
-                            if let Ok(parsed_calls) =
-                                serde_json::from_value::<Vec<ProviderToolCall>>(
-                                    tool_calls_value.clone(),
-                                )
-                            {
-                                let tool_calls = parsed_calls
-                                    .into_iter()
-                                    .map(|tc| ToolCall {
-                                        id: Some(tc.id),
-                                        kind: Some("function".to_string()),
-                                        function: Some(Function {
-                                            name: Some(tc.name),
-                                            arguments: Some(serde_json::Value::String(
-                                                tc.arguments,
-                                            )),
-                                        }),
-                                    })
-                                    .collect::<Vec<_>>();
+        let converted: Vec<NativeMessage> =
+            messages
+                .iter()
+                .map(|message| {
+                    if message.role == "assistant" {
+                        if let Ok(value) =
+                            serde_json::from_str::<serde_json::Value>(&message.content)
+                        {
+                            if let Some(tool_calls_value) = value.get("tool_calls") {
+                                if let Ok(parsed_calls) =
+                                    serde_json::from_value::<Vec<ProviderToolCall>>(
+                                        tool_calls_value.clone(),
+                                    )
+                                {
+                                    let tool_calls = parsed_calls
+                                        .into_iter()
+                                        .map(|tc| ToolCall {
+                                            id: Some(tc.id),
+                                            kind: Some("function".to_string()),
+                                            function: Some(Function {
+                                                name: Some(tc.name),
+                                                arguments: Some(serde_json::Value::String(
+                                                    tc.arguments,
+                                                )),
+                                            }),
+                                        })
+                                        .collect::<Vec<_>>();
 
-                                let content = value
-                                    .get("content")
-                                    .and_then(serde_json::Value::as_str)
-                                    .map(ToString::to_string);
+                                    let content = value
+                                        .get("content")
+                                        .and_then(serde_json::Value::as_str)
+                                        .map(ToString::to_string);
 
-                                return NativeMessage {
-                                    role: "assistant".to_string(),
-                                    content,
-                                    tool_call_id: None,
-                                    tool_calls: Some(tool_calls),
-                                };
+                                    return NativeMessage {
+                                        role: "assistant".to_string(),
+                                        content,
+                                        tool_call_id: None,
+                                        tool_calls: Some(tool_calls),
+                                    };
+                                }
                             }
                         }
                     }
+
+                    if message.role == "tool" {
+                        if let Ok(value) =
+                            serde_json::from_str::<serde_json::Value>(&message.content)
+                        {
+                            let tool_call_id = value
+                                .get("tool_call_id")
+                                .and_then(serde_json::Value::as_str)
+                                .map(ToString::to_string);
+                            let content = value
+                                .get("content")
+                                .and_then(serde_json::Value::as_str)
+                                .map(ToString::to_string)
+                                .or_else(|| Some(message.content.clone()));
+
+                            return NativeMessage {
+                                role: "tool".to_string(),
+                                content,
+                                tool_call_id,
+                                tool_calls: None,
+                            };
+                        }
+                    }
+
+                    NativeMessage {
+                        role: message.role.clone(),
+                        content: Some(message.content.clone()),
+                        tool_call_id: None,
+                        tool_calls: None,
+                    }
+                })
+                .collect();
+
+        Self::enforce_tool_message_invariants(converted)
+    }
+
+    /// Enforce the OpenAI-compatible tool-message ordering invariants on the
+    /// fully-serialized wire array, immediately before it goes on the wire.
+    ///
+    /// Several upstream defects can leave the array malformed and trip a 400
+    /// (`messages with role 'tool' must be a response to a preceding message
+    /// with 'tool_calls'`). That 400 streams back as an empty completion, which
+    /// the agent loop collapses to "The model returned an empty response" and
+    /// the chat surface shows as a generic "Something went wrong":
+    ///
+    /// * **(A)** History tail-trimming (`session::turn::trim_history` /
+    ///   `bound_cached_transcript_messages`) cuts *between* an
+    ///   `assistant(tool_calls)` and its `tool` result, dropping the assistant
+    ///   and orphaning the result at the head of the window.
+    /// * **(B)** A persisted assistant tool-call message whose `content` no
+    ///   longer deserializes as `tool_calls` (format drift) falls through the
+    ///   parser above and is emitted as plain text with its `tool_calls`
+    ///   stripped — again orphaning the following `tool` result.
+    /// * **(C)** An `assistant(tool_calls)` whose results never arrived (an
+    ///   aborted / max-iteration turn, or a partially-answered multi-call
+    ///   cycle) leaves dangling tool-call ids with no matching `tool` response.
+    ///
+    /// This pass makes the contract hold *by construction* regardless of which
+    /// path produced the array. It is **position-aware**: each
+    /// `assistant(tool_calls)` is paired with the *contiguous run of `tool`
+    /// messages that immediately follows it* (the only place valid responses can
+    /// live in the OpenAI wire format), then:
+    ///
+    /// * `tool_calls` entries with no matching response *in that run* are pruned
+    ///   (C); if none survive, the field is dropped so the message serializes as
+    ///   plain assistant text rather than an empty tool-call block.
+    /// * `tool` messages that are **not** part of such a run — a leading orphan
+    ///   from trimming (A), or one stranded after an assistant whose `tool_calls`
+    ///   were stripped (B) — are dropped.
+    ///
+    /// Pairing by adjacency (rather than a global "is this id answered anywhere"
+    /// set) is what keeps **sequential** cycles (`asst(A)→tool(A)`,
+    /// `asst(B)→tool(B)`, …) and **parallel** calls (one `asst([X,Y,Z])` answered
+    /// by `tool(X) tool(Y) tool(Z)`) correct, and makes the result well-formed
+    /// even if responses are reordered or a cycle is bisected mid-sequence — no
+    /// causal-ordering assumption required.
+    fn enforce_tool_message_invariants(messages: Vec<NativeMessage>) -> Vec<NativeMessage> {
+        use std::collections::HashSet;
+
+        let mut out: Vec<NativeMessage> = Vec::with_capacity(messages.len());
+        let mut dropped_orphans = 0usize;
+        let mut pruned_calls = 0usize;
+
+        let mut iter = messages.into_iter().peekable();
+        while let Some(mut msg) = iter.next() {
+            if msg.role == "assistant" && msg.tool_calls.is_some() {
+                // Gather the contiguous run of `tool` messages that answer this
+                // block (responses must immediately follow, in any order).
+                let mut run: Vec<NativeMessage> = Vec::new();
+                while iter.peek().is_some_and(|m| m.role == "tool") {
+                    run.push(iter.next().expect("peeked tool message"));
                 }
+                let responded: HashSet<String> =
+                    run.iter().filter_map(|t| t.tool_call_id.clone()).collect();
 
-                if message.role == "tool" {
-                    if let Ok(value) =
-                        serde_json::from_str::<serde_json::Value>(&message.content)
-                    {
-                        let tool_call_id = value
-                            .get("tool_call_id")
-                            .and_then(serde_json::Value::as_str)
-                            .map(ToString::to_string);
-                        let content = value
-                            .get("content")
-                            .and_then(serde_json::Value::as_str)
-                            .map(ToString::to_string)
-                            .or_else(|| Some(message.content.clone()));
+                // (C) keep only tool_calls answered within this run.
+                let calls = msg.tool_calls.take().unwrap_or_default();
+                let before = calls.len();
+                let kept: Vec<ToolCall> = calls
+                    .into_iter()
+                    .filter(|c| c.id.as_deref().is_some_and(|id| responded.contains(id)))
+                    .collect();
+                pruned_calls += before - kept.len();
+                let kept_ids: HashSet<String> = kept.iter().filter_map(|c| c.id.clone()).collect();
+                msg.tool_calls = if kept.is_empty() { None } else { Some(kept) };
+                out.push(msg);
 
-                        return NativeMessage {
-                            role: "tool".to_string(),
-                            content,
-                            tool_call_id,
-                            tool_calls: None,
-                        };
+                // Emit the run's responses that map to a surviving call; drop the
+                // rest (e.g. a stray tool whose id wasn't in this block).
+                for tool_msg in run {
+                    let kept = tool_msg
+                        .tool_call_id
+                        .as_deref()
+                        .is_some_and(|id| kept_ids.contains(id));
+                    if kept {
+                        out.push(tool_msg);
+                    } else {
+                        dropped_orphans += 1;
                     }
                 }
+            } else if msg.role == "tool" {
+                // (A, B) a `tool` not consumed by a preceding assistant block.
+                dropped_orphans += 1;
+            } else {
+                out.push(msg);
+            }
+        }
 
-                NativeMessage {
-                    role: message.role.clone(),
-                    content: Some(message.content.clone()),
-                    tool_call_id: None,
-                    tool_calls: None,
-                }
-            })
-            .collect()
+        if dropped_orphans > 0 || pruned_calls > 0 {
+            log::warn!(
+                "[provider] sanitized malformed tool-message ordering before send: \
+                 dropped {dropped_orphans} orphaned tool result(s), pruned {pruned_calls} \
+                 unanswered tool_call(s)"
+            );
+        }
+
+        out
     }
 
     fn with_prompt_guided_tool_instructions(
@@ -815,6 +962,31 @@ impl OpenAiCompatibleProvider {
             );
             if super::is_budget_exhausted_http_400(status, &body) {
                 super::log_budget_exhausted_http_400(
+                    "streaming_chat",
+                    self.name.as_str(),
+                    Some(native_request.model.as_str()),
+                    status,
+                );
+            } else if super::is_custom_openai_upstream_bad_request_http_400(
+                self.name.as_str(),
+                status,
+                &body,
+            ) {
+                super::log_custom_openai_upstream_bad_request_http_400(
+                    "streaming_chat",
+                    self.name.as_str(),
+                    Some(native_request.model.as_str()),
+                    status,
+                );
+            } else if super::is_provider_access_policy_denied_http_403(status, &body) {
+                super::log_provider_access_policy_denied_http_403(
+                    "streaming_chat",
+                    self.name.as_str(),
+                    Some(native_request.model.as_str()),
+                    status,
+                );
+            } else if super::is_provider_config_rejection_http(status, self.name.as_str(), &body) {
+                super::log_provider_config_rejection(
                     "streaming_chat",
                     self.name.as_str(),
                     Some(native_request.model.as_str()),
@@ -1283,9 +1455,37 @@ impl Provider for OpenAiCompatibleProvider {
             }
 
             let status_str = status.as_u16().to_string();
-            let message = format!("{} API error ({status}): {sanitized}", self.name);
+            let message = self.enrich_404_message(
+                format!("{} API error ({status}): {sanitized}", self.name),
+                status,
+            );
             if super::is_budget_exhausted_http_400(status, &error) {
                 super::log_budget_exhausted_http_400(
+                    "chat_completions",
+                    self.name.as_str(),
+                    Some(model),
+                    status,
+                );
+            } else if super::is_custom_openai_upstream_bad_request_http_400(
+                self.name.as_str(),
+                status,
+                &error,
+            ) {
+                super::log_custom_openai_upstream_bad_request_http_400(
+                    "chat_completions",
+                    self.name.as_str(),
+                    Some(model),
+                    status,
+                );
+            } else if super::is_provider_access_policy_denied_http_403(status, &error) {
+                super::log_provider_access_policy_denied_http_403(
+                    "chat_completions",
+                    self.name.as_str(),
+                    Some(model),
+                    status,
+                );
+            } else if super::is_provider_config_rejection_http(status, self.name.as_str(), &error) {
+                super::log_provider_config_rejection(
                     "chat_completions",
                     self.name.as_str(),
                     Some(model),
@@ -1403,7 +1603,9 @@ impl Provider for OpenAiCompatibleProvider {
                     });
             }
 
-            return Err(super::api_error(&self.name, response).await);
+            let err = super::api_error(&self.name, response).await;
+            let enriched = self.enrich_404_message(format!("{err:#}"), status);
+            return Err(anyhow::anyhow!("{enriched}"));
         }
 
         let body = response.text().await?;
@@ -1709,9 +1911,37 @@ impl Provider for OpenAiCompatibleProvider {
             }
 
             let status_str = status.as_u16().to_string();
-            let message = format!("{} API error ({status}): {sanitized}", self.name);
+            let message = self.enrich_404_message(
+                format!("{} API error ({status}): {sanitized}", self.name),
+                status,
+            );
             if super::is_budget_exhausted_http_400(status, &error) {
                 super::log_budget_exhausted_http_400(
+                    "native_chat",
+                    self.name.as_str(),
+                    Some(model),
+                    status,
+                );
+            } else if super::is_custom_openai_upstream_bad_request_http_400(
+                self.name.as_str(),
+                status,
+                &error,
+            ) {
+                super::log_custom_openai_upstream_bad_request_http_400(
+                    "native_chat",
+                    self.name.as_str(),
+                    Some(model),
+                    status,
+                );
+            } else if super::is_provider_access_policy_denied_http_403(status, &error) {
+                super::log_provider_access_policy_denied_http_403(
+                    "native_chat",
+                    self.name.as_str(),
+                    Some(model),
+                    status,
+                );
+            } else if super::is_provider_config_rejection_http(status, self.name.as_str(), &error) {
+                super::log_provider_config_rejection(
                     "native_chat",
                     self.name.as_str(),
                     Some(model),
@@ -1849,6 +2079,35 @@ impl Provider for OpenAiCompatibleProvider {
                 let message = format!("{}: {}", status, sanitized_error);
                 if super::is_budget_exhausted_http_400(status, &raw_error) {
                     super::log_budget_exhausted_http_400(
+                        "stream_chat",
+                        provider_name.as_str(),
+                        Some(model_owned.as_str()),
+                        status,
+                    );
+                } else if super::is_custom_openai_upstream_bad_request_http_400(
+                    provider_name.as_str(),
+                    status,
+                    &raw_error,
+                ) {
+                    super::log_custom_openai_upstream_bad_request_http_400(
+                        "stream_chat",
+                        provider_name.as_str(),
+                        Some(model_owned.as_str()),
+                        status,
+                    );
+                } else if super::is_provider_access_policy_denied_http_403(status, &raw_error) {
+                    super::log_provider_access_policy_denied_http_403(
+                        "stream_chat",
+                        provider_name.as_str(),
+                        Some(model_owned.as_str()),
+                        status,
+                    );
+                } else if super::is_provider_config_rejection_http(
+                    status,
+                    provider_name.as_str(),
+                    &raw_error,
+                ) {
+                    super::log_provider_config_rejection(
                         "stream_chat",
                         provider_name.as_str(),
                         Some(model_owned.as_str()),

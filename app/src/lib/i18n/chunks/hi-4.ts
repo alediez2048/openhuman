@@ -17,7 +17,7 @@ const hi4: TranslationMap = {
   'commandPalette.shortcutHint': 'सभी शॉर्टकट के लिए ? दबाएँ',
   'commandPalette.title': 'कमांड पैलेट',
   'composio.connect.additionalConfigRequired': 'अतिरिक्त कॉन्फिग ज़रूरी है',
-  'composio.connect.atlassianSubdomainHint': 'acme',
+  'composio.connect.atlassianSubdomainHint': 'एक्मे',
   'composio.connect.atlassianSubdomainLabel': 'Atlassian सबडोमेन लेबल',
   'composio.connect.connect': 'कनेक्ट करें',
   'composio.connect.connectionFailed': 'कनेक्शन विफल (स्थिति: {status})।',
@@ -46,6 +46,15 @@ const hi4: TranslationMap = {
   'composio.connect.subdomainInvalid':
     'केवल छोटा सबडोमेन दर्ज करें (जैसे "acme"), पूर्ण URL नहीं। इसमें केवल अक्षर, संख्याएँ और हाइफ़न होने चाहिए।',
   'composio.connect.subdomainRequired': 'जारी रखने के लिए अपना Atlassian subdomain डालें।',
+  'composio.connect.dynamicsOrgNameLabel': 'Dynamics 365 संगठन का नाम',
+  'composio.connect.dynamicsOrgNameHint':
+    'उदाहरण के लिए, myorg.crm.dynamics.com के लिए "myorg"। केवल छोटा संगठन नाम दर्ज करें, पूरा URL नहीं।',
+  'composio.connect.needsFieldsPrefix': 'कनेक्ट करने के लिए',
+  'composio.connect.needsFieldsSuffix':
+    'हमें कुछ अतिरिक्त जानकारी चाहिए। नीचे लापता फ़ील्ड भरें और फिर से प्रयास करें।',
+  'composio.connect.requiredFieldEmpty': 'यह फ़ील्ड आवश्यक है।',
+  'composio.connect.wabaIdHint':
+    'अपने Meta एक्सेस टोकन का उपयोग करके GET /me/businesses फिर GET /{business_id}/owned_whatsapp_business_accounts के माध्यम से इसे प्राप्त करें।',
   'composio.connect.wabaIdLabel': 'Waba आईडी लेबल',
   'composio.connect.wabaIdRequired':
     'जारी रखने के लिए अपना WhatsApp Business Account ID (WABA ID) डालें।',
@@ -82,7 +91,7 @@ const hi4: TranslationMap = {
   'home.banners.promoCreditsUsage': 'प्रोमो क्रेडिट उपयोग',
   'intelligence.memoryChunk.detail.chunk': 'चंक',
   'intelligence.memoryChunk.detail.copyChunkId': 'Chunk ID कॉपी करें',
-  'intelligence.memoryChunk.detail.embeddingInfo': 'bge-m3 1024dim',
+  'intelligence.memoryChunk.detail.embeddingInfo': 'बीजीई-एम3 1024डिम',
   'intelligence.memoryChunk.detail.noEmbedding': 'कोई एम्बेडिंग नहीं',
   'intelligence.memoryChunk.letterhead.from': 'से',
   'intelligence.memoryChunk.letterhead.to': 'को',
@@ -137,6 +146,8 @@ const hi4: TranslationMap = {
   'notifications.center.filterAll': 'सभी फिल्टर',
   'notifications.center.markAllRead': 'सभी पढ़ा हुआ मार्क करें',
   'notifications.center.title': 'नोटिफिकेशन',
+  'oauth.button.loopbackTimeout':
+    'साइन-इन का समय समाप्त हो गया — ब्राउज़र ने OAuth पुनर्निर्देशन पूरा नहीं किया। कृपया पुनः प्रयास करें।',
   'oauth.button.connecting': 'कनेक्ट हो रहा है...',
   'oauth.login.continueWith': 'के साथ जारी रखें',
   'onboarding.contextGathering.buildingDesc': 'बिल्डिंग विवरण',
@@ -144,11 +155,25 @@ const hi4: TranslationMap = {
   'onboarding.contextGathering.continueToChat': 'चैट पर जाएं',
   'onboarding.contextGathering.errorDesc':
     'हम अभी आपकी पूरी प्रोफ़ाइल नहीं बना सके, लेकिन कोई बात नहीं — आप जारी रख सकते हैं और आपकी प्रोफ़ाइल समय के साथ बनती जाएगी।',
+  'onboarding.contextGathering.coreAlive':
+    'कोर पहुँच योग्य है — पहली बार लॉन्च करने में एक मिनट लग सकता है।',
+  'onboarding.contextGathering.coreAliveProbing': 'कोर कनेक्शन की जाँच की जा रही है…',
+  'onboarding.contextGathering.coreUnreachable':
+    'कोर प्रतिक्रिया नहीं दे रहा है। आप जारी रख सकते हैं और बाद में पुनः प्रयास कर सकते हैं।',
+  'onboarding.contextGathering.stillWorkingDesc':
+    'हम आपके स्थानीय मॉडल और टूल्स को तैयार कर रहे हैं, पहली बार लॉन्च करने में 30–60 सेकंड लग सकते हैं। आप कभी भी चैट पर जा सकते हैं — प्रोफ़ाइल पृष्ठभूमि में बनती रहेगी।',
+  'onboarding.contextGathering.stillWorkingTitle': 'आपकी प्रोफ़ाइल पर अब भी काम चल रहा है…',
   'onboarding.contextGathering.title': 'कॉन्टेक्स्ट गैदरिंग',
   'openhuman.team_list_teams': 'टीम सूची टीमें',
   'overlay.ariaAttention': 'ध्यान संदेश',
+  'overlay.ariaCompanion': 'कंपैनियन सक्रिय',
   'overlay.ariaOrb': 'OpenHuman ओवरले',
   'overlay.ariaVoiceActive': 'वॉइस इनपुट एक्टिव',
+  'overlay.companion.error': 'त्रुटि',
+  'overlay.companion.listening': 'सुन रहा है…',
+  'overlay.companion.pointing': 'इशारा कर रहा है…',
+  'overlay.companion.speaking': 'बोल रहा है…',
+  'overlay.companion.thinking': 'सोच रहा है…',
   'overlay.orbTitle': 'मूव करने के लिए खींचें · पोज़िशन रीसेट के लिए डबल-क्लिक करें',
   'pages.settings.account.connections': 'कनेक्शन',
   'pages.settings.account.connectionsDesc': 'कनेक्शन विवरण',
@@ -164,9 +189,14 @@ const hi4: TranslationMap = {
   'pages.settings.ai.llmDesc': 'LLM विवरण',
   'pages.settings.ai.voice': 'वॉइस',
   'pages.settings.ai.voiceDesc': 'वॉइस विवरण',
+  'pages.settings.ai.embeddings': 'एम्बेडिंग्स',
+  'pages.settings.ai.embeddingsDesc': 'मेमोरी पुनर्प्राप्ति के लिए वेक्टर एन्कोडिंग मॉडल',
   'pages.settings.aiSection.description':
     'लैंग्वेज मॉडल प्रोवाइडर, लोकल Ollama और वॉइस (STT / TTS)।',
   'pages.settings.aiSection.title': 'AI',
+  'pages.settings.features.desktopCompanion': 'डेस्कटॉप कंपैनियन',
+  'pages.settings.features.desktopCompanionDesc':
+    'स्क्रीन जागरूकता के साथ वॉयस सहायक — सुनता है, देखता है, बोलता है, इशारा करता है',
   'pages.settings.features.messagingChannels': 'मैसेजिंग चैनल',
   'pages.settings.features.messagingChannelsDesc': 'मैसेजिंग चैनल विवरण',
   'pages.settings.features.notifications': 'नोटिफिकेशन',
@@ -272,6 +302,18 @@ const hi4: TranslationMap = {
   'settings.ai.localOllama': 'लोकल (Ollama)',
   'settings.ai.modelLabel': 'मॉडल',
   'settings.ai.noCustomProviders': 'कोई कस्टम प्रोवाइडर नहीं',
+  'settings.ai.openAiCompat.authHeaderExample': 'Authorization: Bearer <आपकी कुंजी>',
+  'settings.ai.openAiCompat.authHeaderLabel': 'प्रामाणिक शीर्षलेख',
+  'settings.ai.openAiCompat.baseUrlLabel': 'आधार URL',
+  'settings.ai.openAiCompat.baseUrlUnavailable': 'अनुपलब्ध',
+  'settings.ai.openAiCompat.clearKey': 'साफ़ कुंजी',
+  'settings.ai.openAiCompat.description':
+    "Point local harnesses at this /v1 server to route through the providers configured below. Authentication uses a stable key you set here, not the app's internal core bearer.",
+  'settings.ai.openAiCompat.keyConfigured': 'कुंजी कॉन्फ़िगर की गई',
+  'settings.ai.openAiCompat.keyRequired': 'कुंजी आवश्यक है',
+  'settings.ai.openAiCompat.rotateKey': 'कुंजी घुमाएँ',
+  'settings.ai.openAiCompat.setKey': 'कुंजी सेट करें',
+  'settings.ai.openAiCompat.title': 'OpenAI-संगत समापन बिंदु',
   'settings.ai.providerLabel': 'प्रोवाइडर',
   'settings.ai.routing': 'रूटिंग',
   'settings.ai.routingCustom': 'कस्टम रूटिंग',
@@ -363,6 +405,20 @@ const hi4: TranslationMap = {
   'settings.billing.subscription.paymentConfirmed': 'पेमेंट कन्फर्म हुई',
   'settings.billing.subscription.perMonth': 'प्रति माह',
   'settings.billing.subscription.popular': 'लोकप्रिय',
+  'pages.settings.account.migration': 'किसी अन्य असिस्टेंट से इम्पोर्ट करें',
+  'pages.settings.account.migrationDesc':
+    'OpenClaw (और जल्द ही Hermes) से मेमोरी और नोट्स इस वर्कस्पेस में माइग्रेट करें।',
+  'composio.connect.scope.read': 'पढ़ें',
+  'composio.connect.scope.readHint': 'एजेंट को इस कनेक्शन से डेटा पढ़ने की अनुमति दें।',
+  'composio.connect.scope.write': 'लिखो',
+  'composio.connect.scope.writeHint':
+    'एजेंट को इस कनेक्शन के माध्यम से डेटा बनाने या संशोधित करने की अनुमति दें।',
+  'composio.connect.scope.admin': 'व्यवस्थापक',
+  'composio.connect.scope.adminHint':
+    'एजेंट को सेटिंग्स, अनुमतियाँ, या विनाशकारी कार्रवाइयां प्रबंधित करने की अनुमति दें।',
+  'pages.settings.composioSection.title': 'Composio',
+  'pages.settings.composioSection.description':
+    'Composio द्वारा संचालित एकीकरण के लिए रूटिंग, ट्रिगर और इतिहास।',
 };
 
 export default hi4;

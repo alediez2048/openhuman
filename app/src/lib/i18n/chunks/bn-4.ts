@@ -46,6 +46,15 @@ const bn4: TranslationMap = {
   'composio.connect.subdomainInvalid':
     'শুধু সংক্ষিপ্ত সাবডোমেইন লিখুন (যেমন "acme"), পুরো URL নয়। এতে শুধু অক্ষর, সংখ্যা এবং হাইফেন থাকা উচিত।',
   'composio.connect.subdomainRequired': 'চালিয়ে যেতে আপনার Atlassian সাবডোমেইন দিন।',
+  'composio.connect.dynamicsOrgNameLabel': 'Dynamics 365 সংস্থার নাম',
+  'composio.connect.dynamicsOrgNameHint':
+    'উদাহরণস্বরূপ, myorg.crm.dynamics.com-এর জন্য "myorg"। সম্পূর্ণ URL নয়, শুধু সংক্ষিপ্ত সংস্থার নাম লিখুন।',
+  'composio.connect.needsFieldsPrefix': 'সংযোগ করতে',
+  'composio.connect.needsFieldsSuffix':
+    'আমাদের আরও কিছু তথ্য প্রয়োজন। নিচের অনুপস্থিত ফিল্ডগুলি পূরণ করুন এবং আবার চেষ্টা করুন।',
+  'composio.connect.requiredFieldEmpty': 'এই ফিল্ডটি আবশ্যক।',
+  'composio.connect.wabaIdHint':
+    'আপনার Meta অ্যাক্সেস টোকেন ব্যবহার করে GET /me/businesses তারপর GET /{business_id}/owned_whatsapp_business_accounts এর মাধ্যমে এটি খুঁজে পান।',
   'composio.connect.wabaIdLabel': 'WABA ID লেবেল',
   'composio.connect.wabaIdRequired':
     'চালিয়ে যেতে আপনার WhatsApp Business Account ID (WABA ID) দিন।',
@@ -137,6 +146,8 @@ const bn4: TranslationMap = {
   'notifications.center.filterAll': 'সব ফিল্টার',
   'notifications.center.markAllRead': 'সব পঠিত চিহ্নিত করুন',
   'notifications.center.title': 'বিজ্ঞপ্তি',
+  'oauth.button.loopbackTimeout':
+    'সাইন-ইন টাইম আউট হয়েছে — ব্রাউজার OAuth পুনর্নির্দেশনা সম্পন্ন করেনি। অনুগ্রহ করে আবার চেষ্টা করুন।',
   'oauth.button.connecting': 'সংযোগ হচ্ছে...',
   'oauth.login.continueWith': 'দিয়ে চালিয়ে যান',
   'onboarding.contextGathering.buildingDesc': 'বিল্ডিং বিবরণ',
@@ -144,11 +155,24 @@ const bn4: TranslationMap = {
   'onboarding.contextGathering.continueToChat': 'চ্যাটে চালিয়ে যান',
   'onboarding.contextGathering.errorDesc':
     'আমরা এখনই আপনার পূর্ণ প্রোফাইল তৈরি করতে পারিনি, কিন্তু সমস্যা নেই — আপনি চালিয়ে যেতে পারেন এবং আপনার প্রোফাইল সময়ের সাথে তৈরি হবে।',
+  'onboarding.contextGathering.coreAlive': 'কোর সংযোগযোগ্য — প্রথম লঞ্চ এক মিনিট সময় নিতে পারে।',
+  'onboarding.contextGathering.coreAliveProbing': 'কোর সংযোগ যাচাই করা হচ্ছে…',
+  'onboarding.contextGathering.coreUnreachable':
+    'কোর সাড়া দিচ্ছে না। আপনি চালিয়ে যেতে পারেন এবং পরে আবার চেষ্টা করতে পারেন।',
+  'onboarding.contextGathering.stillWorkingDesc':
+    'আমরা আপনার লোকাল মডেল এবং টুলস প্রস্তুত করছি, প্রথম লঞ্চ ৩০–৬০ সেকেন্ড সময় নিতে পারে। আপনি যেকোনো সময় চ্যাটে যেতে পারেন — প্রোফাইল তৈরি ব্যাকগ্রাউন্ডে চলতে থাকবে।',
+  'onboarding.contextGathering.stillWorkingTitle': 'এখনও আপনার প্রোফাইলে কাজ চলছে…',
   'onboarding.contextGathering.title': 'কন্টেক্সট সংগ্রহ',
   'openhuman.team_list_teams': 'টিম তালিকা',
   'overlay.ariaAttention': 'মনোযোগের বার্তা',
+  'overlay.ariaCompanion': 'কম্প্যানিয়ন সক্রিয়',
   'overlay.ariaOrb': 'OpenHuman ওভারলে',
   'overlay.ariaVoiceActive': 'ভয়েস ইনপুট সক্রিয়',
+  'overlay.companion.error': 'ত্রুটি',
+  'overlay.companion.listening': 'শুনছে…',
+  'overlay.companion.pointing': 'নির্দেশ করছে…',
+  'overlay.companion.speaking': 'বলছে…',
+  'overlay.companion.thinking': 'ভাবছে…',
   'overlay.orbTitle': 'সরাতে টেনে আনুন · পজিশন রিসেট করতে ডাবল-ক্লিক করুন',
   'pages.settings.account.connections': 'সংযোগ',
   'pages.settings.account.connectionsDesc': 'সংযোগের বিবরণ',
@@ -164,9 +188,14 @@ const bn4: TranslationMap = {
   'pages.settings.ai.llmDesc': 'LLM বিবরণ',
   'pages.settings.ai.voice': 'ভয়েস',
   'pages.settings.ai.voiceDesc': 'ভয়েস বিবরণ',
+  'pages.settings.ai.embeddings': 'এমবেডিংস',
+  'pages.settings.ai.embeddingsDesc': 'মেমরি পুনরুদ্ধারের জন্য ভেক্টর এনকোডিং মডেল',
   'pages.settings.aiSection.description':
     'ল্যাঙ্গুয়েজ মডেল প্রোভাইডার, লোকাল Ollama, এবং ভয়েস (STT / TTS)।',
   'pages.settings.aiSection.title': 'AI',
+  'pages.settings.features.desktopCompanion': 'ডেস্কটপ কম্প্যানিয়ন',
+  'pages.settings.features.desktopCompanionDesc':
+    'স্ক্রিন সচেতনতা সহ ভয়েস সহকারী — শোনে, দেখে, কথা বলে, নির্দেশ করে',
   'pages.settings.features.messagingChannels': 'মেসেজিং চ্যানেল',
   'pages.settings.features.messagingChannelsDesc': 'মেসেজিং চ্যানেলের বিবরণ',
   'pages.settings.features.notifications': 'বিজ্ঞপ্তি',
@@ -272,6 +301,18 @@ const bn4: TranslationMap = {
   'settings.ai.localOllama': 'লোকাল (Ollama)',
   'settings.ai.modelLabel': 'মডেল',
   'settings.ai.noCustomProviders': 'কোনো কাস্টম প্রোভাইডার নেই',
+  'settings.ai.openAiCompat.authHeaderExample': 'অনুমোদন: বহনকারী <আপনার কী>',
+  'settings.ai.openAiCompat.authHeaderLabel': '2th head]9',
+  'settings.ai.openAiCompat.baseUrlLabel': 'বেস URL',
+  'settings.ai.openAiCompat.baseUrlUnavailable': 'অনুপলব্ধ',
+  'settings.ai.openAiCompat.clearKey': 'ক্লিয়ার কী',
+  'settings.ai.openAiCompat.description':
+    "Point local harnesses at this /v1 server to route through the providers configured below. Authentication uses a stable key you set here, not the app's internal core bearer.",
+  'settings.ai.openAiCompat.keyConfigured': 'কী কনফিগার করা',
+  'settings.ai.openAiCompat.keyRequired': 'কী প্রয়োজন',
+  'settings.ai.openAiCompat.rotateKey': 'ঘোরান কী',
+  'settings.ai.openAiCompat.setKey': 'সেট কী',
+  'settings.ai.openAiCompat.title': 'OpenAI-সামঞ্জস্যপূর্ণ এন্ডপয়েন্ট',
   'settings.ai.providerLabel': 'প্রোভাইডার',
   'settings.ai.routing': 'রুটিং',
   'settings.ai.routingCustom': 'কাস্টম রুটিং',
@@ -363,6 +404,20 @@ const bn4: TranslationMap = {
   'settings.billing.subscription.paymentConfirmed': 'পেমেন্ট নিশ্চিত',
   'settings.billing.subscription.perMonth': 'প্রতি মাসে',
   'settings.billing.subscription.popular': 'জনপ্রিয়',
+  'pages.settings.account.migration': 'অন্য সহকারী থেকে আমদানি করুন',
+  'pages.settings.account.migrationDesc':
+    'OpenClaw (এবং শীঘ্রই Hermes) থেকে মেমরি ও নোট এই ওয়ার্কস্পেসে স্থানান্তর করুন।',
+  'composio.connect.scope.read': 'পড়ুন',
+  'composio.connect.scope.readHint': 'এজেন্টকে এই সংযোগ থেকে ডেটা পড়ার অনুমতি দিন।',
+  'composio.connect.scope.write': 'লিখুন',
+  'composio.connect.scope.writeHint':
+    'এজেন্টকে এই সংযোগের মাধ্যমে ডেটা তৈরি বা পরিবর্তন করার অনুমতি দিন।',
+  'composio.connect.scope.admin': 'প্রশাসক',
+  'composio.connect.scope.adminHint':
+    'এজেন্টকে সেটিংস, অনুমতি বা ধ্বংসাত্মক ক্রিয়াকলাপ পরিচালনা করার অনুমতি দিন।',
+  'pages.settings.composioSection.title': 'Composio',
+  'pages.settings.composioSection.description':
+    'Composio দ্বারা চালিত ইন্টিগ্রেশনের জন্য রাউটিং, ট্রিগার এবং ইতিহাস।',
 };
 
 export default bn4;

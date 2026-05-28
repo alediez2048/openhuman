@@ -9,7 +9,7 @@ use super::harness::memory_context::{
     CROSS_CHAT_LIMIT, CROSS_CHAT_SNIPPET_CHARS, WORKING_MEMORY_KEY_PREFIX, WORKING_MEMORY_LIMIT,
 };
 use crate::openhuman::learning::transcript_ingest::CONVERSATION_MEMORY_NAMESPACE;
-use crate::openhuman::memory::conversations::ConversationStore;
+use crate::openhuman::memory_conversations::ConversationStore;
 
 /// Maximum number of `[Prior conversations]` lines surfaced into the prompt
 /// at the start of a fresh chat. Tight cap on purpose: this block is meant
@@ -20,6 +20,25 @@ const PRIOR_CONVERSATION_LIMIT: usize = 3;
 /// Medium/low entries stay queryable via the on-demand memory tool but
 /// do not auto-pollute every fresh chat.
 const PRIOR_CONVERSATION_KEY_PREFIX: &str = "high.";
+
+/// Canonical header for the `[Cross-chat context]` block injected on
+/// every turn that has FTS-surfaced hits from other threads.
+///
+/// The "historical" / "capabilities may have changed since" suffix is
+/// deliberate: it tells the model these snippets are snapshots from
+/// earlier moments and that capability claims (e.g. "I can't delete
+/// emails") may be stale because the tool surface or per-toolkit scope
+/// toggles can change between chats.
+///
+/// Single source of truth — all three call sites bind to this constant
+/// so a wording tweak doesn't drift between (a) `memory_loader.rs`'s
+/// primary JSONL path, (b) `harness/memory_context.rs`'s fallback
+/// recall path, and (c) the orchestrator's "Capability questions"
+/// prompt section that names the header verbatim. Tests assert on this
+/// constant too — see `memory_loader::tests` and
+/// `harness::memory_context::tests`.
+pub const CROSS_CHAT_HEADER: &str =
+    "[Cross-chat context — historical; capabilities may have changed since]\n";
 
 #[async_trait]
 pub trait MemoryLoader: Send + Sync {
@@ -371,11 +390,14 @@ impl MemoryLoader for DefaultMemoryLoader {
             };
             let prov = provenance_tag(&sid);
             if !appended_cross_header {
-                let section = "[Cross-chat context]\n";
-                if context.len() + section.len() > budget {
+                // The header explicitly labels these snippets as historical so
+                // the model down-weights them when answering capability
+                // questions — see CROSS_CHAT_HEADER doc for the rationale and
+                // the cross-module wording contract.
+                if context.len() + CROSS_CHAT_HEADER.len() > budget {
                     break;
                 }
-                context.push_str(section);
+                context.push_str(CROSS_CHAT_HEADER);
                 appended_cross_header = true;
             }
             let line = format!("- [{prov}] {snippet}\n");
@@ -594,7 +616,7 @@ mod tests {
             .await
             .expect("loader must succeed");
         assert!(
-            out.contains("[Cross-chat context]"),
+            out.contains(CROSS_CHAT_HEADER.trim_end()),
             "expected cross-chat header, got:\n{out}"
         );
         assert!(
@@ -669,7 +691,7 @@ mod tests {
             .await
             .expect("loader must succeed");
         assert!(
-            !out.contains("[Cross-chat context]"),
+            !out.contains(CROSS_CHAT_HEADER.trim_end()),
             "no cross-chat hits must produce no header, got:\n{out}"
         );
     }
@@ -685,7 +707,7 @@ mod tests {
     /// actually run.
     #[tokio::test]
     async fn loader_surfaces_jsonl_primary_path_with_workspace_dir() {
-        use crate::openhuman::memory::conversations::{
+        use crate::openhuman::memory_conversations::{
             ConversationMessage, ConversationStore, CreateConversationThread,
         };
 
@@ -741,7 +763,7 @@ mod tests {
             .expect("loader must succeed");
 
         assert!(
-            out.contains("[Cross-chat context]"),
+            out.contains(CROSS_CHAT_HEADER.trim_end()),
             "JSONL primary path must emit the cross-chat header, got:\n{out}"
         );
         assert!(

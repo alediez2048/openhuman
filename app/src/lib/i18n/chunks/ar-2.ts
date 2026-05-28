@@ -239,6 +239,17 @@ const ar2: TranslationMap = {
     'مفتاح رئيسي. معطّل افتراضيًا — Ollama يبقى خاملاً. عند التشغيل، يستخدم ملخّص الشجرة وذكاء الشاشة والإكمال التلقائي النموذجَ المحلي دائمًا.',
   'localModel.advancedSettings': 'إعدادات متقدمة',
   'localModel.debugTitle': 'تصحيح النموذج المحلي',
+  'localModel.ollamaServer.helperText': 'مثال: http://192.168.1.5:11434',
+  'localModel.ollamaServer.label': 'عنوان URL لخادم Ollama',
+  'localModel.ollamaServer.modelCount': 'نماذج',
+  'localModel.ollamaServer.placeholder': 'http://localhost:11434',
+  'localModel.ollamaServer.reachable': 'قابل للوصول',
+  'localModel.ollamaServer.resetButton': 'إعادة التعيين إلى الافتراضي',
+  'localModel.ollamaServer.saveButton': 'حفظ',
+  'localModel.ollamaServer.testButton': 'اختبار الاتصال',
+  'localModel.ollamaServer.unreachable': 'غير قابل للوصول',
+  'localModel.ollamaServer.validationError':
+    'يجب أن يكون عنوان URL صالحاً يبدأ بـ http:// أو https://',
   'screenAwareness.debugTitle': 'تصحيح وعي الشاشة',
   'memory.debugTitle': 'تصحيح الذاكرة',
   'webhooks.debugTitle': 'تصحيح الـ Webhooks',
@@ -261,6 +272,7 @@ const ar2: TranslationMap = {
   'chat.deleteThread': 'حذف المحادثة',
   'chat.deleteThreadConfirm': 'هل أنت متأكد من أنك تريد حذف "{title}"؟',
   'chat.untitledThread': 'محادثة بلا عنوان',
+  'chat.editThreadTitle': 'Edit thread title',
   'chat.hideSidebar': 'إخفاء الشريط الجانبي',
   'chat.showSidebar': 'إظهار الشريط الجانبي',
   'chat.newThreadShortcut': 'محادثة جديدة (/new)',
@@ -368,6 +380,40 @@ const ar2: TranslationMap = {
   'insights.relationships': 'العلاقات',
   'insights.skills': 'المهارات',
   'insights.opinions': 'الآراء',
+  // Developer options menu items (#2225) — English stubs; native translations welcome
+  'devOptions.menuAi': 'تكوين الذكاء الاصطناعي',
+  'devOptions.menuAiDesc': 'موفرو السحابة، ونماذج Ollama المحلية، والتوجيه لكل حمل عمل',
+  'devOptions.menuScreenAware': 'التعرف على الشاشة',
+  'devOptions.menuScreenAwareDesc':
+    'أذونات التقاط الشاشة، وسياسة المراقبة، وعناصر التحكم في الجلسة',
+  'devOptions.menuMessaging': 'قنوات المراسلة',
+  'devOptions.menuMessagingDesc': 'تكوين أوضاع المصادقة Telegram/Discord وتوجيه القناة الافتراضية',
+  'devOptions.menuTools': 'الأدوات',
+  'devOptions.menuToolsDesc': 'تمكين أو تعطيل الإمكانات التي يمكن أن يستخدمها OpenHuman نيابة عنك',
+  'devOptions.menuAgentChat': 'دردشة الوكيل',
+  'devOptions.menuAgentChatDesc': 'محادثة وكيل الاختبار مع تجاوزات النموذج ودرجة الحرارة',
+  'devOptions.menuCronJobs': 'وظائف Cron',
+  'devOptions.menuCronJobsDesc': 'عرض المهام المجدولة وتكوينها لمهارات وقت التشغيل',
+  'devOptions.menuLocalModelDebug': 'تصحيح أخطاء النموذج المحلي',
+  'devOptions.menuLocalModelDebugDesc':
+    'Ollama التكوين وتنزيلات الأصول واختبارات النماذج والتشخيصات',
+  'devOptions.menuWebhooksDebug': 'خطافات الويب',
+  'devOptions.menuWebhooksDebugDesc': 'فحص تسجيلات خطاف الويب لوقت التشغيل وسجلات الطلبات الملتقطة',
+  'devOptions.menuIntelligence': 'الذكاء',
+  'devOptions.menuIntelligenceDesc': 'مساحة عمل الذاكرة ومحرك العقل الباطن والأحلام والإعدادات',
+  'devOptions.menuNotificationRouting': 'توجيه الإشعارات',
+  'devOptions.menuNotificationRoutingDesc':
+    'تسجيل أهمية الذكاء الاصطناعي وتصعيد المنسق لتنبيهات التكامل',
+  'devOptions.menuComposeIOTriggers': 'مشغلات ComposeIO',
+  'devOptions.menuComposeIOTriggersDesc': 'عرض سجل وأرشيف مشغلات ComposeIO',
+  'devOptions.menuComposioRouting': 'Composio التوجيه (الوضع المباشر)',
+  'devOptions.menuComposioRoutingDesc':
+    'أحضر مفتاح Composio API الخاص بك وقم بتوجيه المكالمات مباشرة إلى backend.composio.dev',
+  'devOptions.menuComposioTriggers': 'مشغلات التكامل',
+  'devOptions.menuComposioTriggersDesc':
+    'تكوين إعدادات فرز الذكاء الاصطناعي لمشغلات التكامل Composio',
+  'mic.deviceSelector': 'جهاز الميكروفون',
+  'mic.tapToSendCountdown': 'انقر للإرسال ({seconds} ث)',
 };
 
 export default ar2;

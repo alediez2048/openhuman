@@ -17,7 +17,7 @@ const es4: TranslationMap = {
   'commandPalette.shortcutHint': 'Pulsa ? para ver todos los atajos',
   'commandPalette.title': 'Paleta de comandos',
   'composio.connect.additionalConfigRequired': 'Configuración adicional requerida',
-  'composio.connect.atlassianSubdomainHint': 'acme',
+  'composio.connect.atlassianSubdomainHint': 'cumbre',
   'composio.connect.atlassianSubdomainLabel': 'Etiqueta de subdominio de Atlassian',
   'composio.connect.connect': 'Conectar',
   'composio.connect.connectionFailed': 'Falló la conexión (estado: {status}).',
@@ -46,6 +46,15 @@ const es4: TranslationMap = {
   'composio.connect.subdomainInvalid':
     'Introduce solo el subdominio corto (p. ej. "acme"), no la URL completa. Debe contener solo letras, números y guiones.',
   'composio.connect.subdomainRequired': 'Ingresa tu subdominio de Atlassian para continuar.',
+  'composio.connect.dynamicsOrgNameLabel': 'Nombre de la organización de Dynamics 365',
+  'composio.connect.dynamicsOrgNameHint':
+    'Por ejemplo, "myorg" para myorg.crm.dynamics.com. Introduce solo el nombre corto de la organización, no la URL completa.',
+  'composio.connect.needsFieldsPrefix': 'Para conectar',
+  'composio.connect.needsFieldsSuffix':
+    'necesitamos un poco más de información. Completa los campos que faltan abajo y vuelve a intentarlo.',
+  'composio.connect.requiredFieldEmpty': 'Este campo es obligatorio.',
+  'composio.connect.wabaIdHint':
+    'Encuéntralo mediante GET /me/businesses y luego GET /{business_id}/owned_whatsapp_business_accounts usando tu token de acceso de Meta.',
   'composio.connect.wabaIdLabel': 'Etiqueta de ID de WABA',
   'composio.connect.wabaIdRequired':
     'Ingresa tu ID de cuenta de WhatsApp Business (WABA ID) para continuar.',
@@ -96,7 +105,7 @@ const es4: TranslationMap = {
   'intelligence.memoryChunk.scoreBars.kept': 'conservado',
   'intelligence.memoryText.entityTypePrefix': 'Tipo de entidad',
   'intelligence.screenDebug.active': 'Activo',
-  'intelligence.screenDebug.app': 'App',
+  'intelligence.screenDebug.app': 'Aplicación',
   'intelligence.screenDebug.bounds': 'Límites',
   'intelligence.screenDebug.captureAlt': 'Resultado de prueba de captura',
   'intelligence.screenDebug.captureFailed': 'Falló',
@@ -137,6 +146,8 @@ const es4: TranslationMap = {
   'notifications.center.filterAll': 'Filtrar todo',
   'notifications.center.markAllRead': 'Marcar todo como leído',
   'notifications.center.title': 'Notificaciones',
+  'oauth.button.loopbackTimeout':
+    'El inicio de sesión expiró — el navegador no completó la redirección OAuth. Por favor, inténtalo de nuevo.',
   'oauth.button.connecting': 'Conectando...',
   'oauth.login.continueWith': 'Continuar con',
   'onboarding.contextGathering.buildingDesc': 'Descripción de construcción',
@@ -144,11 +155,25 @@ const es4: TranslationMap = {
   'onboarding.contextGathering.continueToChat': 'Continuar al chat',
   'onboarding.contextGathering.errorDesc':
     'No pudimos construir tu perfil completo ahora mismo, pero no pasa nada — puedes continuar y tu perfil se construirá con el tiempo.',
+  'onboarding.contextGathering.coreAlive':
+    'El núcleo está disponible — el primer arranque puede tardar un minuto.',
+  'onboarding.contextGathering.coreAliveProbing': 'Comprobando la conexión con el núcleo…',
+  'onboarding.contextGathering.coreUnreachable':
+    'El núcleo no responde. Puedes continuar e intentarlo más tarde.',
+  'onboarding.contextGathering.stillWorkingDesc':
+    'El primer arranque puede tardar 30–60 segundos mientras preparamos tu modelo local y tus herramientas. Puedes continuar al chat en cualquier momento — la construcción del perfil sigue en segundo plano.',
+  'onboarding.contextGathering.stillWorkingTitle': 'Seguimos trabajando en tu perfil…',
   'onboarding.contextGathering.title': 'Recopilación de contexto',
   'openhuman.team_list_teams': 'Lista de equipos',
   'overlay.ariaAttention': 'Mensaje de atención',
+  'overlay.ariaCompanion': 'Acompañante activo',
   'overlay.ariaOrb': 'Overlay de OpenHuman',
   'overlay.ariaVoiceActive': 'Entrada de voz activa',
+  'overlay.companion.error': 'error',
+  'overlay.companion.listening': 'Escuchando…',
+  'overlay.companion.pointing': 'Señalando…',
+  'overlay.companion.speaking': 'Hablando…',
+  'overlay.companion.thinking': 'Pensando…',
   'overlay.orbTitle': 'Arrastra para mover · Doble clic para restablecer posición',
   'pages.settings.account.connections': 'Conexiones',
   'pages.settings.account.connectionsDesc': 'Descripción de conexiones',
@@ -165,9 +190,15 @@ const es4: TranslationMap = {
   'pages.settings.ai.llmDesc': 'Descripción de LLM',
   'pages.settings.ai.voice': 'Voz',
   'pages.settings.ai.voiceDesc': 'Descripción de voz',
+  'pages.settings.ai.embeddings': 'Incrustaciones',
+  'pages.settings.ai.embeddingsDesc':
+    'Modelo de codificación vectorial para recuperación de memoria',
   'pages.settings.aiSection.description':
     'Proveedores de modelos de lenguaje, Ollama local y voz (STT / TTS).',
   'pages.settings.aiSection.title': 'IA',
+  'pages.settings.features.desktopCompanion': 'Acompañante de escritorio',
+  'pages.settings.features.desktopCompanionDesc':
+    'Asistente de voz con conciencia de pantalla — escucha, ve, habla, señala',
   'pages.settings.features.messagingChannels': 'Canales de mensajería',
   'pages.settings.features.messagingChannelsDesc': 'Descripción de canales de mensajería',
   'pages.settings.features.notifications': 'Notificaciones',
@@ -262,7 +293,7 @@ const es4: TranslationMap = {
   'settings.ai.apiKeyFieldLabel': 'Etiqueta de campo de clave API',
   'settings.ai.apiKeyRequired': 'Pega tu clave API para continuar.',
   'settings.ai.apiKeyStoredEncrypted': 'Clave API almacenada cifrada',
-  'settings.ai.apiKeysEncrypted': 'auth-profiles.json',
+  'settings.ai.apiKeysEncrypted': 'perfiles-de-autenticación.json',
   'settings.ai.clearStoredKey': 'Borrar clave almacenada',
   'settings.ai.connectProvider': 'Conectar proveedor',
   'settings.ai.customRouting': 'Enrutamiento personalizado',
@@ -274,6 +305,18 @@ const es4: TranslationMap = {
   'settings.ai.localOllama': 'Local (Ollama)',
   'settings.ai.modelLabel': 'Modelo',
   'settings.ai.noCustomProviders': 'Sin proveedores personalizados',
+  'settings.ai.openAiCompat.authHeaderExample': 'Autorización: Portador <su clave>',
+  'settings.ai.openAiCompat.authHeaderLabel': 'encabezado de autenticación',
+  'settings.ai.openAiCompat.baseUrlLabel': 'Base URL',
+  'settings.ai.openAiCompat.baseUrlUnavailable': 'No disponible',
+  'settings.ai.openAiCompat.clearKey': 'Borrar clave',
+  'settings.ai.openAiCompat.description':
+    "Point local harnesses at this /v1 server to route through the providers configured below. Authentication uses a stable key you set here, not the app's internal core bearer.",
+  'settings.ai.openAiCompat.keyConfigured': 'Clave configurada',
+  'settings.ai.openAiCompat.keyRequired': 'Se requiere clave',
+  'settings.ai.openAiCompat.rotateKey': 'Girar clave',
+  'settings.ai.openAiCompat.setKey': 'Establecer clave',
+  'settings.ai.openAiCompat.title': 'Punto final compatible con OpenAI',
   'settings.ai.providerLabel': 'Proveedor',
   'settings.ai.routing': 'Enrutamiento',
   'settings.ai.routingCustom': 'Enrutamiento personalizado',
@@ -293,7 +336,7 @@ const es4: TranslationMap = {
   'settings.autocomplete.appFilter.noLogs': ') :',
   'settings.autocomplete.appFilter.refreshStatus': 'Actualizando…',
   'settings.autocomplete.appFilter.refreshing': 'Actualizando…',
-  'settings.autocomplete.appFilter.runtime': 'Runtime',
+  'settings.autocomplete.appFilter.runtime': 'Tiempo de ejecución',
   'settings.autocomplete.appFilter.test': 'Probar',
   'settings.autocomplete.completionStyle.acceptedCompletion':
     '{count} completado aceptado almacenado — se usa para personalizar futuras sugerencias.',
@@ -301,7 +344,7 @@ const es4: TranslationMap = {
     '{count} completados aceptados almacenados — se usan para personalizar futuras sugerencias.',
   'settings.autocomplete.completionStyle.clearHistory': 'Limpiando…',
   'settings.autocomplete.completionStyle.clearing': 'Limpiando…',
-  'settings.autocomplete.completionStyle.debounce': 'Debounce (ms)',
+  'settings.autocomplete.completionStyle.debounce': 'Rebote (ms)',
   'settings.autocomplete.completionStyle.enabled': 'Activado',
   'settings.autocomplete.completionStyle.maxChars': 'Máx. caracteres',
   'settings.autocomplete.completionStyle.noHistory':
@@ -364,7 +407,21 @@ const es4: TranslationMap = {
   'settings.billing.subscription.monthly': 'Mensual',
   'settings.billing.subscription.paymentConfirmed': 'Pago confirmado',
   'settings.billing.subscription.perMonth': 'Por mes',
-  'settings.billing.subscription.popular': 'Popular',
+  'settings.billing.subscription.popular': 'populares',
+  'pages.settings.account.migration': 'Importar desde otro asistente',
+  'pages.settings.account.migrationDesc':
+    'Migra memoria y notas desde OpenClaw (y pronto Hermes) a este espacio de trabajo.',
+  'composio.connect.scope.read': 'leer',
+  'composio.connect.scope.readHint': 'Permita que el agente lea datos de esta conexión.',
+  'composio.connect.scope.write': 'escribir',
+  'composio.connect.scope.writeHint':
+    'Permita que el agente cree o modifique datos a través de esta conexión.',
+  'composio.connect.scope.admin': 'administrador',
+  'composio.connect.scope.adminHint':
+    'Permitir que el agente administre configuraciones, permisos o acciones destructivas.',
+  'pages.settings.composioSection.title': 'Composio',
+  'pages.settings.composioSection.description':
+    'Enrutamiento, activadores e historial para integraciones impulsadas por Composio.',
 };
 
 export default es4;

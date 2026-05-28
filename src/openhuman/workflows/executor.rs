@@ -1444,7 +1444,7 @@ fn build_tools_registry(
     let runtime: Arc<dyn RuntimeAdapter> = Arc::new(NativeRuntime::new());
     let local_embedding = config.workload_local_model("embeddings");
     let memory: Arc<dyn Memory> = Arc::from(
-        crate::openhuman::memory::create_memory_with_local_ai(
+        crate::openhuman::memory_store::create_memory_with_local_ai(
             &config.memory,
             local_embedding.as_deref(),
             &config.embedding_routes,
@@ -1453,10 +1453,16 @@ fn build_tools_registry(
         )
         .map_err(|e| format!("memory init failed: {e}"))?,
     );
+    let audit = crate::openhuman::security::get_or_create_workspace_audit_logger(
+        crate::openhuman::config::AuditConfig::default(),
+        config.workspace_dir.clone(),
+    )
+    .map_err(|e| format!("audit logger init failed: {e}"))?;
     Ok(crate::openhuman::tools::ops::all_tools_with_runtime(
         Arc::new(config.clone()),
         &security,
         runtime,
+        audit,
         memory,
         &config.browser,
         &config.http_request,

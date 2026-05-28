@@ -46,6 +46,15 @@ const ru4: TranslationMap = {
   'composio.connect.subdomainInvalid':
     'Введите только короткий поддомен (например, "acme"), а не полный URL. Допустимы только буквы, цифры и дефисы.',
   'composio.connect.subdomainRequired': 'Введи свой поддомен Atlassian для продолжения.',
+  'composio.connect.dynamicsOrgNameLabel': 'Название организации Dynamics 365',
+  'composio.connect.dynamicsOrgNameHint':
+    'Например, "myorg" для myorg.crm.dynamics.com. Введите только короткое название организации, а не полный URL.',
+  'composio.connect.needsFieldsPrefix': 'Чтобы подключить',
+  'composio.connect.needsFieldsSuffix':
+    'нам нужно немного больше информации. Заполните недостающие поля ниже и повторите попытку.',
+  'composio.connect.requiredFieldEmpty': 'Это поле обязательно для заполнения.',
+  'composio.connect.wabaIdHint':
+    'Найдите его через GET /me/businesses, затем GET /{business_id}/owned_whatsapp_business_accounts, используя ваш токен доступа Meta.',
   'composio.connect.wabaIdLabel': 'ID аккаунта WhatsApp Business',
   'composio.connect.wabaIdRequired':
     'Введи ID аккаунта WhatsApp Business (WABA ID) для продолжения.',
@@ -137,6 +146,8 @@ const ru4: TranslationMap = {
   'notifications.center.filterAll': 'Все',
   'notifications.center.markAllRead': 'Отметить всё прочитанным',
   'notifications.center.title': 'Уведомления',
+  'oauth.button.loopbackTimeout':
+    'Время входа истекло — браузер не завершил перенаправление OAuth. Пожалуйста, попробуйте снова.',
   'oauth.button.connecting': 'Подключение...',
   'oauth.login.continueWith': 'Продолжить через',
   'onboarding.contextGathering.buildingDesc': 'Сборка профиля',
@@ -144,11 +155,24 @@ const ru4: TranslationMap = {
   'onboarding.contextGathering.continueToChat': 'Перейти в чат',
   'onboarding.contextGathering.errorDesc':
     'Мы не смогли построить ваш полный профиль прямо сейчас, но это нормально — вы можете продолжить, и профиль будет дополняться со временем.',
+  'onboarding.contextGathering.coreAlive': 'Ядро доступно — первый запуск может занять минуту.',
+  'onboarding.contextGathering.coreAliveProbing': 'Проверка соединения с ядром…',
+  'onboarding.contextGathering.coreUnreachable':
+    'Ядро не отвечает. Можно продолжить и попробовать позже.',
+  'onboarding.contextGathering.stillWorkingDesc':
+    'Первый запуск может занять 30–60 секунд, пока мы прогреваем локальную модель и инструменты. Вы можете перейти в чат в любой момент — построение профиля продолжится в фоне.',
+  'onboarding.contextGathering.stillWorkingTitle': 'Профиль ещё составляется…',
   'onboarding.contextGathering.title': 'Сбор контекста',
   'openhuman.team_list_teams': 'Список команд',
   'overlay.ariaAttention': 'Сообщение',
+  'overlay.ariaCompanion': 'Спутник активен',
   'overlay.ariaOrb': 'Оверлей OpenHuman',
   'overlay.ariaVoiceActive': 'Голосовой ввод активен',
+  'overlay.companion.error': 'Ошибка',
+  'overlay.companion.listening': 'Слушает…',
+  'overlay.companion.pointing': 'Указывает…',
+  'overlay.companion.speaking': 'Говорит…',
+  'overlay.companion.thinking': 'Думает…',
   'overlay.orbTitle': 'Перетащи для перемещения · Двойной клик для сброса позиции',
   'pages.settings.account.connections': 'Подключения',
   'pages.settings.account.connectionsDesc': 'Описание подключений',
@@ -165,8 +189,13 @@ const ru4: TranslationMap = {
   'pages.settings.ai.llmDesc': 'Описание LLM',
   'pages.settings.ai.voice': 'Голос',
   'pages.settings.ai.voiceDesc': 'Описание голоса',
+  'pages.settings.ai.embeddings': 'Эмбеддинги',
+  'pages.settings.ai.embeddingsDesc': 'Модель векторного кодирования для извлечения из памяти',
   'pages.settings.aiSection.description': 'Языковые модели, локальный Ollama и голос (STT / TTS).',
   'pages.settings.aiSection.title': 'ИИ',
+  'pages.settings.features.desktopCompanion': 'Десктоп-спутник',
+  'pages.settings.features.desktopCompanionDesc':
+    'Голосовой ассистент с распознаванием экрана — слушает, видит, говорит, указывает',
   'pages.settings.features.messagingChannels': 'Каналы мессенджеров',
   'pages.settings.features.messagingChannelsDesc': 'Описание каналов сообщений',
   'pages.settings.features.notifications': 'Уведомления',
@@ -272,6 +301,18 @@ const ru4: TranslationMap = {
   'settings.ai.localOllama': 'Локально (Ollama)',
   'settings.ai.modelLabel': 'Модель',
   'settings.ai.noCustomProviders': 'Нет пользовательских провайдеров',
+  'settings.ai.openAiCompat.authHeaderExample': 'Авторизация: Носитель <ваш ключ>',
+  'settings.ai.openAiCompat.authHeaderLabel': 'Заголовок аутентификации',
+  'settings.ai.openAiCompat.baseUrlLabel': 'База URL',
+  'settings.ai.openAiCompat.baseUrlUnavailable': 'Недоступно',
+  'settings.ai.openAiCompat.clearKey': 'Очистить ключ',
+  'settings.ai.openAiCompat.description':
+    "Point local harnesses at this /v1 server to route through the providers configured below. Authentication uses a stable key you set here, not the app's internal core bearer.",
+  'settings.ai.openAiCompat.keyConfigured': 'Ключ настроен',
+  'settings.ai.openAiCompat.keyRequired': 'Требуется ключ',
+  'settings.ai.openAiCompat.rotateKey': 'Повернуть ключ',
+  'settings.ai.openAiCompat.setKey': 'Установить ключ',
+  'settings.ai.openAiCompat.title': 'OpenAI-совместимая конечная точка',
   'settings.ai.providerLabel': 'Провайдер',
   'settings.ai.routing': 'Маршрутизация',
   'settings.ai.routingCustom': 'Пользовательская маршрутизация',
@@ -363,6 +404,20 @@ const ru4: TranslationMap = {
   'settings.billing.subscription.paymentConfirmed': 'Оплата подтверждена',
   'settings.billing.subscription.perMonth': 'В месяц',
   'settings.billing.subscription.popular': 'Популярное',
+  'pages.settings.account.migration': 'Импорт из другого ассистента',
+  'pages.settings.account.migrationDesc':
+    'Перенесите память и заметки из OpenClaw (а вскоре и Hermes) в это рабочее пространство.',
+  'composio.connect.scope.read': 'Чтение',
+  'composio.connect.scope.readHint': 'Разрешить агенту читать данные из этого соединения.',
+  'composio.connect.scope.write': 'Запись',
+  'composio.connect.scope.writeHint':
+    'Разрешить агенту создавать или изменять данные через это соединение.',
+  'composio.connect.scope.admin': 'Администратор',
+  'composio.connect.scope.adminHint':
+    'Разрешить агенту управлять настройками, разрешениями или деструктивными действиями.',
+  'pages.settings.composioSection.title': 'Composio',
+  'pages.settings.composioSection.description':
+    'Маршрутизация, триггеры и история интеграций на базе Composio.',
 };
 
 export default ru4;

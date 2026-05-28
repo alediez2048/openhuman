@@ -574,6 +574,8 @@ pub async fn add_mcp_server(config: &Config, req: McpAddRequest) -> Result<McpSe
         cwd: req.cwd.filter(|c| !c.trim().is_empty()),
         description: req.description.filter(|d| !d.trim().is_empty()),
         enabled: true,
+        allowed_tools: Vec::new(),
+        disallowed_tools: Vec::new(),
         timeout_secs: 30,
         auth,
     };

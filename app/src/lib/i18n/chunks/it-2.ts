@@ -142,7 +142,7 @@ const it2: TranslationMap = {
   'team.failedToSwitch': 'Cambio team fallito',
   'team.failedToLeave': 'Uscita dal team fallita',
   'team.role.owner': 'Proprietario',
-  'team.role.admin': 'Admin',
+  'team.role.admin': 'Amministratore',
   'team.role.billingManager': 'Responsabile fatturazione',
   'team.role.member': 'Membro',
   'team.active': 'Attivo',
@@ -171,7 +171,7 @@ const it2: TranslationMap = {
   'voice.title': 'Dettatura vocale',
   'voice.settings': 'Impostazioni voce',
   'voice.settingsDesc': "Tieni premuta l'hotkey per dettare e inserire testo nel campo attivo.",
-  'voice.hotkey': 'Hotkey',
+  'voice.hotkey': 'Tasto di scelta rapida',
   'voice.activationMode': 'Modalità di attivazione',
   'voice.tapToToggle': 'Tocca per attivare/disattivare',
   'voice.writingStyle': 'Stile di scrittura',
@@ -248,6 +248,16 @@ const it2: TranslationMap = {
     "Interruttore principale. Disattivato di default — Ollama resta inattivo. Quando attivo, il tree summarizer, lo screen intelligence e l'autocompletamento usano sempre il modello locale.",
   'localModel.advancedSettings': 'Impostazioni avanzate',
   'localModel.debugTitle': 'Debug modello locale',
+  'localModel.ollamaServer.helperText': 'Esempio: http://192.168.1.5:11434',
+  'localModel.ollamaServer.label': 'URL del server Ollama',
+  'localModel.ollamaServer.modelCount': 'modelli',
+  'localModel.ollamaServer.placeholder': 'http://localhost:11434',
+  'localModel.ollamaServer.reachable': 'Raggiungibile',
+  'localModel.ollamaServer.resetButton': 'Ripristina predefinito',
+  'localModel.ollamaServer.saveButton': 'Salva',
+  'localModel.ollamaServer.testButton': 'Testa connessione',
+  'localModel.ollamaServer.unreachable': 'Non raggiungibile',
+  'localModel.ollamaServer.validationError': 'Deve essere un URL http:// o https:// valido',
   'screenAwareness.debugTitle': 'Debug consapevolezza schermo',
   'memory.debugTitle': 'Debug memoria',
   'webhooks.debugTitle': 'Debug webhook',
@@ -271,6 +281,7 @@ const it2: TranslationMap = {
   'chat.deleteThread': 'Elimina thread',
   'chat.deleteThreadConfirm': 'Sei sicuro di voler eliminare "{title}"?',
   'chat.untitledThread': 'Thread senza titolo',
+  'chat.editThreadTitle': 'Edit thread title',
   'chat.hideSidebar': 'Nascondi barra laterale',
   'chat.showSidebar': 'Mostra barra laterale',
   'chat.newThreadShortcut': 'Nuovo thread (/new)',
@@ -305,7 +316,7 @@ const it2: TranslationMap = {
   'memory.searchAria': 'Cerca memoria',
   'memory.searchPlaceholder': 'Cerca voci di memoria...',
   'memory.sourceFilter.all': 'Tutte le origini',
-  'memory.sourceFilter.email': 'Email',
+  'memory.sourceFilter.email': 'E-mail',
   'memory.sourceFilter.calendar': 'Calendario',
   'memory.sourceFilter.telegram': 'Telegram',
   'memory.sourceFilter.aiInsight': 'AI Insight',
@@ -371,7 +382,7 @@ const it2: TranslationMap = {
   'dreams.comingSoon': 'In arrivo',
   'assignment.memoryLlm': 'LLM memoria',
   'assignment.memoryLlmAria': 'Selezione LLM memoria',
-  'assignment.embedder': 'Embedder',
+  'assignment.embedder': 'Incorpora',
   'assignment.loaded': 'Caricato',
   'assignment.notDownloaded': 'Non scaricato',
   'assignment.usedForExtractSummarise': 'Usato per estrazione e riassunto',
@@ -380,6 +391,47 @@ const it2: TranslationMap = {
   'insights.relationships': 'Relazioni',
   'insights.skills': 'Competenze',
   'insights.opinions': 'Opinioni',
+  // Developer options menu items (#2225) — English stubs; native translations welcome
+  'devOptions.menuAi': 'Configurazione AI',
+  'devOptions.menuAiDesc': 'Provider cloud, modelli Ollama locali e routing per carico di lavoro',
+  'devOptions.menuScreenAware': 'Riconoscimento schermo',
+  'devOptions.menuScreenAwareDesc':
+    "Autorizzazioni per l'acquisizione dello schermo, policy di monitoraggio e controlli della sessione",
+  'devOptions.menuMessaging': 'Canali di messaggistica',
+  'devOptions.menuMessagingDesc':
+    'Configura le modalità di autenticazione Telegram/Discord e il routing del canale predefinito',
+  'devOptions.menuTools': 'Strumenti',
+  'devOptions.menuToolsDesc':
+    'Abilita o disabilita le funzionalità che OpenHuman può utilizzare per tuo conto',
+  'devOptions.menuAgentChat': "Chat dell'agente",
+  'devOptions.menuAgentChatDesc':
+    "Conversazione dell'agente di test con override di modello e temperatura",
+  'devOptions.menuCronJobs': 'Cron Jobs',
+  'devOptions.menuCronJobsDesc':
+    'Visualizza e configura processi pianificati per le competenze di runtime',
+  'devOptions.menuLocalModelDebug': 'Debug modello locale',
+  'devOptions.menuLocalModelDebugDesc':
+    'Ollama configurazione, download di risorse, test del modello e diagnostica',
+  'devOptions.menuWebhooksDebug': 'Webhook',
+  'devOptions.menuWebhooksDebugDesc':
+    'Esamina le registrazioni dei webhook di runtime e i registri delle richieste acquisite',
+  'devOptions.menuIntelligence': 'Intelligenza',
+  'devOptions.menuIntelligenceDesc':
+    'Spazio di lavoro della memoria, motore subconscio, sogni e impostazioni',
+  'devOptions.menuNotificationRouting': 'Routing delle notifiche',
+  'devOptions.menuNotificationRoutingDesc':
+    "Punteggio di importanza AI ed escalation dell'agente di orchestrazione per gli avvisi di integrazione",
+  'devOptions.menuComposeIOTriggers': 'Trigger ComposeIO',
+  'devOptions.menuComposeIOTriggersDesc':
+    "Visualizza la cronologia e l'archivio dei trigger ComposeIO",
+  'devOptions.menuComposioRouting': 'Composio Routing (modalità diretta)',
+  'devOptions.menuComposioRoutingDesc':
+    'Porta la tua chiave Composio API e instrada le chiamate direttamente a backend.composio.dev',
+  'devOptions.menuComposioTriggers': 'Trigger di integrazione',
+  'devOptions.menuComposioTriggersDesc':
+    'Configura le impostazioni di triage AI per i trigger di integrazione Composio',
+  'mic.deviceSelector': 'Dispositivo microfono',
+  'mic.tapToSendCountdown': 'Tocca per inviare ({seconds}s)',
 };
 
 export default it2;
