@@ -122,10 +122,7 @@ describe('Workflows — Phase 2 starter catalog (F2-12 + F2-16)', () => {
     // section. Pin each card by id so a regression that drops a
     // single template fails with a clear "RU-X missing" message.
     for (const templateId of ALL_TEMPLATE_IDS) {
-      const present = await waitForTestId(
-        `starter-workflow-card-${templateId}`,
-        10_000
-      );
+      const present = await waitForTestId(`starter-workflow-card-${templateId}`, 10_000);
       expect(present).toBe(true);
     }
     expect(await countStarterCards()).toBe(EXPECTED_STARTER_COUNT);
@@ -155,9 +152,9 @@ describe('Workflows — Phase 2 starter catalog (F2-12 + F2-16)', () => {
     expect(seeded.origin.template_id).toBe(RU_7_TEMPLATE_ID);
 
     // Catalog re-renders without RU-7; remaining 8 still surface.
-    expect(
-      await waitForTestIdMissing(`starter-workflow-card-${RU_7_TEMPLATE_ID}`, 10_000)
-    ).toBe(true);
+    expect(await waitForTestIdMissing(`starter-workflow-card-${RU_7_TEMPLATE_ID}`, 10_000)).toBe(
+      true
+    );
     expect(await countStarterCards()).toBe(EXPECTED_STARTER_COUNT - 1);
 
     // Your-workflows section now shows the seeded row.
@@ -180,9 +177,7 @@ describe('Workflows — Phase 2 starter catalog (F2-12 + F2-16)', () => {
 
     // Your-workflows section empties; catalog regrows to 9.
     expect(await waitForTestIdMissing(`workflow-card-${wf.id}`, 10_000)).toBe(true);
-    expect(
-      await waitForTestId(`starter-workflow-card-${RU_7_TEMPLATE_ID}`, 10_000)
-    ).toBe(true);
+    expect(await waitForTestId(`starter-workflow-card-${RU_7_TEMPLATE_ID}`, 10_000)).toBe(true);
     expect(await countStarterCards()).toBe(EXPECTED_STARTER_COUNT);
 
     // The default `workflows_list` MUST exclude the soft-deleted row
@@ -194,11 +189,8 @@ describe('Workflows — Phase 2 starter catalog (F2-12 + F2-16)', () => {
     // Trash-view variant: workflows_list { include_deleted: true }
     // still surfaces the row inside the 30-day retention window.
     const withDeleted =
-      (
-        await callOpenhumanRpc('workflows_list', {
-          filter: { include_deleted: true },
-        })
-      )?.workflows ?? [];
+      (await callOpenhumanRpc('workflows_list', { filter: { include_deleted: true } }))
+        ?.workflows ?? [];
     expect(withDeleted.length).toBe(1);
     expect(withDeleted[0]!.id).toBe(wf.id);
   });

@@ -83,7 +83,9 @@ async function pollForTerminalRun(
     }
     await browser.pause(400);
   }
-  throw new Error(`run never reached terminal status for workflow=${workflowId} within ${timeoutMs}ms`);
+  throw new Error(
+    `run never reached terminal status for workflow=${workflowId} within ${timeoutMs}ms`
+  );
 }
 
 /** Build a 3-node Phase 2 chain via direct RPC. Uses `tool_call`
@@ -178,7 +180,7 @@ describe('Workflows — Phase 2 live-testing pass (F2-17)', () => {
       output_json?: string | null;
     }>;
     expect(steps.length).toBe(3);
-    expect(steps.map((s) => s.node_id)).toEqual(['n1', 'n2', 'n3']);
+    expect(steps.map(s => s.node_id)).toEqual(['n1', 'n2', 'n3']);
     for (const s of steps) {
       expect(s.status).toBe('succeeded');
     }
@@ -207,9 +209,7 @@ describe('Workflows — Phase 2 live-testing pass (F2-17)', () => {
 
     // Restore brings it back.
     const restoredOutcome = await callOpenhumanRpc('workflows_restore', { id: wfId });
-    const restored = (restoredOutcome?.workflow ?? restoredOutcome) as
-      | { id: string }
-      | null;
+    const restored = (restoredOutcome?.workflow ?? restoredOutcome) as { id: string } | null;
     expect(restored).not.toBeNull();
     expect(restored!.id).toBe(wfId);
 
@@ -236,11 +236,7 @@ describe('Workflows — Phase 2 live-testing pass (F2-17)', () => {
             {
               id: 'n1',
               kind: 'tool_call',
-              config: {
-                kind: 'tool_call',
-                tool_name: 'passthrough',
-                arguments_template: {},
-              },
+              config: { kind: 'tool_call', tool_name: 'passthrough', arguments_template: {} },
               position: null,
               retry_policy: null,
             },
@@ -271,11 +267,7 @@ describe('Workflows — Phase 2 live-testing pass (F2-17)', () => {
           {
             id: 'n1',
             kind: 'tool_call',
-            config: {
-              kind: 'tool_call',
-              tool_name: 'passthrough',
-              arguments_template: {},
-            },
+            config: { kind: 'tool_call', tool_name: 'passthrough', arguments_template: {} },
             position: null,
             retry_policy: null,
           },
@@ -292,7 +284,7 @@ describe('Workflows — Phase 2 live-testing pass (F2-17)', () => {
   it('scenario 8: list_starter_templates(phase=2) returns all 9 RU-1..RU-9 templates', async () => {
     const out = await callOpenhumanRpc('workflows_list_starter_templates', { phase: 2 });
     const templates = (out?.templates ?? out) as Array<{ template_id: string }>;
-    const ids = new Set(templates.map((t) => t.template_id));
+    const ids = new Set(templates.map(t => t.template_id));
     for (const id of [
       'ru-1-founder-morning-digest',
       'ru-2-linkedin-engagement-queue',
@@ -312,7 +304,7 @@ describe('Workflows — Phase 2 live-testing pass (F2-17)', () => {
   it('scenario 9: about_app_list_capabilities returns the 7 Phase 2 entries', async () => {
     const out = await callOpenhumanRpc('about_app_list_capabilities', {});
     const caps = (out?.capabilities ?? out) as Array<{ id: string }>;
-    const ids = new Set(caps.map((c) => c.id));
+    const ids = new Set(caps.map(c => c.id));
     for (const id of [
       'automation.multi_node_chain',
       'automation.webhook_trigger',
@@ -338,37 +330,25 @@ describe('Workflows — Phase 2 live-testing pass (F2-17)', () => {
   });
 
   // ── Deferred scenarios — explicit skips with the reason ──────────────
-  it.skip(
-    'scenario 2 (DEFERRED → F2-17b): webhook POST → run dispatches with payload templating',
-    () => {
-      // Needs a tunnel-shaped HTTP receiver inside the test rig that
-      // can POST to the registered tunnel URL with a valid HMAC. The
-      // executor's `dispatch_run_with_payload` + cap + reconcile are
-      // all unit-tested in the Rust suite (F2-9, F2-9b); the gap is
-      // through-the-transport verification.
-    }
-  );
-  it.skip(
-    'scenario 3 (DEFERRED → F2-17b): composio_event fan-out dispatches all matching workflows',
-    () => {
-      // Needs a `workflows_dev_simulate_trigger` debug RPC gated by
-      // OPENHUMAN_DEV_E2E=1. The fan-out + filter logic is covered by
-      // F2-10's executor + bus tests.
-    }
-  );
-  it.skip(
-    'scenario 4 (DEFERRED → F2-17b): channel_message filter dispatches only matching messages',
-    () => {
-      // Same debug-RPC dependency as scenario 3 — F2-11 logic is
-      // covered by the Rust unit suite.
-    }
-  );
-  it.skip(
-    'scenario 5 (DEFERRED → F2-17b): condition node routes between then/else branches',
-    () => {
-      // Needs a `workflows_dev_inject_agent_stub` debug RPC so the
-      // condition can be driven against deterministic agent outputs.
-      // F2-6 reachability + branch walk is covered by Rust unit tests.
-    }
-  );
+  it.skip('scenario 2 (DEFERRED → F2-17b): webhook POST → run dispatches with payload templating', () => {
+    // Needs a tunnel-shaped HTTP receiver inside the test rig that
+    // can POST to the registered tunnel URL with a valid HMAC. The
+    // executor's `dispatch_run_with_payload` + cap + reconcile are
+    // all unit-tested in the Rust suite (F2-9, F2-9b); the gap is
+    // through-the-transport verification.
+  });
+  it.skip('scenario 3 (DEFERRED → F2-17b): composio_event fan-out dispatches all matching workflows', () => {
+    // Needs a `workflows_dev_simulate_trigger` debug RPC gated by
+    // OPENHUMAN_DEV_E2E=1. The fan-out + filter logic is covered by
+    // F2-10's executor + bus tests.
+  });
+  it.skip('scenario 4 (DEFERRED → F2-17b): channel_message filter dispatches only matching messages', () => {
+    // Same debug-RPC dependency as scenario 3 — F2-11 logic is
+    // covered by the Rust unit suite.
+  });
+  it.skip('scenario 5 (DEFERRED → F2-17b): condition node routes between then/else branches', () => {
+    // Needs a `workflows_dev_inject_agent_stub` debug RPC so the
+    // condition can be driven against deterministic agent outputs.
+    // F2-6 reachability + branch walk is covered by Rust unit tests.
+  });
 });

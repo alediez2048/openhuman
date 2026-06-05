@@ -835,28 +835,26 @@ impl Tool for ComposioListToolsTool {
                 // user's active connected toolkit set.
                 let scope: Vec<String> = match toolkits {
                     Some(ref list) if !list.is_empty() => list.clone(),
-                    _ => {
-                        match direct_list_connections(&direct).await {
-                            Ok(conns) => {
-                                let mut v: Vec<String> = conns
-                                    .connections
-                                    .iter()
-                                    .filter(|c| c.is_active())
-                                    .map(|c| c.normalized_toolkit())
-                                    .filter(|t| !t.is_empty())
-                                    .collect();
-                                v.sort();
-                                v.dedup();
-                                v
-                            }
-                            Err(e) => {
-                                return Ok(ToolResult::error(format!(
-                                    "composio_list_tools (direct): prefetch connections \
-                                     failed: {e}"
-                                )));
-                            }
+                    _ => match direct_list_connections(&direct).await {
+                        Ok(conns) => {
+                            let mut v: Vec<String> = conns
+                                .connections
+                                .iter()
+                                .filter(|c| c.is_active())
+                                .map(|c| c.normalized_toolkit())
+                                .filter(|t| !t.is_empty())
+                                .collect();
+                            v.sort();
+                            v.dedup();
+                            v
                         }
-                    }
+                        Err(e) => {
+                            return Ok(ToolResult::error(format!(
+                                "composio_list_tools (direct): prefetch connections \
+                                     failed: {e}"
+                            )));
+                        }
+                    },
                 };
 
                 if scope.is_empty() {
@@ -895,13 +893,7 @@ impl Tool for ComposioListToolsTool {
                         "[composio-direct] list_tools.execute: fetching v3 tool schemas \
                          for cache misses"
                     );
-                    match direct_list_tools(
-                        &direct,
-                        &missing_scopes,
-                        tags.as_deref(),
-                    )
-                    .await
-                    {
+                    match direct_list_tools(&direct, &missing_scopes, tags.as_deref()).await {
                         Ok(fresh) => {
                             // Write through per-toolkit so each slug gets its own TTL.
                             for slug in &missing_scopes {

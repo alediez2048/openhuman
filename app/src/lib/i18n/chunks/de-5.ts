@@ -857,7 +857,8 @@ const de5: TranslationMap = {
   'workflows.your_workflows': 'Your workflows',
   'workflows.starter_workflows': 'Starter workflows',
   'workflows.empty_title': 'No workflows yet',
-  'workflows.empty_subtitle': 'Describe what you want OpenHuman to do for you, and we’ll set up the workflow.',
+  'workflows.empty_subtitle':
+    'Describe what you want OpenHuman to do for you, and we’ll set up the workflow.',
   'workflows.empty_cta': 'Ask OpenHuman to build a workflow',
   'workflows.enable': 'Enable',
   'workflows.disable': 'Disable',
@@ -887,12 +888,14 @@ const de5: TranslationMap = {
   'workflows.sort_name': 'Name',
   'workflows.sort_created': 'Created',
   'workflows.no_results': 'No workflows match your filters.',
-  'workflows.starter_subtitle': 'Curated workflows you can add in one click — connections shown below each card.',
+  'workflows.starter_subtitle':
+    'Curated workflows you can add in one click — connections shown below each card.',
   'workflows.add_to_my_workflows': 'Add',
   'workflows.add_and_enable': 'Add & Enable',
   'workflows.hide_starter': 'Hide starter workflows',
   'workflows.show_starter': 'Show starter workflows',
-  'workflows.starter_empty_catalog': 'All starter workflows added — you can still build more in chat.',
+  'workflows.starter_empty_catalog':
+    'All starter workflows added — you can still build more in chat.',
   'workflows.starter_card.missing_connections': 'Needs',
   'workflows.starter_load_error': 'Couldn’t load starter workflows.',
   'workflows.starter_adding': 'Adding…',
@@ -932,8 +935,10 @@ const de5: TranslationMap = {
   'workflows.preview.manage_connections': 'Manage connections →',
   'workflows.preview.copy_prompt': 'Copy',
   'workflows.preview.copied': 'Copied',
-  'workflows.preview.delete_subtitle': 'This workflow has {count} past runs. Run history is kept for {days} days after deletion, then permanently purged.',
-  'workflows.preview.delete_no_runs': 'This workflow has no past runs. Run history is kept for {days} days after deletion, then permanently purged.',
+  'workflows.preview.delete_subtitle':
+    'This workflow has {count} past runs. Run history is kept for {days} days after deletion, then permanently purged.',
+  'workflows.preview.delete_no_runs':
+    'This workflow has no past runs. Run history is kept for {days} days after deletion, then permanently purged.',
   'workflows.preview.edit_header': '✏️ {name} — proposed edit',
   'workflows.preview.no_changes': 'No changes proposed.',
   'workflows.preview.delete_header': '🗑 Delete “{name}”',
@@ -945,7 +950,6 @@ const de5: TranslationMap = {
   'workflows.preview.error_announce': 'Couldn’t save the workflow.',
   'settings.workflows.section_title': 'Workflows',
   'settings.workflows.show_starter_label': 'Show starter workflows on the Workflows page',
-
 };
 
 export default de5;
