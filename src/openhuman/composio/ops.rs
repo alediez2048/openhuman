@@ -1539,6 +1539,155 @@ struct CachedIntegrations {
 static INTEGRATIONS_CACHE: LazyLock<RwLock<HashMap<String, CachedIntegrations>>> =
     LazyLock::new(|| RwLock::new(HashMap::new()));
 
+// ── Direct-mode per-process TTL caches (CD-1) ──────────────────────
+//
+// These mirror `INTEGRATIONS_CACHE`'s `try_read` non-blocking pattern so
+// a turn never stalls waiting on a writer. Both are invalidated by
+// `invalidate_connected_integrations_cache` so a `ComposioConfigChanged`
+// event (mode toggle or API key change) clears all three caches in one
+// shot.
+
+/// 30-second TTL for the direct-mode toolkits list.
+///
+/// Toolkits are derived from connected accounts, which change infrequently.
+/// 30 s is aggressive enough to pick up a freshly-connected toolkit within
+/// the first prompt after connection, but short enough to avoid rate
+/// pressure on the v3 `/connected_accounts` endpoint.
+const TOOLKITS_CACHE_TTL: Duration = Duration::from_secs(30);
+
+/// 5-minute TTL for the per-toolkit tool-schema cache.
+///
+/// Action schemas are stable (they only change when Composio pushes a new
+/// toolkit version) and the list can be large (~200 rows per toolkit).
+/// A longer TTL keeps rate pressure on v3 `/tools` low while still
+/// picking up any schema updates within a single session.
+const TOOLS_CACHE_TTL: Duration = Duration::from_secs(300);
+
+/// Cached toolkits list for direct mode.
+#[derive(Clone)]
+struct CachedToolkits {
+    response: ComposioToolkitsResponse,
+    cached_at: Instant,
+}
+
+/// Cached tools response for direct mode, keyed by toolkit slug so each
+/// toolkit's schema list is cached and evicted independently.
+#[derive(Clone)]
+struct CachedTools {
+    response: ComposioToolsResponse,
+    cached_at: Instant,
+}
+
+/// Process-wide toolkits cache for direct mode, keyed by config identity
+/// (same `cache_key(config)` used by `INTEGRATIONS_CACHE`).
+static TOOLKITS_CACHE: LazyLock<RwLock<HashMap<String, CachedToolkits>>> =
+    LazyLock::new(|| RwLock::new(HashMap::new()));
+
+/// Process-wide tools cache for direct mode, keyed by
+/// `(config_identity, toolkit_slug)`.
+static TOOLS_CACHE: LazyLock<RwLock<HashMap<(String, String), CachedTools>>> =
+    LazyLock::new(|| RwLock::new(HashMap::new()));
+
+/// Read the direct-mode toolkits cache for the given config if it is
+/// populated and not yet expired. Returns `None` on lock contention, miss,
+/// or expiry — all three are treated as cache misses by the caller.
+pub fn cached_toolkits(config: &Config) -> Option<ComposioToolkitsResponse> {
+    let key = cache_key(config);
+    let guard = match TOOLKITS_CACHE.try_read() {
+        Ok(g) => g,
+        Err(_) => {
+            tracing::trace!(
+                key = %key,
+                "[composio][toolkits_cache] cached_toolkits:lock_contended"
+            );
+            return None;
+        }
+    };
+    let Some(cached) = guard.get(&key) else {
+        tracing::trace!(key = %key, "[composio][toolkits_cache] cached_toolkits:miss");
+        return None;
+    };
+    if cached.cached_at.elapsed() > TOOLKITS_CACHE_TTL {
+        tracing::trace!(key = %key, "[composio][toolkits_cache] cached_toolkits:expired");
+        return None;
+    }
+    tracing::trace!(
+        key = %key,
+        count = cached.response.toolkits.len(),
+        "[composio][toolkits_cache] cached_toolkits:hit"
+    );
+    Some(cached.response.clone())
+}
+
+/// Persist a fresh toolkits response into the cache.
+pub fn store_toolkits_cache(config: &Config, resp: &ComposioToolkitsResponse) {
+    let key = cache_key(config);
+    if let Ok(mut guard) = TOOLKITS_CACHE.write() {
+        guard.insert(
+            key.clone(),
+            CachedToolkits {
+                response: resp.clone(),
+                cached_at: Instant::now(),
+            },
+        );
+        tracing::trace!(
+            key = %key,
+            count = resp.toolkits.len(),
+            "[composio][toolkits_cache] stored"
+        );
+    }
+}
+
+/// Read the direct-mode tools cache for the given config + toolkit slug.
+pub fn cached_tools(config: &Config, toolkit_slug: &str) -> Option<ComposioToolsResponse> {
+    let key = (cache_key(config), toolkit_slug.to_string());
+    let guard = match TOOLS_CACHE.try_read() {
+        Ok(g) => g,
+        Err(_) => {
+            tracing::trace!(
+                toolkit = %toolkit_slug,
+                "[composio][tools_cache] cached_tools:lock_contended"
+            );
+            return None;
+        }
+    };
+    let Some(cached) = guard.get(&key) else {
+        tracing::trace!(toolkit = %toolkit_slug, "[composio][tools_cache] cached_tools:miss");
+        return None;
+    };
+    if cached.cached_at.elapsed() > TOOLS_CACHE_TTL {
+        tracing::trace!(toolkit = %toolkit_slug, "[composio][tools_cache] cached_tools:expired");
+        return None;
+    }
+    tracing::trace!(
+        toolkit = %toolkit_slug,
+        count = cached.response.tools.len(),
+        "[composio][tools_cache] cached_tools:hit"
+    );
+    Some(cached.response.clone())
+}
+
+/// Persist a fresh tools response for the given toolkit slug.
+pub fn store_tools_cache(config: &Config, toolkit_slug: &str, resp: &ComposioToolsResponse) {
+    let key = (cache_key(config), toolkit_slug.to_string());
+    if let Ok(mut guard) = TOOLS_CACHE.write() {
+        guard.insert(
+            key.clone(),
+            CachedTools {
+                response: resp.clone(),
+                cached_at: Instant::now(),
+            },
+        );
+        tracing::trace!(
+            toolkit = %toolkit_slug,
+            count = resp.tools.len(),
+            "[composio][tools_cache] stored"
+        );
+    }
+}
+
+// ── End direct-mode TTL caches ──────────────────────────────────────
+
 /// Derive a stable cache key from a [`Config`]. We use the stringified
 /// `config_path` because it uniquely identifies a user context (it
 /// resolves to the per-user openhuman dir).
@@ -1553,7 +1702,10 @@ fn cache_key(config: &Config) -> String {
 /// new OAuth connection completes, by [`composio_list_connections`]
 /// when it observes a divergence between the backend response and the
 /// cached snapshot, and from tests. Clears the entire map because the
-/// callers don't carry a config reference.
+/// callers don't carry a config reference. Also clears the direct-mode
+/// `TOOLKITS_CACHE` and `TOOLS_CACHE` so a mode toggle or API-key
+/// change (which publishes `ComposioConfigChanged`) evicts all stale
+/// direct-mode catalog data in the same call.
 pub fn invalidate_connected_integrations_cache() {
     if let Ok(mut guard) = INTEGRATIONS_CACHE.write() {
         let entries = guard.len();
@@ -1562,6 +1714,26 @@ pub fn invalidate_connected_integrations_cache() {
             cached_keys = entries,
             "[composio][integrations] cache invalidated"
         );
+    }
+    if let Ok(mut guard) = TOOLKITS_CACHE.write() {
+        let entries = guard.len();
+        guard.clear();
+        if entries > 0 {
+            tracing::info!(
+                cached_keys = entries,
+                "[composio][toolkits_cache] cache invalidated"
+            );
+        }
+    }
+    if let Ok(mut guard) = TOOLS_CACHE.write() {
+        let entries = guard.len();
+        guard.clear();
+        if entries > 0 {
+            tracing::info!(
+                cached_keys = entries,
+                "[composio][tools_cache] cache invalidated"
+            );
+        }
     }
 }
 

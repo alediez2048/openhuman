@@ -791,18 +791,17 @@ fn execute_tool_resolves_to_backend_kind_when_mode_is_backend() {
 }
 
 #[tokio::test]
-async fn list_tools_in_direct_mode_returns_empty_without_hitting_backend() {
-    // In direct mode `composio_list_tools` deliberately returns an empty
-    // `ComposioToolsResponse` and logs an info-level note (matches the
-    // ops.rs pattern for list_toolkits/list_connections). The critical
-    // assertion is that this short-circuits **before** any backend
-    // call — if it didn't, the tool would otherwise try to reach
-    // `staging-api.tinyhumans.ai` and fail with a network error, which
-    // would still surface as an error ToolResult.
+async fn list_tools_in_direct_mode_routes_through_composio_v3_not_backend() {
+    // [CD-1] In direct mode `composio_list_tools` now prefetches the
+    // user's connected accounts from Composio v3 to derive the toolkit
+    // set, then calls v3 `/tools` per toolkit. The previous short-circuit
+    // to an empty `ComposioToolsResponse` left the agent with nothing to
+    // discover and caused workflow runs to report Succeeded with zero
+    // tool calls.
     //
-    // Production `.execute(..)` calls `load_config_with_timeout()` per
-    // call which reads from disk — see the matching note on
-    // `execute_tool_per_call_factory_means_no_baked_client`.
+    // With a fake key the v3 call surfaces HTTP 401 — we assert that
+    // error path here. The key contract is unchanged from the original:
+    // direct mode must NOT route through `staging-api.tinyhumans.ai`.
     use crate::openhuman::config::TEST_ENV_LOCK;
     let _env_guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
@@ -822,22 +821,17 @@ async fn list_tools_in_direct_mode_returns_empty_without_hitting_backend() {
         .await
         .expect("execute should not bubble anyhow");
     assert!(
-        !result.is_error,
-        "direct-mode list_tools should return success+empty, got error: {}",
-        error_text(&result)
+        result.is_error,
+        "direct-mode list_tools with fake key should surface the v3 auth failure"
     );
-    let body = result
-        .content
-        .iter()
-        .find_map(|c| match c {
-            crate::openhuman::tools::traits::ToolContent::Text { text } => Some(text.clone()),
-            _ => None,
-        })
-        .unwrap_or_default();
-    // Empty `tools` array.
+    let msg = error_text(&result);
     assert!(
-        body.contains("\"tools\":[]") || body.contains("\"tools\": []"),
-        "direct-mode list_tools body should contain an empty tools array: {body}"
+        msg.contains("Composio v3") && msg.contains("connected_accounts"),
+        "error must come from the v3 prefetch path, got: {msg}"
+    );
+    assert!(
+        !msg.contains("staging-api") && !msg.contains("agent-integrations"),
+        "must not leak backend-tenant routing artifacts in direct mode: {msg}"
     );
 }
 
@@ -895,17 +889,17 @@ async fn execute_tool_per_call_factory_means_no_baked_client() {
 }
 
 #[tokio::test]
-async fn list_toolkits_in_direct_mode_returns_empty_without_hitting_backend() {
-    // Same shape as `list_tools_in_direct_mode_returns_empty_without_hitting_backend`
-    // — verifies the per-call factory routing for `composio_list_toolkits`.
-    // Pre-fix this would have called
-    // `staging-api.tinyhumans.ai/agent-integrations/composio/toolkits`
-    // regardless of mode and surfaced whatever the backend allowlist
-    // returned for the tinyhumans tenant.
+async fn list_toolkits_in_direct_mode_routes_through_composio_v3_not_backend() {
+    // [CD-1] In direct mode `composio_list_toolkits` now derives the
+    // toolkit set from the user's active connected accounts via Composio
+    // v3 `/connected_accounts`. The previous short-circuit to an empty
+    // `ComposioToolkitsResponse` is exactly what was causing drafted
+    // workflows to "succeed" with zero tool calls — the agent had nothing
+    // to discover so it did nothing.
     //
-    // Production `.execute(..)` calls `load_config_with_timeout()` per
-    // call which reads from disk — see the matching note on
-    // `execute_tool_per_call_factory_means_no_baked_client`.
+    // With a fake key the v3 call surfaces HTTP 401 — we assert that
+    // error path here. The key contract is unchanged from the original:
+    // direct mode must NOT route through `staging-api.tinyhumans.ai`.
     use crate::openhuman::config::TEST_ENV_LOCK;
     let _env_guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
@@ -927,21 +921,17 @@ async fn list_toolkits_in_direct_mode_returns_empty_without_hitting_backend() {
         .await
         .expect("execute should not bubble anyhow");
     assert!(
-        !result.is_error,
-        "direct-mode list_toolkits should return success+empty, got error: {}",
-        error_text(&result)
+        result.is_error,
+        "direct-mode list_toolkits with fake key should surface the v3 auth failure"
     );
-    let body = result
-        .content
-        .iter()
-        .find_map(|c| match c {
-            crate::openhuman::tools::traits::ToolContent::Text { text } => Some(text.clone()),
-            _ => None,
-        })
-        .unwrap_or_default();
+    let msg = error_text(&result);
     assert!(
-        body.contains("\"toolkits\":[]") || body.contains("\"toolkits\": []"),
-        "direct-mode list_toolkits body should contain an empty toolkits array: {body}"
+        msg.contains("Composio v3") && msg.contains("connected_accounts"),
+        "error must come from the v3 connected_accounts path, got: {msg}"
+    );
+    assert!(
+        !msg.contains("staging-api") && !msg.contains("agent-integrations"),
+        "must not leak backend-tenant routing artifacts in direct mode: {msg}"
     );
 }
 

@@ -961,6 +961,58 @@ pub async fn direct_list_connections(
     Ok(ComposioConnectionsResponse { connections })
 }
 
+/// Direct-mode counterpart to [`ComposioClient::list_toolkits`].
+///
+/// In backend mode `list_toolkits` returns the server-side tenant allowlist
+/// (e.g. `["gmail","notion"]`). There is no equivalent allowlist in direct
+/// mode — the user's own Composio account governs what is available. This
+/// function derives the toolkit set from the user's *active* connected
+/// accounts via [`direct_list_connections`], so the returned list matches
+/// what the user can actually call with `composio_execute`. If an explicit
+/// `toolkits` filter is supplied, it is returned as-is without an HTTP round
+/// trip (the caller already knows what they want).
+///
+/// Returning the connected-toolkit set rather than an empty list is the key
+/// fix for issue CD-1: `composio_list_toolkits` was previously short-
+/// circuiting to `[]` in direct mode, leaving agents with nothing to discover
+/// and causing workflow runs to report `Succeeded` with zero tool calls.
+pub async fn direct_list_toolkits(
+    direct: &Arc<crate::openhuman::tools::ComposioTool>,
+    toolkits_filter: Option<&[String]>,
+) -> anyhow::Result<super::types::ComposioToolkitsResponse> {
+    // Caller already knows what they want — honour the filter directly.
+    if let Some(filter) = toolkits_filter {
+        if !filter.is_empty() {
+            tracing::debug!(
+                count = filter.len(),
+                "[composio-direct] list_toolkits: using caller-supplied filter"
+            );
+            return Ok(super::types::ComposioToolkitsResponse {
+                toolkits: filter.to_vec(),
+            });
+        }
+    }
+
+    // No filter — derive from active connected accounts.
+    tracing::debug!("[composio-direct] list_toolkits: deriving from connected accounts");
+    let conns = direct_list_connections(direct).await?;
+    let mut toolkits: Vec<String> = conns
+        .connections
+        .iter()
+        .filter(|c| c.is_active())
+        .map(|c| c.normalized_toolkit())
+        .filter(|t| !t.is_empty())
+        .collect();
+    toolkits.sort();
+    toolkits.dedup();
+    tracing::info!(
+        count = toolkits.len(),
+        "[composio-direct] list_toolkits: derived {} toolkit(s) from active connections",
+        toolkits.len()
+    );
+    Ok(super::types::ComposioToolkitsResponse { toolkits })
+}
+
 /// Direct-mode counterpart to [`ComposioClient::list_tools`]. Calls
 /// Composio v3 `/tools?toolkits=<csv>&tags=<a>&tags=<b>` via
 /// [`crate::openhuman::tools::ComposioTool::list_tool_schemas_v3`] and

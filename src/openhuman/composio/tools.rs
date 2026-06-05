@@ -38,7 +38,11 @@ use crate::openhuman::tools::traits::{
     PermissionLevel, Tool, ToolCallOptions, ToolCategory, ToolResult,
 };
 
-use super::client::{create_composio_client, direct_list_connections, ComposioClientKind};
+use super::client::{
+    create_composio_client, direct_list_connections, direct_list_toolkits, direct_list_tools,
+    ComposioClientKind,
+};
+use super::ops::{cached_toolkits, cached_tools, store_toolkits_cache, store_tools_cache};
 use super::providers::{
     catalog_for_toolkit, classify_unknown, find_curated, get_provider, load_user_scope_or_default,
     toolkit_from_slug, ToolScope, UserScopePref,
@@ -408,13 +412,34 @@ impl Tool for ComposioListToolkitsTool {
                 tracing::debug!("[composio] list_toolkits.execute: backend variant");
                 client
             }
-            Ok(ComposioClientKind::Direct(_)) => {
+            Ok(ComposioClientKind::Direct(direct)) => {
+                // [CD-1] In direct mode derive the toolkit list from the
+                // user's active connected accounts via v3 `/connected_accounts`.
+                // Bug #1710's backend-tenant-leak guard stays closed: we
+                // never route through the tinyhumans allowlist here.
+                if let Some(cached) = cached_toolkits(&live_config) {
+                    tracing::trace!(
+                        "[composio-direct] list_toolkits.execute: returning cached toolkits"
+                    );
+                    return Ok(ToolResult::success(
+                        serde_json::to_string(&cached).unwrap_or_else(|_| "{}".into()),
+                    ));
+                }
+                let resp = match direct_list_toolkits(&direct, None).await {
+                    Ok(r) => r,
+                    Err(e) => {
+                        return Ok(ToolResult::error(format!(
+                            "composio_list_toolkits (direct) failed: {e}"
+                        )));
+                    }
+                };
                 tracing::info!(
-                    "[composio-direct] list_toolkits.execute: direct mode active — \
-                     returning empty toolkits list. Users manage available toolkits \
-                     via app.composio.dev."
+                    count = resp.toolkits.len(),
+                    "[composio-direct] list_toolkits.execute: fetched {} toolkit(s) from \
+                     user's tenant",
+                    resp.toolkits.len()
                 );
-                let resp = super::types::ComposioToolkitsResponse::default();
+                store_toolkits_cache(&live_config, &resp);
                 return Ok(ToolResult::success(
                     serde_json::to_string(&resp).unwrap_or_else(|_| "{}".into()),
                 ));
@@ -800,14 +825,147 @@ impl Tool for ComposioListToolsTool {
                 tracing::debug!("[composio] list_tools.execute: backend variant");
                 client
             }
-            Ok(ComposioClientKind::Direct(_)) => {
+            Ok(ComposioClientKind::Direct(direct)) => {
+                // [CD-1] In direct mode discover tools by hitting Composio v3
+                // `/tools` scoped to the user's connected toolkits. Cache per
+                // toolkit slug to avoid redundant v3 round trips within a
+                // session. Bug #1710's backend-tenant-leak guard stays closed.
+
+                // Determine scope: caller-supplied filter or fall back to the
+                // user's active connected toolkit set.
+                let scope: Vec<String> = match toolkits {
+                    Some(ref list) if !list.is_empty() => list.clone(),
+                    _ => {
+                        match direct_list_connections(&direct).await {
+                            Ok(conns) => {
+                                let mut v: Vec<String> = conns
+                                    .connections
+                                    .iter()
+                                    .filter(|c| c.is_active())
+                                    .map(|c| c.normalized_toolkit())
+                                    .filter(|t| !t.is_empty())
+                                    .collect();
+                                v.sort();
+                                v.dedup();
+                                v
+                            }
+                            Err(e) => {
+                                return Ok(ToolResult::error(format!(
+                                    "composio_list_tools (direct): prefetch connections \
+                                     failed: {e}"
+                                )));
+                            }
+                        }
+                    }
+                };
+
+                if scope.is_empty() {
+                    tracing::info!(
+                        "[composio-direct] list_tools.execute: no connected toolkits — \
+                         returning empty tool list"
+                    );
+                    let resp = ComposioToolsResponse::default();
+                    let mut result = ToolResult::success(
+                        serde_json::to_string(&resp).unwrap_or_else(|_| "{}".into()),
+                    );
+                    if options.prefer_markdown {
+                        result.markdown_formatted = Some(render_tools_markdown(&resp));
+                    }
+                    return Ok(result);
+                }
+
+                // Union cached + fresh per toolkit slug.
+                let mut all_tools: Vec<super::types::ComposioToolSchema> = Vec::new();
+                let mut missing_scopes: Vec<String> = Vec::new();
+                for slug in &scope {
+                    if let Some(cached) = cached_tools(&live_config, slug) {
+                        tracing::trace!(
+                            toolkit = %slug,
+                            "[composio-direct] list_tools.execute: cache hit"
+                        );
+                        all_tools.extend(cached.tools);
+                    } else {
+                        missing_scopes.push(slug.clone());
+                    }
+                }
+
+                if !missing_scopes.is_empty() {
+                    tracing::debug!(
+                        toolkits = missing_scopes.len(),
+                        "[composio-direct] list_tools.execute: fetching v3 tool schemas \
+                         for cache misses"
+                    );
+                    match direct_list_tools(
+                        &direct,
+                        &missing_scopes,
+                        tags.as_deref(),
+                    )
+                    .await
+                    {
+                        Ok(fresh) => {
+                            // Write through per-toolkit so each slug gets its own TTL.
+                            for slug in &missing_scopes {
+                                let slug_tools: ComposioToolsResponse = ComposioToolsResponse {
+                                    tools: fresh
+                                        .tools
+                                        .iter()
+                                        .filter(|t| {
+                                            // toolkit_slug is embedded in the slug prefix
+                                            // (e.g. "GMAIL_SEND_EMAIL" → "gmail"). Fall
+                                            // back to storing all tools under each slug.
+                                            t.function
+                                                .name
+                                                .to_ascii_uppercase()
+                                                .starts_with(&slug.to_ascii_uppercase())
+                                        })
+                                        .cloned()
+                                        .collect(),
+                                };
+                                if !slug_tools.tools.is_empty() {
+                                    store_tools_cache(&live_config, slug, &slug_tools);
+                                }
+                            }
+                            // Also store the full response under the first missing slug as
+                            // a coarse fallback when slug-prefix filtering yields nothing
+                            // (Composio action naming is not always <TOOLKIT>_<ACTION>).
+                            if let Some(first) = missing_scopes.first() {
+                                let stored = cached_tools(&live_config, first);
+                                if stored.is_none() {
+                                    store_tools_cache(&live_config, first, &fresh);
+                                }
+                            }
+                            all_tools.extend(fresh.tools);
+                        }
+                        Err(e) => {
+                            return Ok(ToolResult::error(format!(
+                                "composio_list_tools (direct) failed: {e}"
+                            )));
+                        }
+                    }
+                }
+
+                let mut resp = ComposioToolsResponse { tools: all_tools };
+
+                // Apply the same connected-toolkit intersection the backend branch uses.
+                if !include_unconnected {
+                    let scope_set: std::collections::HashSet<String> =
+                        scope.iter().cloned().collect();
+                    let _dropped = retain_connected_tools(&mut resp, &scope_set);
+                    tracing::debug!(
+                        kept = resp.tools.len(),
+                        "[composio-direct] list_tools.execute: filtered to connected toolkits"
+                    );
+                }
+
                 tracing::info!(
-                    "[composio-direct] list_tools.execute: direct mode active — \
-                     returning empty tools list. Discovery is delegated to the user's \
-                     personal Composio account; backend-tenant tools are intentionally \
-                     NOT surfaced in direct mode."
+                    count = resp.tools.len(),
+                    toolkits = scope.len(),
+                    "[composio-direct] list_tools.execute: fetched {} tool(s) across \
+                     {} toolkit(s) from user's tenant",
+                    resp.tools.len(),
+                    scope.len()
                 );
-                let resp = ComposioToolsResponse::default();
+
                 let mut result = ToolResult::success(
                     serde_json::to_string(&resp).unwrap_or_else(|_| "{}".into()),
                 );
