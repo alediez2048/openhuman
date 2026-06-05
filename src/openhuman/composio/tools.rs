@@ -1325,13 +1325,13 @@ impl Tool for ComposioExecuteTool {
                         elapsed_ms,
                     },
                 );
-                // Prefer the backend-rendered markdown when available
-                // (tinyhumansai/backend#683). The backend handles parsing
-                // for all composio actions; if a tool isn't formatted
-                // server-side `markdown_formatted` is None and we fall
-                // back to the raw JSON envelope.
-                let body = if resp.successful {
-                    match resp
+                if resp.successful {
+                    // Prefer the backend-rendered markdown when available
+                    // (tinyhumansai/backend#683). The backend handles parsing
+                    // for all composio actions; if a tool isn't formatted
+                    // server-side `markdown_formatted` is None and we fall
+                    // back to the raw JSON envelope.
+                    let body = match resp
                         .markdown_formatted
                         .as_deref()
                         .map(str::trim)
@@ -1339,11 +1339,36 @@ impl Tool for ComposioExecuteTool {
                     {
                         Some(md) => md.to_string(),
                         None => serde_json::to_string(&resp).unwrap_or_else(|_| "{}".into()),
-                    }
+                    };
+                    Ok(ToolResult::success(body))
                 } else {
-                    serde_json::to_string(&resp).unwrap_or_else(|_| "{}".into())
-                };
-                Ok(ToolResult::success(body))
+                    // [Honest tool status] Composio reached the upstream
+                    // provider but the provider rejected the call. Surface
+                    // as `ToolResult::error` so F-16's run-status guard
+                    // flips the workflow to Failed (was: returning success
+                    // here hid the failure and the run misleadingly
+                    // showed Succeeded while no real action fired). Use
+                    // the structured F-20 classifier so the agent's next
+                    // iteration sees a clear, retryable error block with
+                    // the upstream provider's verbatim correction hint.
+                    let upstream_detail = resp
+                        .error
+                        .as_deref()
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or("upstream provider returned an unsuccessful response");
+                    let kind = classify_composio_error(upstream_detail);
+                    tracing::info!(
+                        target: "composio",
+                        tool = %tool,
+                        kind = kind.label(),
+                        "[composio] tool execute.execute: upstream-provider failure surfaced as ToolResult::error"
+                    );
+                    Ok(ToolResult::error(render_composio_tool_error(
+                        &tool,
+                        kind,
+                        upstream_detail,
+                    )))
+                }
             }
             Err(e) => {
                 tracing::warn!(

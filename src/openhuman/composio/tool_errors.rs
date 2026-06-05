@@ -349,6 +349,37 @@ mod tests {
     }
 
     #[test]
+    fn render_preserves_upstream_parameter_correction_hint() {
+        // Regression for the 2026-06-05 "morning email digest" failure:
+        // SLACK_SEND_MESSAGE was rejected with a verbatim parameter-
+        // correction hint ("use markdown_text instead of text") that the
+        // agent needs to see in the next iteration to fix the call.
+        // The render contract preserves the upstream detail verbatim so
+        // the LLM can act on it; if we ever paraphrase or truncate, the
+        // agent loses the actionable instruction.
+        let upstream = "[composio:error:upstream_provider] `SLACK_SEND_MESSAGE` failed at the connected provider: Invalid request data provided\n- Value error, Unsupported Slack send message field(s). text: Use markdown_text for normal content, or fallback_text with blocks. on parameter ``";
+        let kind = classify_composio_error(upstream);
+        assert_eq!(
+            kind,
+            ComposioToolErrorKind::UpstreamProviderError,
+            "Slack-style upstream error must classify as UpstreamProviderError, got: {kind:?}"
+        );
+        let rendered = render_composio_tool_error("SLACK_SEND_MESSAGE", kind, upstream);
+        assert!(
+            rendered.contains("⚠ Composio tool error"),
+            "missing structured header in: {rendered}"
+        );
+        assert!(
+            rendered.contains("kind: upstream_provider_error"),
+            "missing classifier kind in: {rendered}"
+        );
+        assert!(
+            rendered.contains("markdown_text"),
+            "upstream's parameter-correction hint must survive verbatim so the agent can retry with the right field; got: {rendered}"
+        );
+    }
+
+    #[test]
     fn classify_recognises_action_not_found() {
         assert_eq!(
             classify_composio_error("action not found for toolkit linkedin"),
