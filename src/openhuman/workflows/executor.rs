@@ -705,11 +705,9 @@ fn fail_delayed_run(
     // T-4: delay-interruption is a distinct failure mode that doesn't
     // fit any of the catalogued classifier rules, so it goes through
     // as Unknown — the raw_detail carries the informative string.
-    let failure_reason = Some(
-        crate::openhuman::workflows::types::FailureReason::Unknown {
-            raw_detail: error.clone(),
-        },
-    );
+    let failure_reason = Some(crate::openhuman::workflows::types::FailureReason::Unknown {
+        raw_detail: error.clone(),
+    });
     if let Err(err) = store::mark_run_terminal(
         config,
         &run_id.to_string(),
@@ -1228,9 +1226,9 @@ fn finalize_run(
     // curated one-liner + fix-it action instead of forcing the user
     // to parse the raw error string. None for Succeeded / Cancelled.
     let failure_reason = if matches!(terminal_status, RunStatus::Failed) {
-        terminal_error.as_deref().map(|err| {
-            crate::openhuman::workflows::failure_classifier::classify_failure(err, 0)
-        })
+        terminal_error
+            .as_deref()
+            .map(|err| crate::openhuman::workflows::failure_classifier::classify_failure(err, 0))
     } else {
         None
     };

@@ -273,13 +273,7 @@ function relativeTime(iso: string): string {
  * on every variant — adding a variant to `FailureReason` trips the
  * TS exhaustiveness check here.
  */
-function FailureReasonRow({
-  reason,
-  t,
-}: {
-  reason: FailureReason;
-  t: (key: string) => string;
-}) {
+function FailureReasonRow({ reason, t }: { reason: FailureReason; t: (key: string) => string }) {
   const { icon, primary, hint } = describeFailure(reason, t);
   return (
     <div
@@ -323,10 +317,7 @@ function describeFailure(
     case 'model_unavailable':
       return {
         icon: '🚫',
-        primary: t('workflows.failure.model_unavailable').replace(
-          '{model}',
-          reason.model_tried
-        ),
+        primary: t('workflows.failure.model_unavailable').replace('{model}', reason.model_tried),
         hint: t('workflows.failure.model_unavailable_hint').replace(
           '{tiers}',
           reason.valid_tiers.join(', ')
@@ -356,19 +347,13 @@ function describeFailure(
     case 'tool_slug_invalid':
       return {
         icon: '🤖',
-        primary: t('workflows.failure.tool_slug_invalid').replace(
-          '{slug}',
-          reason.slug
-        ),
+        primary: t('workflows.failure.tool_slug_invalid').replace('{slug}', reason.slug),
         hint: t('workflows.failure.tool_slug_invalid_hint'),
       };
     case 'unknown':
       return {
         icon: '❓',
-        primary: t('workflows.failure.unknown_detail').replace(
-          '{detail}',
-          reason.raw_detail
-        ),
+        primary: t('workflows.failure.unknown_detail').replace('{detail}', reason.raw_detail),
         hint: null,
       };
   }

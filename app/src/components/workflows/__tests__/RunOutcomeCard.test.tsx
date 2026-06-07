@@ -58,8 +58,6 @@ vi.mock('../../../lib/i18n/I18nContext', () => ({
           return 'Succeeded';
         case 'workflows.outcome.failed':
           return 'Failed';
-        case 'workflows.outcome.why_failed':
-          return 'Why this run failed';
         // T-4 failure-mode renderer keys
         case 'workflows.failure.agent_narrated':
           return 'The agent described what it would do ({chars} chars of text) but never actually emitted a tool call.';

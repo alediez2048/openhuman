@@ -68,9 +68,7 @@ pub fn classify_failure(error: &str, narrative_chars: u32) -> FailureReason {
             provider: "anthropic".to_string(),
         };
     }
-    if lower.contains("invalid openai api key")
-        || lower.contains("incorrect api key provided")
-    {
+    if lower.contains("invalid openai api key") || lower.contains("incorrect api key provided") {
         return FailureReason::LlmAuthFailed {
             provider: "openai".to_string(),
         };
@@ -85,20 +83,19 @@ pub fn classify_failure(error: &str, narrative_chars: u32) -> FailureReason {
         // Provider extraction: the rendered detail typically names
         // the toolkit. Best-effort — fall back to "(unknown)" rather
         // than skipping the classification entirely.
-        let provider = extract_provider_from_composio_error(error)
-            .unwrap_or_else(|| "(unknown)".to_string());
+        let provider =
+            extract_provider_from_composio_error(error).unwrap_or_else(|| "(unknown)".to_string());
         return FailureReason::ConnectionExpired { provider };
     }
     if error.contains("kind: invalid_slug_shape") {
-        let slug = extract_slug_from_composio_error(error)
-            .unwrap_or_else(|| "(unknown)".to_string());
+        let slug =
+            extract_slug_from_composio_error(error).unwrap_or_else(|| "(unknown)".to_string());
         return FailureReason::ToolSlugInvalid { slug };
     }
     if error.contains("kind: upstream_provider_error") {
-        let tool = extract_tool_from_composio_error(error)
-            .unwrap_or_else(|| "(unknown)".to_string());
-        let detail = extract_detail_from_composio_error(error)
-            .unwrap_or_else(|| error.to_string());
+        let tool =
+            extract_tool_from_composio_error(error).unwrap_or_else(|| "(unknown)".to_string());
+        let detail = extract_detail_from_composio_error(error).unwrap_or_else(|| error.to_string());
         return FailureReason::ComposioUpstreamRejected { tool, detail };
     }
 

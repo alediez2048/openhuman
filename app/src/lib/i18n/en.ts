@@ -3756,20 +3756,16 @@ const en: TranslationMap = {
     '`{tool}` was rejected by the connected provider: {detail}',
   'workflows.failure.composio_rejected_hint':
     'The provider’s reason is verbatim above — usually a parameter rename or missing field. Edit the workflow prompt to use the corrected argument.',
-  'workflows.failure.model_unavailable':
-    'Model `{model}` isn’t available in your account.',
+  'workflows.failure.model_unavailable': 'Model `{model}` isn’t available in your account.',
   'workflows.failure.model_unavailable_hint':
     'Edit the workflow → set model_tier to one of: {tiers}.',
-  'workflows.failure.llm_auth_failed':
-    'Your {provider} API key was rejected.',
+  'workflows.failure.llm_auth_failed': 'Your {provider} API key was rejected.',
   'workflows.failure.llm_auth_failed_hint':
     'Update the key in Settings → Providers, then retry the run.',
-  'workflows.failure.connection_expired':
-    'Your {provider} connection expired or was revoked.',
+  'workflows.failure.connection_expired': 'Your {provider} connection expired or was revoked.',
   'workflows.failure.connection_expired_hint':
     'Reconnect {provider} in Settings → Connections, then retry the run.',
-  'workflows.failure.tool_slug_invalid':
-    'The agent tried to use an invalid tool name (`{slug}`).',
+  'workflows.failure.tool_slug_invalid': 'The agent tried to use an invalid tool name (`{slug}`).',
   'workflows.failure.tool_slug_invalid_hint':
     'Usually a model hallucination — retry the run. If it recurs, file a bug.',
   'workflows.failure.unknown_detail': '{detail}',

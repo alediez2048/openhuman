@@ -210,11 +210,7 @@ export interface Run {
 export type FailureReason =
   | { kind: 'agent_narrated_without_acting'; narrative_chars: number }
   | { kind: 'composio_upstream_rejected'; tool: string; detail: string }
-  | {
-      kind: 'model_unavailable';
-      model_tried: string;
-      valid_tiers: string[];
-    }
+  | { kind: 'model_unavailable'; model_tried: string; valid_tiers: string[] }
   | { kind: 'llm_auth_failed'; provider: string }
   | { kind: 'connection_expired'; provider: string }
   | { kind: 'tool_slug_invalid'; slug: string }

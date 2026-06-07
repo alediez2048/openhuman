@@ -624,9 +624,7 @@ pub fn mark_run_terminal(
     failure_reason: Option<&crate::openhuman::workflows::types::FailureReason>,
 ) -> Result<bool> {
     let failure_reason_json = match failure_reason {
-        Some(reason) => Some(
-            serde_json::to_string(reason).context("serialize failure_reason")?,
-        ),
+        Some(reason) => Some(serde_json::to_string(reason).context("serialize failure_reason")?),
         None => None,
     };
     with_connection(config, |db| {
@@ -977,8 +975,7 @@ fn row_to_run(row: &Row<'_>) -> Result<Run> {
     // when status != Failed and on pre-T-4 rows. Best-effort decode —
     // a malformed JSON blob degrades to None rather than breaking the
     // run read entirely.
-    let failure_reason_raw: Option<String> =
-        row.get(8).unwrap_or(None);
+    let failure_reason_raw: Option<String> = row.get(8).unwrap_or(None);
     let failure_reason = failure_reason_raw.and_then(|s| {
         serde_json::from_str::<crate::openhuman::workflows::types::FailureReason>(&s).ok()
     });

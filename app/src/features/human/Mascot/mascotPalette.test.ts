@@ -27,7 +27,7 @@ describe('getMascotPalette', () => {
   it.each([undefined, null, '', 'red', 'pastel', 'YELLOW', 0, false] as const)(
     'falls back to yellow palette for invalid input %s',
     invalid => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+       
       const palette = getMascotPalette(invalid as any);
       expect(palette).toBeDefined();
       expect(palette.bodyFill).toBe('#F7D145'); // yellow's bodyFill
