@@ -16,6 +16,7 @@ import type {
   ListFilter,
   ListStarterTemplatesRequest,
   ManualInitiator,
+  PreflightReport,
   Run,
   RunId,
   RunWithSteps,
@@ -23,6 +24,7 @@ import type {
   UpdateWorkflowRequest,
   Workflow,
   WorkflowId,
+  WorkflowProposal,
 } from '../../types/workflows';
 import { callCoreRpc } from '../coreRpcClient';
 
@@ -156,6 +158,19 @@ export const workflowsApi = {
     const raw = await callCoreRpc<RunWithSteps | null | RpcOutcomeEnvelope<RunWithSteps | null>>({
       method: 'openhuman.workflows_get_run',
       params: { run_id },
+    });
+    return unwrapRpcOutcome(raw);
+  },
+
+  /**
+   * T-3 (Phase 2.5 Trust UX): pre-flight a proposal at Save & Enable
+   * time. Returns a structured report — the UI gates the Save button
+   * on `passed = true` and renders each failed check's `fix_hint`.
+   */
+  preflight: async (proposal: WorkflowProposal): Promise<PreflightReport> => {
+    const raw = await callCoreRpc<PreflightReport | RpcOutcomeEnvelope<PreflightReport>>({
+      method: 'openhuman.workflows_preflight',
+      params: { proposal },
     });
     return unwrapRpcOutcome(raw);
   },

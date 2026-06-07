@@ -18,8 +18,13 @@
 import { useState } from 'react';
 
 import { useT } from '../../../lib/i18n/I18nContext';
+import { workflowsApi } from '../../../services/api/workflows';
 import type { ConnectionRef } from '../../../types/connections';
-import type { Workflow, WorkflowProposal } from '../../../types/workflows';
+import type {
+  PreflightReport,
+  Workflow,
+  WorkflowProposal,
+} from '../../../types/workflows';
 import { useWorkflowProposalActions } from './hooks/useWorkflowProposalActions';
 import { ActionRow, type ActionState } from './internal/ActionRow';
 import { ConnectionChips } from './internal/ConnectionChips';
@@ -66,9 +71,16 @@ export function WorkflowProposalPreview({
   const [expanded, setExpanded] = useState(false);
   const [savedMode, setSavedMode] = useState<'paused' | 'enabled' | null>(null);
   const [savedWorkflow, setSavedWorkflow] = useState<Workflow | null>(null);
+  // T-3 (Phase 2.5): pre-flight report from the last [Save & Enable]
+  // attempt. When non-null AND `passed === false`, the failed checks
+  // render as a blocking banner and Save & Enable stays disabled.
+  // The user can still [Save (paused)] to persist the workflow in a
+  // disabled state and fix the underlying issue separately.
+  const [preflight, setPreflight] = useState<PreflightReport | null>(null);
 
   const missing = missingConnections ?? [];
-  const canSaveEnable = missing.length === 0;
+  const preflightBlocking = preflight !== null && !preflight.passed;
+  const canSaveEnable = missing.length === 0 && !preflightBlocking;
 
   const handleSave = async (enable: boolean) => {
     setState('saving');
@@ -79,6 +91,22 @@ export function WorkflowProposalPreview({
       threadId ?? 'none'
     );
     try {
+      // T-3: run pre-flight ONLY on the Enable path — Save (paused)
+      // persists the workflow without running it, so a broken model
+      // or missing connection there is the user's deliberate "save
+      // and fix later" choice, not an accident worth blocking.
+      if (enable) {
+        const report = await workflowsApi.preflight(proposal);
+        setPreflight(report);
+        if (!report.passed) {
+          console.warn(
+            '[workflows-ui] preflight_blocked checks=%d',
+            report.checks.length
+          );
+          setState('pending');
+          return;
+        }
+      }
       const workflow = enable ? await actions.saveAndEnable() : await actions.savePaused();
       setSavedWorkflow(workflow);
       setSavedMode(enable ? 'enabled' : 'paused');
@@ -157,6 +185,41 @@ export function WorkflowProposalPreview({
           missing={missing}
           onManage={onManageConnections ? () => onManageConnections(missing) : undefined}
         />
+      )}
+      {/*
+       * T-3 (Phase 2.5 Trust UX): pre-flight blocking banner. Renders
+       * only when the last Enable attempt returned `passed=false`.
+       * Lists every failed check with its fix hint so the user can
+       * resolve every issue in one pass rather than getting whack-a-
+       * mole'd at runtime.
+       */}
+      {preflight && !preflight.passed && (
+        <div
+          data-testid="workflow-preflight-banner"
+          role="alert"
+          className="mt-3 rounded-md border border-coral-200 dark:border-coral-800 bg-coral-50 dark:bg-coral-950/30 p-3 space-y-2"
+        >
+          <div className="text-xs font-semibold text-coral-900 dark:text-coral-200">
+            {t('workflows.preflight.blocked_heading')}
+          </div>
+          <ul className="text-xs text-coral-900 dark:text-coral-200 space-y-1.5">
+            {preflight.checks
+              .filter(c => c.status === 'fail')
+              .map((check, idx) => (
+                <li key={idx} className="space-y-0.5">
+                  <div>{check.detail}</div>
+                  {check.fix_hint && (
+                    <div className="text-coral-700 dark:text-coral-300 pl-3 italic">
+                      → {check.fix_hint}
+                    </div>
+                  )}
+                </li>
+              ))}
+          </ul>
+          <div className="text-[11px] text-coral-700 dark:text-coral-400">
+            {t('workflows.preflight.save_paused_hint')}
+          </div>
+        </div>
       )}
       <button
         type="button"

@@ -323,6 +323,32 @@ export interface WorkflowDeletePreview {
 /** Which state mutation a `WorkflowStateProposal` previews. */
 export type StateAction = 'enable' | 'disable' | 'run_now';
 
+// ── Pre-flight validation (T-3, Phase 2.5 Trust UX) ────────────────────
+
+/**
+ * Result of running the pre-flight pipeline against a workflow proposal.
+ * The UI inspects `passed` to gate the Save & Enable button; `checks`
+ * carries every probe result so the user sees the complete picture.
+ */
+export interface PreflightReport {
+  passed: boolean;
+  checks: PreflightCheck[];
+}
+
+export interface PreflightCheck {
+  kind: PreflightCheckKind;
+  status: PreflightStatus;
+  detail: string;
+  fix_hint?: string | null;
+}
+
+export type PreflightCheckKind =
+  | { kind: 'model_available'; tier: string }
+  | { kind: 'connection_live'; connection: ConnectionRef }
+  | { kind: 'aggregator_unreachable' };
+
+export type PreflightStatus = 'pass' | 'warn' | 'fail';
+
 /**
  * Enable / Disable / RunNow preview surfaced by `workflow_propose_*`.
  * Renders via `<WorkflowStatePreview>`. `enabled: false` means the

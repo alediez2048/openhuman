@@ -15,11 +15,19 @@ vi.mock('../../../../lib/i18n/I18nContext', () => ({
 }));
 
 vi.mock('../../../../services/api/workflows', () => ({
-  workflowsApi: { create: vi.fn(), enable: vi.fn() },
+  workflowsApi: {
+    create: vi.fn(),
+    enable: vi.fn(),
+    // T-3 (Phase 2.5 Trust UX): pre-flight runs before saveAndEnable.
+    // Default to passed=true so existing happy-path tests still flow;
+    // the T-3-blocking test below overrides this with passed=false.
+    preflight: vi.fn().mockResolvedValue({ passed: true, checks: [] }),
+  },
 }));
 
 const createMock = workflowsApi.create as unknown as ReturnType<typeof vi.fn>;
 const enableMock = workflowsApi.enable as unknown as ReturnType<typeof vi.fn>;
+const preflightMock = workflowsApi.preflight as unknown as ReturnType<typeof vi.fn>;
 
 const baseProposal: WorkflowProposal = {
   name: 'Morning digest',
@@ -58,6 +66,9 @@ const createdRow: Workflow = {
 beforeEach(() => {
   createMock.mockReset();
   enableMock.mockReset();
+  preflightMock.mockReset();
+  // T-3: default to a pass result so existing tests flow through.
+  preflightMock.mockResolvedValue({ passed: true, checks: [] });
 });
 
 describe('<WorkflowProposalPreview> — pending state', () => {
@@ -216,5 +227,84 @@ describe('<WorkflowProposalPreview> — a11y', () => {
     const region = screen.getByRole('region', { name: 'Morning digest' });
     expect(region).toHaveAttribute('aria-busy', 'true');
     resolve(createdRow);
+  });
+});
+
+describe('<WorkflowProposalPreview> — T-3 pre-flight gating', () => {
+  it('blocks Save & Enable when preflight returns passed=false', async () => {
+    preflightMock.mockResolvedValue({
+      passed: false,
+      checks: [
+        {
+          kind: { kind: 'model_available', tier: 'claude-opus-4-7' },
+          status: 'fail',
+          detail:
+            "Model `claude-opus-4-7` isn't in the OpenHuman backend's tier list.",
+          fix_hint: 'Replace with one of: reasoning-v1, agentic-v1, …',
+        },
+      ],
+    });
+    createMock.mockResolvedValue(createdRow);
+    enableMock.mockResolvedValue({ ...createdRow, enabled: true });
+
+    render(<WorkflowProposalPreview proposal={baseProposal} />);
+    fireEvent.click(screen.getByText('Save & Enable'));
+
+    // Banner renders with the failed-check detail + hint.
+    await waitFor(() =>
+      expect(screen.getByTestId('workflow-preflight-banner')).toBeInTheDocument()
+    );
+    expect(
+      screen.getByText(/claude-opus-4-7.* isn't in the OpenHuman backend/i)
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Replace with one of: reasoning-v1, agentic-v1/i)
+    ).toBeInTheDocument();
+    // create + enable must NOT have been called — preflight blocked Save.
+    expect(createMock).not.toHaveBeenCalled();
+    expect(enableMock).not.toHaveBeenCalled();
+  });
+
+  it('Save (paused) bypasses preflight (lets user persist + fix later)', async () => {
+    preflightMock.mockResolvedValue({
+      passed: false,
+      checks: [
+        {
+          kind: { kind: 'model_available', tier: 'claude-opus-4-7' },
+          status: 'fail',
+          detail: 'bad model',
+          fix_hint: 'fix it',
+        },
+      ],
+    });
+    createMock.mockResolvedValue(createdRow);
+
+    render(<WorkflowProposalPreview proposal={baseProposal} />);
+    fireEvent.click(screen.getByText('Save (paused)'));
+    // SavedStub renders the workflow name in a "Saved as ..." line —
+    // the absence of the proposal preview region is the signal that
+    // we transitioned to the saved state.
+    await waitFor(() =>
+      expect(screen.queryByText('Save & Enable')).not.toBeInTheDocument()
+    );
+    expect(screen.getByText(/Saved as/)).toBeInTheDocument();
+    // preflight should NOT have been called on the paused path.
+    expect(preflightMock).not.toHaveBeenCalled();
+    expect(createMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('allows Save & Enable when preflight passes', async () => {
+    preflightMock.mockResolvedValue({ passed: true, checks: [] });
+    createMock.mockResolvedValue(createdRow);
+    enableMock.mockResolvedValue({ ...createdRow, enabled: true });
+
+    render(<WorkflowProposalPreview proposal={baseProposal} />);
+    fireEvent.click(screen.getByText('Save & Enable'));
+    await waitFor(() =>
+      expect(screen.getByText(/Saved & enabled/)).toBeInTheDocument()
+    );
+    expect(preflightMock).toHaveBeenCalledTimes(1);
+    expect(createMock).toHaveBeenCalledTimes(1);
+    expect(enableMock).toHaveBeenCalledTimes(1);
   });
 });

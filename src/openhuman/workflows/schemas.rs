@@ -40,6 +40,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("cancel_run"),
         schemas("list_runs"),
         schemas("get_run"),
+        schemas("preflight"),
     ]
 }
 
@@ -98,6 +99,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("get_run"),
             handler: handle_get_run,
+        },
+        RegisteredController {
+            schema: schemas("preflight"),
+            handler: handle_preflight,
         },
     ]
 }
@@ -341,6 +346,23 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 required: false,
             }],
         },
+        "preflight" => ControllerSchema {
+            namespace: "workflows",
+            function: "preflight",
+            description: "T-3 (Phase 2.5 Trust UX): validate a workflow proposal at Save & Enable time. Probes model availability + connection liveness so the user can't save a workflow that's destined to fail at first run.",
+            inputs: vec![FieldSchema {
+                name: "proposal",
+                ty: TypeSchema::Ref("WorkflowProposal"),
+                comment: "Proposal to validate. Same shape returned by `workflow_propose_create`.",
+                required: true,
+            }],
+            outputs: vec![FieldSchema {
+                name: "report",
+                ty: TypeSchema::Ref("PreflightReport"),
+                comment: "Pre-flight result. `passed = true` means safe to save; otherwise the UI surfaces each failed check's fix_hint.",
+                required: true,
+            }],
+        },
         "list_starter_templates" => ControllerSchema {
             namespace: "workflows",
             function: "list_starter_templates",
@@ -506,6 +528,22 @@ fn handle_get_run(params: Map<String, Value>) -> ControllerFuture {
         let config = config_rpc::load_config_with_timeout().await?;
         let run_id = required_string(&params, "run_id")?;
         to_json(crate::openhuman::workflows::rpc::workflows_get_run(&config, run_id).await?)
+    })
+}
+
+fn handle_preflight(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let proposal_value = params
+            .get("proposal")
+            .ok_or_else(|| "missing `proposal` field".to_string())?
+            .clone();
+        let proposal: crate::openhuman::workflows::types::WorkflowProposal =
+            serde_json::from_value(proposal_value)
+                .map_err(|e| format!("invalid `proposal`: {e}"))?;
+        to_json(
+            crate::openhuman::workflows::rpc::workflows_preflight(&config, proposal).await,
+        )
     })
 }
 

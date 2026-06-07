@@ -41,6 +41,7 @@ pub mod executor;
 pub mod health;
 pub mod memory;
 pub mod ops;
+pub mod preflight;
 pub mod proposer;
 pub mod retention;
 pub mod rpc;

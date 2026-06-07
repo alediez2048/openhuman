@@ -166,3 +166,27 @@ pub async fn workflows_cancel_run(
         .await
         .map_err(|e| format!("{code}: {e}", code = e.code()))
 }
+
+/// `openhuman.workflows_preflight` — T-3 (Phase 2.5 Trust UX): validate
+/// a workflow proposal at Save & Enable time. Probes model availability
+/// + connection liveness so the user can't save a workflow that's
+/// destined to fail at first run.
+///
+/// Never errors at the top level — backend hiccups during probing
+/// surface as `Warn`-level checks inside the report so the user can
+/// still save when the failure is transient (see
+/// [`crate::openhuman::workflows::preflight::PreflightCheckKind::AggregatorUnreachable`]).
+/// `Result<_, String>` is preserved for shape symmetry with other
+/// workflows RPCs.
+pub async fn workflows_preflight(
+    config: &Config,
+    proposal: crate::openhuman::workflows::types::WorkflowProposal,
+) -> RpcOutcome<crate::openhuman::workflows::preflight::PreflightReport> {
+    let report = crate::openhuman::workflows::preflight::run_preflight(config, &proposal).await;
+    let log = format!(
+        "workflows_preflight passed={} checks={}",
+        report.passed,
+        report.checks.len()
+    );
+    RpcOutcome::single_log(report, log)
+}
