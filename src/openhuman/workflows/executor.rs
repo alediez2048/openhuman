@@ -2733,8 +2733,7 @@ async fn execute_agent_prompt(
                 let truncated = store::truncate_output_to_64kib(output.text);
                 let payload = serde_json::to_string(&serde_json::json!({ "text": truncated }))
                     .unwrap_or_else(|_| "{}".into());
-                let successful_tool_calls =
-                    output.tool_calls.iter().filter(|c| c.success).count();
+                let successful_tool_calls = output.tool_calls.iter().filter(|c| c.success).count();
                 if output.tool_failure_count > 0 {
                     // F-16 D: tool denials / executed-with-error count
                     // overrides the "agent returned text" success
