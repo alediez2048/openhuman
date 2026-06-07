@@ -28,9 +28,10 @@ import { workflowsApi } from '../../services/api/workflows';
 import { useAppDispatch } from '../../store/hooks';
 import { deleteWorkflow, fetchStarterTemplates, fetchWorkflows } from '../../store/workflowsSlice';
 import type { ConnectionRef } from '../../types/connections';
-import type { Trigger, Workflow } from '../../types/workflows';
+import type { RunWithSteps, Trigger, Workflow } from '../../types/workflows';
 import { ConnectionChips } from './preview/internal/ConnectionChips';
 import { TriggerLine } from './preview/internal/TriggerLine';
+import RunOutcomeCard from './RunOutcomeCard';
 import WorkflowEnableToggle from './WorkflowEnableToggle';
 import WorkflowHealthBadge from './WorkflowHealthBadge';
 
@@ -164,6 +165,13 @@ export default function WorkflowCard({ workflow }: Props) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // T-2 (Phase 2.5 Trust UX): track the run produced by the last
+  // [Run now] click so we can render its `RunOutcomeCard` inline once
+  // it reaches a terminal status. Polls `workflows_get_run` every
+  // 1500ms until terminal (succeeded / failed / cancelled / timed_out)
+  // or the user dismisses. Cleared when the user clicks Run again so
+  // each click owns its own outcome card.
+  const [lastRun, setLastRun] = useState<RunWithSteps | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [openSection, setOpenSection] = useState<DetailSection | null>(null);
   const [promptCopied, setPromptCopied] = useState(false);
@@ -199,10 +207,43 @@ export default function WorkflowCard({ workflow }: Props) {
   const handleRunNow = async () => {
     setBusy(true);
     setActionMessage(null);
+    setLastRun(null);
     console.debug('[workflows-ui] run_now_clicked id=%s', workflow.id);
     try {
       const runId = await workflowsApi.runNow(workflow.id);
       setActionMessage(`Run started (${runId.slice(0, 8)}…)`);
+      // T-2: poll for the terminal state and surface it via
+      // RunOutcomeCard inline. Poll is bounded at 60 ticks (~90s) so
+      // a stuck run doesn't keep firing forever; if the run is still
+      // pending after that, the user can refresh manually.
+      void (async () => {
+        for (let i = 0; i < 60; i++) {
+          await new Promise((res) => setTimeout(res, 1500));
+          try {
+            const fetched = await workflowsApi.getRun(runId);
+            if (!fetched) continue;
+            setLastRun(fetched);
+            const status = fetched.run.status;
+            if (
+              status === 'succeeded' ||
+              status === 'failed' ||
+              status === 'cancelled' ||
+              status === 'timed_out'
+            ) {
+              return;
+            }
+          } catch (pollErr) {
+            console.warn(
+              '[workflows-ui] poll_run_failed run=%s message=%s',
+              runId,
+              (pollErr as Error | undefined)?.message
+            );
+            // Don't break the poll loop on transient errors — the
+            // RPC layer may still recover. The loop's own bound
+            // (60 ticks) is the upper limit.
+          }
+        }
+      })();
     } catch (err) {
       const message = (err as Error | undefined)?.message ?? 'unknown error';
       console.error('[workflows-ui] run_now_failed id=%s message=%s', workflow.id, message, err);
@@ -401,6 +442,21 @@ export default function WorkflowCard({ workflow }: Props) {
           aria-live="polite"
           className="px-3 pb-2 text-[11px] text-primary-700 dark:text-primary-300 truncate -mt-1">
           {actionMessage}
+        </div>
+      )}
+
+      {/*
+       * T-2 (Phase 2.5 Trust UX): inline outcome card for the most
+       * recent [Run now]. Lifecycle:
+       *   - cleared on each [Run now] click
+       *   - populated once polling fetches the run row
+       *   - re-rendered each poll tick (running → terminal)
+       * Lives between the action message and the expand section so
+       * it sits in the user's gaze the moment the run finishes.
+       */}
+      {lastRun && (
+        <div className="px-3 pb-3">
+          <RunOutcomeCard run={lastRun.run} steps={lastRun.steps} workflow={workflow} />
         </div>
       )}
 

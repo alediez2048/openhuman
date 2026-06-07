@@ -203,6 +203,52 @@ export interface RunStep {
   completed_at?: string | null;
   output_json?: string | null;
   error?: string | null;
+  /**
+   * T-1 (Phase 2.5 Trust UX): structured records of every real-world
+   * side effect the agent triggered during this step (email sent,
+   * message posted, file created). Empty for read-only steps and for
+   * pre-T-1 rows (the migration defaults the column to `'[]'`).
+   *
+   * Rendered by `<RunOutcomeCard>` as plain-English rows with deep
+   * links so the user can verify what actually happened without
+   * grepping the SQLite DB or trusting the agent's narrative.
+   */
+  delivery_receipts?: DeliveryReceipt[];
+}
+
+/**
+ * T-1: coarse classification of the side effect a delivery receipt
+ * describes. Mirror of Rust's `SideEffectKind` enum. The catalog is
+ * deliberately small + stable; unknown write tools fall through to
+ * `{ kind: 'other', verb }` rather than hallucinating a richer
+ * classification.
+ */
+export type SideEffectKind =
+  | { kind: 'email_sent' }
+  | { kind: 'message_posted'; provider: string }
+  | { kind: 'file_created'; provider: string }
+  | { kind: 'record_created'; provider: string }
+  | { kind: 'record_updated'; provider: string }
+  | { kind: 'calendar_event_created' }
+  | { kind: 'other'; verb: string };
+
+/**
+ * T-1 (Phase 2.5): structured evidence that a workflow run produced
+ * a real-world side effect. Mirror of Rust's `DeliveryReceipt`.
+ *
+ * `recipient`, `message_id`, and `link` are best-effort: when the
+ * provider's response doesn't carry the field (or extraction from
+ * dispatch args fails) the receipt still surfaces with the field as
+ * `null`. The UI shows whatever it has and doesn't invent placeholders
+ * (OQ-T1-A).
+ */
+export interface DeliveryReceipt {
+  tool: string;
+  side_effect_kind: SideEffectKind;
+  recipient?: string | null;
+  message_id?: string | null;
+  link?: string | null;
+  at: string;
 }
 
 export interface RunWithSteps {
