@@ -873,6 +873,152 @@ async fn run_step_failed_when_tool_failure_event_observed_during_run() {
     );
 }
 
+// ─────────────────────────────────────────────────────────────
+// F-21 follow-up: "no successful tool calls" structural counterpart
+// ─────────────────────────────────────────────────────────────
+
+/// Create-request helper that grants action `allowed_connections`. The
+/// existing `create_request` always passes `vec![]`, which exempts
+/// every existing test from the F-21 zero-tool-calls guard.
+fn create_request_with_connections(
+    prompt: &str,
+    connections: Vec<ConnectionRef>,
+) -> CreateWorkflowRequest {
+    CreateWorkflowRequest {
+        name: "F-21 zero-tool-calls test".into(),
+        description: None,
+        trigger: Trigger::Manual,
+        nodes: vec![Node {
+            id: "n1".into(),
+            kind: NodeKind::AgentPrompt,
+            config: NodeConfig::AgentPrompt(AgentPromptConfig {
+                prompt: prompt.into(),
+                allowed_connections: connections,
+                iteration_cap: 12,
+                model_tier: None,
+            }),
+            position: None,
+            retry_policy: None,
+        }],
+        edges: vec![],
+        settings: None,
+        origin: WorkflowOrigin::UserChat,
+    }
+}
+
+/// F-21 — when the workflow grants action connections (composio /
+/// channel / http) but the agent emits zero successful tool_use
+/// blocks during the run, the run-status guard flips the step to
+/// `Failed`. This is the structural counterpart to F-16 (which
+/// fires on tool *failures*); F-21 fires on tool *absence*.
+///
+/// Live repro: 2026-06-05 / 06-07 morning email digest runs where
+/// the model narrated `"Let me try X"` in plain text without
+/// emitting any tool_use blocks until iteration cap was hit, then
+/// the run was marked `Succeeded` because no tool failure had been
+/// observed. From the user's perspective: workflow "succeeded" but
+/// no Slack message was sent.
+#[tokio::test]
+async fn run_step_failed_when_zero_tool_calls_and_action_connections_granted() {
+    ensure_event_bus_initialised();
+    let (_dir, config) = config_with_temp_workspace();
+    let created = ops::create(
+        &config,
+        create_request_with_connections(
+            "Fetch unread emails and send a digest to Slack.",
+            vec![
+                ConnectionRef::Composio {
+                    toolkit_id: "gmail".into(),
+                    account_id: None,
+                },
+                ConnectionRef::Composio {
+                    toolkit_id: "slack".into(),
+                    account_id: None,
+                },
+            ],
+        ),
+    )
+    .await
+    .unwrap()
+    .value;
+
+    // The test stub returns narrative text but emits zero tool_use
+    // events — the production failure mode the F-21 guard catches.
+    executor::dispatch_run(
+        &config,
+        created.id.clone(),
+        TriggerSource::Manual {
+            initiator: "user".into(),
+        },
+    )
+    .await
+    .unwrap();
+
+    let terminal = wait_for_terminal_run(&config, &created.id).await;
+    assert!(
+        matches!(terminal.status, RunStatus::Failed),
+        "F-21: workflow with action connections but zero tool calls must \
+         end Failed; got {:?}",
+        terminal.status
+    );
+    let (_run, steps) = store::get_run(&config, &terminal.id)
+        .unwrap()
+        .expect("run row");
+    let step = &steps[0];
+    assert!(matches!(step.status, RunStatus::Failed));
+    let err = step
+        .error
+        .as_deref()
+        .expect("F-21-failed step must carry an error summary");
+    assert!(
+        err.contains("without emitting any tool_use") && err.contains("action connection"),
+        "F-21 error summary should describe the narrate-without-acting failure mode; got: {err}"
+    );
+    // Sanity: text payload IS persisted so debug-the-failed-run views
+    // can still show what the agent said (mirrors F-16's contract).
+    assert!(
+        step.output_json.is_some(),
+        "F-21: step text payload must be persisted even when status flips to Failed"
+    );
+}
+
+/// F-21 conservative guard — a workflow with NO action connections
+/// (pure read-only / summarisation / pure agent-text task) is NOT
+/// touched by the new rule. Zero tool calls there is legitimate, not
+/// a failure mode. Same allowlist-empty case the existing
+/// `run_step_succeeded_when_zero_tool_failure_events_observed` test
+/// implicitly exercises — this test pins the F-21 guard's
+/// `!allowed_connections.is_empty()` clause explicitly.
+#[tokio::test]
+async fn run_step_succeeded_when_zero_tool_calls_and_no_action_connections() {
+    ensure_event_bus_initialised();
+    let (_dir, config) = config_with_temp_workspace();
+    let created = ops::create(&config, create_request("read-only summarisation task"))
+        .await
+        .unwrap()
+        .value;
+    // create_request defaults to `allowed_connections: vec![]` —
+    // pure-text agent workflows shouldn't be touched by F-21.
+
+    executor::dispatch_run(
+        &config,
+        created.id.clone(),
+        TriggerSource::Manual {
+            initiator: "user".into(),
+        },
+    )
+    .await
+    .unwrap();
+
+    let terminal = wait_for_terminal_run(&config, &created.id).await;
+    assert!(
+        matches!(terminal.status, RunStatus::Succeeded),
+        "F-21 conservative guard: zero tool calls with NO action \
+         connections is still Succeeded; got {:?}",
+        terminal.status
+    );
+}
+
 /// F-16 — `build_node_agent_definition`'s output is the exact wire
 /// the executor passes into `from_config_for_agent_with_tool_override`.
 /// This is the contract test for the C deliverable.

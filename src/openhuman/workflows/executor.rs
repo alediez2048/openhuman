@@ -2733,6 +2733,8 @@ async fn execute_agent_prompt(
                 let truncated = store::truncate_output_to_64kib(output.text);
                 let payload = serde_json::to_string(&serde_json::json!({ "text": truncated }))
                     .unwrap_or_else(|_| "{}".into());
+                let successful_tool_calls =
+                    output.tool_calls.iter().filter(|c| c.success).count();
                 if output.tool_failure_count > 0 {
                     // F-16 D: tool denials / executed-with-error count
                     // overrides the "agent returned text" success
@@ -2745,6 +2747,50 @@ async fn execute_agent_prompt(
                          Check workflows-run + agent_loop logs for details.",
                     output.tool_failure_count
                 );
+                    (
+                        RunStatus::Failed,
+                        Some(payload),
+                        Some(summary),
+                        narrative,
+                        trace,
+                    )
+                } else if successful_tool_calls == 0
+                    && !resolved_prompt_config.allowed_connections.is_empty()
+                {
+                    // F-21 deferred follow-up — structural counterpart to
+                    // F-16. F-16 catches "tool failed → run Failed". This
+                    // catches "agent never called a tool → run still
+                    // showed Succeeded". Live repro: 2026-06-05 / 06-07
+                    // morning email digest where the model (reasoning-v1
+                    // after the Anthropic+OpenAI router shift) narrated
+                    // its next-action intent ("Let me try X") in plain
+                    // text without emitting any tool_use blocks, hit
+                    // iteration cap, and the run was marked Succeeded
+                    // because no tool failure was observed.
+                    //
+                    // Rule: workflow granted action connection(s) but the
+                    // agent made zero successful tool calls ⇒ Failed. The
+                    // conservative `allowed_connections.is_empty()` guard
+                    // means pure read-only / summarisation workflows that
+                    // legitimately produce only text are NOT touched.
+                    let summary = format!(
+                        "agent narrated next-action intent in {} chars of text without emitting \
+                         any tool_use blocks. Workflow granted {} action connection(s) but the \
+                         agent made zero successful tool calls — the run accomplished nothing \
+                         measurable. Common causes: model gets stuck in chain-of-thought (try \
+                         pinning workflow_node to a stronger model via [teams.workflow_node] \
+                         agent_model in config.toml), or the prompt asks for an action the \
+                         allowlist doesn't grant.",
+                        narrative.chars().count(),
+                        resolved_prompt_config.allowed_connections.len()
+                    );
+                    tracing::warn!(
+                        target: "workflows-run",
+                        run_id = %run.id,
+                        narrative_chars = narrative.chars().count(),
+                        allowed_connections = resolved_prompt_config.allowed_connections.len(),
+                        "[workflows-run] no successful tool calls — flipping run to Failed (F-21)"
+                    );
                     (
                         RunStatus::Failed,
                         Some(payload),
