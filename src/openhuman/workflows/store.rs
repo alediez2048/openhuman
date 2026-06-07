@@ -990,11 +990,10 @@ fn row_to_run_step(row: &Row<'_>) -> Result<RunStep> {
     // Treat any read failure as "empty vec" rather than bubbling up;
     // the receipts surface is best-effort and never gates correctness.
     let receipts_raw: String = row.get(8).unwrap_or_else(|_| "[]".to_string());
-    let delivery_receipts =
-        serde_json::from_str::<Vec<crate::openhuman::workflows::types::DeliveryReceipt>>(
-            &receipts_raw,
-        )
-        .unwrap_or_default();
+    let delivery_receipts = serde_json::from_str::<
+        Vec<crate::openhuman::workflows::types::DeliveryReceipt>,
+    >(&receipts_raw)
+    .unwrap_or_default();
     Ok(RunStep {
         id,
         run_id,

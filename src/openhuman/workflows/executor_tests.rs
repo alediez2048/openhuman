@@ -1123,10 +1123,7 @@ async fn run_step_records_delivery_receipt_when_event_observed_during_run() {
         receipt.side_effect_kind,
         super::types::SideEffectKind::EmailSent
     );
-    assert_eq!(
-        receipt.recipient.as_deref(),
-        Some("alediez2408@gmail.com")
-    );
+    assert_eq!(receipt.recipient.as_deref(), Some("alediez2408@gmail.com"));
 }
 
 /// T-1 — receipts round-trip through SQLite serialisation. Persisting

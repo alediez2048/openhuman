@@ -3370,9 +3370,7 @@ fn subscribe_tool_call_recorder(
     target_session_id: String,
     counter: Arc<AtomicU32>,
     observations: Arc<parking_lot::Mutex<Vec<ToolCallObservation>>>,
-    receipts: Arc<
-        parking_lot::Mutex<Vec<crate::openhuman::workflows::types::DeliveryReceipt>>,
-    >,
+    receipts: Arc<parking_lot::Mutex<Vec<crate::openhuman::workflows::types::DeliveryReceipt>>>,
 ) -> Option<crate::core::event_bus::SubscriptionHandle> {
     use crate::core::event_bus::{subscribe_global, DomainEvent, EventHandler};
     use async_trait::async_trait;
@@ -3384,9 +3382,7 @@ fn subscribe_tool_call_recorder(
         // T-1 (Phase 2.5): receipts are recorded by the same
         // subscriber as tool calls so a single subscription handle
         // covers both event kinds; dropping the handle cancels both.
-        receipts: Arc<
-            parking_lot::Mutex<Vec<crate::openhuman::workflows::types::DeliveryReceipt>>,
-        >,
+        receipts: Arc<parking_lot::Mutex<Vec<crate::openhuman::workflows::types::DeliveryReceipt>>>,
     }
 
     #[async_trait]
@@ -3432,10 +3428,9 @@ fn subscribe_tool_call_recorder(
                     // silently with a warn rather than failing the
                     // subscriber. The receipts surface is purely
                     // user-visible UX — never gates run correctness.
-                    match serde_json::from_str::<
-                        crate::openhuman::workflows::types::DeliveryReceipt,
-                    >(receipt_json)
-                    {
+                    match serde_json::from_str::<crate::openhuman::workflows::types::DeliveryReceipt>(
+                        receipt_json,
+                    ) {
                         Ok(receipt) => {
                             self.receipts.lock().push(receipt);
                         }

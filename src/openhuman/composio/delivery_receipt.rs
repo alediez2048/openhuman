@@ -79,7 +79,8 @@ fn classify_gmail_send_email(
         return None;
     }
     let recipient = string_from_args(args, "recipient_email");
-    let message_id = string_from_data(&resp.data, "id").or_else(|| message_id_from_response_id(resp));
+    let message_id =
+        string_from_data(&resp.data, "id").or_else(|| message_id_from_response_id(resp));
     let link = message_id
         .as_ref()
         .map(|id| format!("https://mail.google.com/mail/u/0/#sent/{id}"));
