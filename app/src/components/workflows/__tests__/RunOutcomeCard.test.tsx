@@ -32,6 +32,14 @@ vi.mock('../../../lib/i18n/I18nContext', () => ({
           return 'Updated record {name} in {provider}';
         case 'workflows.outcome.calendar_event_created':
           return 'Created calendar event {title}';
+        case 'workflows.outcome.issue_created_in':
+          return 'Created issue {title} in {provider}';
+        case 'workflows.outcome.social_post_created':
+          return 'Posted on {provider}: "{snippet}"';
+        case 'workflows.outcome.open_issue':
+          return 'Open';
+        case 'workflows.outcome.open_post':
+          return 'Open';
         case 'workflows.outcome.other_action':
           return '{verb} via {tool}';
         case 'workflows.outcome.open_in_gmail':
@@ -266,6 +274,53 @@ describe('<RunOutcomeCard>', () => {
     expect(screen.getByTestId('run-outcome-narrative')).toHaveTextContent(
       'agent rambled about something'
     );
+  });
+
+  it('renders an IssueCreated receipt with the 🎫 icon shape', () => {
+    render(
+      <RunOutcomeCard
+        run={runOf()}
+        steps={[
+          stepOf({
+            delivery_receipts: [
+              receiptOf({
+                tool: 'LINEAR_CREATE_ISSUE',
+                side_effect_kind: { kind: 'issue_created', provider: 'linear' },
+                recipient: 'Fix login bug',
+                message_id: 'ENG-42',
+                link: 'https://linear.app/acme/issue/ENG-42',
+              }),
+            ],
+          }),
+        ]}
+      />
+    );
+    expect(screen.getByText('Created issue Fix login bug in Linear')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Open/i })).toBeInTheDocument();
+  });
+
+  it('renders a SocialPostCreated receipt with the 📢 shape', () => {
+    render(
+      <RunOutcomeCard
+        run={runOf()}
+        steps={[
+          stepOf({
+            delivery_receipts: [
+              receiptOf({
+                tool: 'LINKEDIN_CREATE_LINKED_IN_POST',
+                side_effect_kind: { kind: 'social_post_created', provider: 'linkedin' },
+                recipient: 'Excited to ship Trust UX in OpenHuman…',
+                message_id: 'urn:li:share:abc',
+                link: null,
+              }),
+            ],
+          }),
+        ]}
+      />
+    );
+    expect(
+      screen.getByText(/Posted on Linkedin: "Excited to ship Trust UX in OpenHuman…"/)
+    ).toBeInTheDocument();
   });
 
   it('renders multiple receipts in order across steps', () => {

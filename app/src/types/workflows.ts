@@ -230,6 +230,8 @@ export type SideEffectKind =
   | { kind: 'record_created'; provider: string }
   | { kind: 'record_updated'; provider: string }
   | { kind: 'calendar_event_created' }
+  | { kind: 'issue_created'; provider: string }
+  | { kind: 'social_post_created'; provider: string }
   | { kind: 'other'; verb: string };
 
 /**

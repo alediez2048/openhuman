@@ -212,6 +212,22 @@ function describeReceipt(
         primary: t('workflows.outcome.calendar_event_created').replace('{title}', recipient),
         openLabel: t('workflows.outcome.open_calendar'),
       };
+    case 'issue_created':
+      return {
+        icon: '🎫',
+        primary: t('workflows.outcome.issue_created_in')
+          .replace('{provider}', humanProvider(kind.provider))
+          .replace('{title}', recipient),
+        openLabel: t('workflows.outcome.open_issue'),
+      };
+    case 'social_post_created':
+      return {
+        icon: '📢',
+        primary: t('workflows.outcome.social_post_created')
+          .replace('{provider}', humanProvider(kind.provider))
+          .replace('{snippet}', recipient),
+        openLabel: t('workflows.outcome.open_post'),
+      };
     case 'other':
       return {
         icon: '⚙️',

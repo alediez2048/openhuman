@@ -48,19 +48,82 @@ pub fn classify(
     response: &ComposioExecuteResponse,
 ) -> Option<DeliveryReceipt> {
     // Curated rules — order doesn't matter, slugs are disjoint.
+    // Communication
     if let Some(receipt) = classify_gmail_send_email(tool, arguments, response) {
+        return Some(receipt);
+    }
+    if let Some(receipt) = classify_gmail_create_draft(tool, arguments, response) {
         return Some(receipt);
     }
     if let Some(receipt) = classify_slack_send_message(tool, arguments, response) {
         return Some(receipt);
     }
+    if let Some(receipt) = classify_linkedin_send_message(tool, arguments, response) {
+        return Some(receipt);
+    }
+    if let Some(receipt) = classify_twilio_send_message(tool, arguments, response) {
+        return Some(receipt);
+    }
+    if let Some(receipt) = classify_discord_send_message(tool, arguments, response) {
+        return Some(receipt);
+    }
+    if let Some(receipt) = classify_telegram_send_message(tool, arguments, response) {
+        return Some(receipt);
+    }
+    // Calendar
     if let Some(receipt) = classify_googlecalendar_create_event(tool, arguments, response) {
         return Some(receipt);
     }
+    // Files & docs
     if let Some(receipt) = classify_notion_create_page(tool, arguments, response) {
         return Some(receipt);
     }
+    if let Some(receipt) = classify_notion_update_page(tool, arguments, response) {
+        return Some(receipt);
+    }
+    if let Some(receipt) = classify_googledrive_upload_file(tool, arguments, response) {
+        return Some(receipt);
+    }
+    if let Some(receipt) = classify_googledocs_create_doc(tool, arguments, response) {
+        return Some(receipt);
+    }
+    if let Some(receipt) = classify_googlesheets_append_values(tool, arguments, response) {
+        return Some(receipt);
+    }
+    if let Some(receipt) = classify_googlesheets_update_values(tool, arguments, response) {
+        return Some(receipt);
+    }
+    // Issue trackers
+    if let Some(receipt) = classify_linear_create_issue(tool, arguments, response) {
+        return Some(receipt);
+    }
+    if let Some(receipt) = classify_github_create_issue(tool, arguments, response) {
+        return Some(receipt);
+    }
+    if let Some(receipt) = classify_github_create_pull_request(tool, arguments, response) {
+        return Some(receipt);
+    }
+    if let Some(receipt) = classify_jira_create_issue(tool, arguments, response) {
+        return Some(receipt);
+    }
+    if let Some(receipt) = classify_asana_create_task(tool, arguments, response) {
+        return Some(receipt);
+    }
+    // Social
+    if let Some(receipt) = classify_linkedin_create_post(tool, arguments, response) {
+        return Some(receipt);
+    }
+    if let Some(receipt) = classify_twitter_create_tweet(tool, arguments, response) {
+        return Some(receipt);
+    }
+    // CRM / structured records
     if let Some(receipt) = classify_attio_create_record(tool, arguments, response) {
+        return Some(receipt);
+    }
+    if let Some(receipt) = classify_airtable_create_record(tool, arguments, response) {
+        return Some(receipt);
+    }
+    if let Some(receipt) = classify_hubspot_create_contact(tool, arguments, response) {
         return Some(receipt);
     }
 
@@ -201,6 +264,545 @@ fn classify_attio_create_record(
     })
 }
 
+// ── T-2b: extended curated rules (top write actions) ──────────────
+//
+// One fn per slug for readability. Each follows the same shape as the
+// 6 original rules: match-or-return-None, extract recipient from args,
+// extract message_id + link from response, emit `DeliveryReceipt`.
+// Field lookups are best-effort — when Composio's response shape
+// drifts the receipt still emits with `None` for the affected field
+// rather than skipping (OQ-T1-A).
+
+fn classify_gmail_create_draft(
+    tool: &str,
+    args: Option<&Value>,
+    resp: &ComposioExecuteResponse,
+) -> Option<DeliveryReceipt> {
+    if tool != "GMAIL_CREATE_DRAFT" && tool != "GMAIL_CREATE_EMAIL_DRAFT" {
+        return None;
+    }
+    let recipient = string_from_args(args, "recipient_email").or_else(|| string_from_args(args, "to"));
+    let message_id =
+        string_from_data(&resp.data, "id").or_else(|| nested_string(&resp.data, &["draft", "id"]));
+    let link = message_id
+        .as_ref()
+        .map(|id| format!("https://mail.google.com/mail/u/0/#drafts/{id}"));
+    Some(DeliveryReceipt {
+        tool: tool.to_string(),
+        side_effect_kind: SideEffectKind::FileCreated {
+            provider: "gmail".to_string(),
+        },
+        recipient,
+        message_id,
+        link,
+        at: Utc::now(),
+    })
+}
+
+fn classify_linkedin_send_message(
+    tool: &str,
+    args: Option<&Value>,
+    resp: &ComposioExecuteResponse,
+) -> Option<DeliveryReceipt> {
+    if tool != "LINKEDIN_SEND_MESSAGE" && tool != "LINKEDIN_CREATE_DIRECT_MESSAGE" {
+        return None;
+    }
+    let recipient = string_from_args(args, "recipient_urn")
+        .or_else(|| string_from_args(args, "recipient"))
+        .or_else(|| string_from_args(args, "to"));
+    let message_id = string_from_data(&resp.data, "id");
+    // No reliable canonical deep-link template — surfaces with link: None.
+    Some(DeliveryReceipt {
+        tool: tool.to_string(),
+        side_effect_kind: SideEffectKind::MessagePosted {
+            provider: "linkedin".to_string(),
+        },
+        recipient,
+        message_id,
+        link: None,
+        at: Utc::now(),
+    })
+}
+
+fn classify_twilio_send_message(
+    tool: &str,
+    args: Option<&Value>,
+    resp: &ComposioExecuteResponse,
+) -> Option<DeliveryReceipt> {
+    // Twilio's canonical Composio slug is TWILIO_CREATE_MESSAGE; we
+    // also accept SEND_SMS as a forward-compat alias for any future
+    // slug rename.
+    if tool != "TWILIO_CREATE_MESSAGE" && tool != "TWILIO_SEND_SMS" {
+        return None;
+    }
+    let recipient = string_from_args(args, "to");
+    // Twilio's response surfaces `sid` (e.g. `SMxxxxxxxx`).
+    let message_id = string_from_data(&resp.data, "sid").or_else(|| string_from_data(&resp.data, "id"));
+    Some(DeliveryReceipt {
+        tool: tool.to_string(),
+        side_effect_kind: SideEffectKind::MessagePosted {
+            provider: "twilio".to_string(),
+        },
+        recipient,
+        message_id,
+        link: None,
+        at: Utc::now(),
+    })
+}
+
+fn classify_discord_send_message(
+    tool: &str,
+    args: Option<&Value>,
+    resp: &ComposioExecuteResponse,
+) -> Option<DeliveryReceipt> {
+    if tool != "DISCORD_SEND_MESSAGE" && tool != "DISCORD_POST_MESSAGE" {
+        return None;
+    }
+    let recipient = string_from_args(args, "channel_id").or_else(|| string_from_args(args, "channel"));
+    let message_id = string_from_data(&resp.data, "id");
+    Some(DeliveryReceipt {
+        tool: tool.to_string(),
+        side_effect_kind: SideEffectKind::MessagePosted {
+            provider: "discord".to_string(),
+        },
+        recipient,
+        message_id,
+        link: None,
+        at: Utc::now(),
+    })
+}
+
+fn classify_telegram_send_message(
+    tool: &str,
+    args: Option<&Value>,
+    resp: &ComposioExecuteResponse,
+) -> Option<DeliveryReceipt> {
+    if tool != "TELEGRAM_SEND_MESSAGE" && tool != "TELEGRAM_BOT_SEND_MESSAGE" {
+        return None;
+    }
+    let recipient = string_from_args(args, "chat_id");
+    // Telegram returns `message_id` as a number; coerce.
+    let message_id = resp
+        .data
+        .get("message_id")
+        .and_then(|v| v.as_i64().map(|n| n.to_string()).or_else(|| v.as_str().map(str::to_string)))
+        .or_else(|| nested_string(&resp.data, &["result", "message_id"]));
+    Some(DeliveryReceipt {
+        tool: tool.to_string(),
+        side_effect_kind: SideEffectKind::MessagePosted {
+            provider: "telegram".to_string(),
+        },
+        recipient,
+        message_id,
+        link: None,
+        at: Utc::now(),
+    })
+}
+
+fn classify_notion_update_page(
+    tool: &str,
+    args: Option<&Value>,
+    resp: &ComposioExecuteResponse,
+) -> Option<DeliveryReceipt> {
+    if tool != "NOTION_UPDATE_PAGE"
+        && tool != "NOTION_UPDATE_BLOCK"
+        && tool != "NOTION_APPEND_BLOCK_CHILDREN"
+    {
+        return None;
+    }
+    let recipient = string_from_args(args, "page_id")
+        .or_else(|| string_from_args(args, "block_id"))
+        .or_else(|| string_from_args(args, "title"));
+    let message_id = string_from_data(&resp.data, "id").or(recipient.clone());
+    let link = string_from_data(&resp.data, "url");
+    Some(DeliveryReceipt {
+        tool: tool.to_string(),
+        side_effect_kind: SideEffectKind::RecordUpdated {
+            provider: "notion".to_string(),
+        },
+        recipient,
+        message_id,
+        link,
+        at: Utc::now(),
+    })
+}
+
+fn classify_googledrive_upload_file(
+    tool: &str,
+    args: Option<&Value>,
+    resp: &ComposioExecuteResponse,
+) -> Option<DeliveryReceipt> {
+    if tool != "GOOGLEDRIVE_UPLOAD_FILE"
+        && tool != "GOOGLEDRIVE_CREATE_FILE"
+        && tool != "GOOGLEDRIVE_CREATE_FOLDER"
+    {
+        return None;
+    }
+    let recipient = string_from_args(args, "file_name")
+        .or_else(|| string_from_args(args, "name"))
+        .or_else(|| string_from_args(args, "title"));
+    let message_id = string_from_data(&resp.data, "id");
+    let link = string_from_data(&resp.data, "webViewLink").or_else(|| {
+        message_id
+            .as_ref()
+            .map(|id| format!("https://drive.google.com/file/d/{id}/view"))
+    });
+    Some(DeliveryReceipt {
+        tool: tool.to_string(),
+        side_effect_kind: SideEffectKind::FileCreated {
+            provider: "googledrive".to_string(),
+        },
+        recipient,
+        message_id,
+        link,
+        at: Utc::now(),
+    })
+}
+
+fn classify_googledocs_create_doc(
+    tool: &str,
+    args: Option<&Value>,
+    resp: &ComposioExecuteResponse,
+) -> Option<DeliveryReceipt> {
+    if tool != "GOOGLEDOCS_CREATE_DOC"
+        && tool != "GOOGLEDOCS_CREATE_DOCUMENT"
+        && tool != "GOOGLEDOCS_CREATE_DOCUMENT_FROM_TEXT"
+    {
+        return None;
+    }
+    let recipient = string_from_args(args, "title").or_else(|| string_from_args(args, "name"));
+    let message_id =
+        string_from_data(&resp.data, "documentId").or_else(|| string_from_data(&resp.data, "id"));
+    let link = message_id
+        .as_ref()
+        .map(|id| format!("https://docs.google.com/document/d/{id}/edit"));
+    Some(DeliveryReceipt {
+        tool: tool.to_string(),
+        side_effect_kind: SideEffectKind::FileCreated {
+            provider: "googledocs".to_string(),
+        },
+        recipient,
+        message_id,
+        link,
+        at: Utc::now(),
+    })
+}
+
+fn classify_googlesheets_append_values(
+    tool: &str,
+    args: Option<&Value>,
+    resp: &ComposioExecuteResponse,
+) -> Option<DeliveryReceipt> {
+    if tool != "GOOGLESHEETS_APPEND_VALUES"
+        && tool != "GOOGLESHEETS_SPREADSHEETS_VALUES_APPEND"
+        && tool != "GOOGLESHEETS_BATCH_UPDATE_BY_DATA_FILTER"
+    {
+        return None;
+    }
+    // Args: spreadsheet_id (or spreadsheetId), range, values
+    let spreadsheet_id = string_from_args(args, "spreadsheet_id")
+        .or_else(|| string_from_args(args, "spreadsheetId"));
+    let range = string_from_args(args, "range");
+    let recipient = match (range.as_deref(), spreadsheet_id.as_deref()) {
+        (Some(r), Some(_)) => Some(r.to_string()),
+        (Some(r), None) => Some(r.to_string()),
+        (None, Some(id)) => Some(id.to_string()),
+        _ => None,
+    };
+    let message_id = string_from_data(&resp.data, "spreadsheetId").or(spreadsheet_id.clone());
+    let link = message_id
+        .as_ref()
+        .map(|id| format!("https://docs.google.com/spreadsheets/d/{id}/edit"));
+    Some(DeliveryReceipt {
+        tool: tool.to_string(),
+        side_effect_kind: SideEffectKind::RecordCreated {
+            provider: "googlesheets".to_string(),
+        },
+        recipient,
+        message_id,
+        link,
+        at: Utc::now(),
+    })
+}
+
+fn classify_googlesheets_update_values(
+    tool: &str,
+    args: Option<&Value>,
+    resp: &ComposioExecuteResponse,
+) -> Option<DeliveryReceipt> {
+    if tool != "GOOGLESHEETS_UPDATE_SPREADSHEET_VALUES"
+        && tool != "GOOGLESHEETS_BATCH_UPDATE"
+        && tool != "GOOGLESHEETS_SPREADSHEETS_VALUES_UPDATE"
+        && tool != "GOOGLESHEETS_SPREADSHEETS_BATCH_UPDATE"
+    {
+        return None;
+    }
+    let spreadsheet_id = string_from_args(args, "spreadsheet_id")
+        .or_else(|| string_from_args(args, "spreadsheetId"));
+    let range = string_from_args(args, "range")
+        .or_else(|| string_from_data(&resp.data, "updatedRange"));
+    let recipient = range.or_else(|| spreadsheet_id.clone());
+    let message_id = string_from_data(&resp.data, "spreadsheetId").or(spreadsheet_id.clone());
+    let link = message_id
+        .as_ref()
+        .map(|id| format!("https://docs.google.com/spreadsheets/d/{id}/edit"));
+    Some(DeliveryReceipt {
+        tool: tool.to_string(),
+        side_effect_kind: SideEffectKind::RecordUpdated {
+            provider: "googlesheets".to_string(),
+        },
+        recipient,
+        message_id,
+        link,
+        at: Utc::now(),
+    })
+}
+
+fn classify_linear_create_issue(
+    tool: &str,
+    args: Option<&Value>,
+    resp: &ComposioExecuteResponse,
+) -> Option<DeliveryReceipt> {
+    if tool != "LINEAR_CREATE_ISSUE" && tool != "LINEAR_CREATE_LINEAR_ISSUE" {
+        return None;
+    }
+    let recipient = string_from_args(args, "title");
+    // Linear's response wraps under `issue`: { id, identifier, url, … }.
+    let message_id = nested_string(&resp.data, &["issue", "identifier"])
+        .or_else(|| nested_string(&resp.data, &["issue", "id"]))
+        .or_else(|| string_from_data(&resp.data, "id"));
+    let link = nested_string(&resp.data, &["issue", "url"])
+        .or_else(|| string_from_data(&resp.data, "url"));
+    Some(DeliveryReceipt {
+        tool: tool.to_string(),
+        side_effect_kind: SideEffectKind::IssueCreated {
+            provider: "linear".to_string(),
+        },
+        recipient,
+        message_id,
+        link,
+        at: Utc::now(),
+    })
+}
+
+fn classify_github_create_issue(
+    tool: &str,
+    args: Option<&Value>,
+    resp: &ComposioExecuteResponse,
+) -> Option<DeliveryReceipt> {
+    if tool != "GITHUB_CREATE_ISSUE" && tool != "GITHUB_ISSUES_CREATE" {
+        return None;
+    }
+    let recipient = string_from_args(args, "title");
+    // GitHub returns issue number + html_url directly.
+    let message_id = resp
+        .data
+        .get("number")
+        .and_then(|v| v.as_i64().map(|n| format!("#{n}")))
+        .or_else(|| string_from_data(&resp.data, "id"));
+    let link = string_from_data(&resp.data, "html_url");
+    Some(DeliveryReceipt {
+        tool: tool.to_string(),
+        side_effect_kind: SideEffectKind::IssueCreated {
+            provider: "github".to_string(),
+        },
+        recipient,
+        message_id,
+        link,
+        at: Utc::now(),
+    })
+}
+
+fn classify_github_create_pull_request(
+    tool: &str,
+    args: Option<&Value>,
+    resp: &ComposioExecuteResponse,
+) -> Option<DeliveryReceipt> {
+    if tool != "GITHUB_CREATE_PULL_REQUEST" && tool != "GITHUB_PULLS_CREATE" {
+        return None;
+    }
+    let recipient = string_from_args(args, "title");
+    let message_id = resp
+        .data
+        .get("number")
+        .and_then(|v| v.as_i64().map(|n| format!("#{n}")))
+        .or_else(|| string_from_data(&resp.data, "id"));
+    let link = string_from_data(&resp.data, "html_url");
+    Some(DeliveryReceipt {
+        tool: tool.to_string(),
+        side_effect_kind: SideEffectKind::IssueCreated {
+            provider: "github".to_string(),
+        },
+        recipient,
+        message_id,
+        link,
+        at: Utc::now(),
+    })
+}
+
+fn classify_jira_create_issue(
+    tool: &str,
+    args: Option<&Value>,
+    resp: &ComposioExecuteResponse,
+) -> Option<DeliveryReceipt> {
+    if tool != "JIRA_CREATE_ISSUE" && tool != "JIRA_CREATE_JIRA_ISSUE" {
+        return None;
+    }
+    let recipient = nested_string(args.unwrap_or(&Value::Null), &["fields", "summary"])
+        .or_else(|| string_from_args(args, "summary"));
+    let message_id = string_from_data(&resp.data, "key").or_else(|| string_from_data(&resp.data, "id"));
+    let link = string_from_data(&resp.data, "self");
+    Some(DeliveryReceipt {
+        tool: tool.to_string(),
+        side_effect_kind: SideEffectKind::IssueCreated {
+            provider: "jira".to_string(),
+        },
+        recipient,
+        message_id,
+        link,
+        at: Utc::now(),
+    })
+}
+
+fn classify_asana_create_task(
+    tool: &str,
+    args: Option<&Value>,
+    resp: &ComposioExecuteResponse,
+) -> Option<DeliveryReceipt> {
+    if tool != "ASANA_CREATE_TASK" && tool != "ASANA_TASKS_CREATE_TASK" {
+        return None;
+    }
+    let recipient = string_from_args(args, "name").or_else(|| string_from_args(args, "title"));
+    let message_id = nested_string(&resp.data, &["data", "gid"])
+        .or_else(|| string_from_data(&resp.data, "gid"))
+        .or_else(|| string_from_data(&resp.data, "id"));
+    let link = nested_string(&resp.data, &["data", "permalink_url"])
+        .or_else(|| string_from_data(&resp.data, "permalink_url"));
+    Some(DeliveryReceipt {
+        tool: tool.to_string(),
+        side_effect_kind: SideEffectKind::IssueCreated {
+            provider: "asana".to_string(),
+        },
+        recipient,
+        message_id,
+        link,
+        at: Utc::now(),
+    })
+}
+
+fn classify_linkedin_create_post(
+    tool: &str,
+    args: Option<&Value>,
+    resp: &ComposioExecuteResponse,
+) -> Option<DeliveryReceipt> {
+    if tool != "LINKEDIN_CREATE_LINKED_IN_POST"
+        && tool != "LINKEDIN_CREATE_POST"
+        && tool != "LINKEDIN_SHARE_POST"
+    {
+        return None;
+    }
+    let recipient = string_from_args(args, "text")
+        .or_else(|| string_from_args(args, "commentary"))
+        .or_else(|| string_from_args(args, "content"));
+    // Truncate the recipient text — posts are long, the receipt row
+    // needs to stay tidy.
+    let recipient = recipient.map(|r| truncate_for_display(&r, 60));
+    let message_id = string_from_data(&resp.data, "id");
+    Some(DeliveryReceipt {
+        tool: tool.to_string(),
+        side_effect_kind: SideEffectKind::SocialPostCreated {
+            provider: "linkedin".to_string(),
+        },
+        recipient,
+        message_id,
+        link: None,
+        at: Utc::now(),
+    })
+}
+
+fn classify_twitter_create_tweet(
+    tool: &str,
+    args: Option<&Value>,
+    resp: &ComposioExecuteResponse,
+) -> Option<DeliveryReceipt> {
+    if tool != "TWITTER_POST_TWEET"
+        && tool != "TWITTER_CREATION_OF_A_POST"
+        && tool != "TWITTER_CREATE_TWEET"
+        && tool != "TWITTER_TWEETS_POST"
+    {
+        return None;
+    }
+    let recipient = string_from_args(args, "text").map(|r| truncate_for_display(&r, 60));
+    let message_id = string_from_data(&resp.data, "id")
+        .or_else(|| nested_string(&resp.data, &["data", "id"]));
+    // Tweet permalink template uses /i/web/status/{id} which redirects
+    // to the canonical username URL.
+    let link = message_id
+        .as_ref()
+        .map(|id| format!("https://twitter.com/i/web/status/{id}"));
+    Some(DeliveryReceipt {
+        tool: tool.to_string(),
+        side_effect_kind: SideEffectKind::SocialPostCreated {
+            provider: "twitter".to_string(),
+        },
+        recipient,
+        message_id,
+        link,
+        at: Utc::now(),
+    })
+}
+
+fn classify_airtable_create_record(
+    tool: &str,
+    args: Option<&Value>,
+    resp: &ComposioExecuteResponse,
+) -> Option<DeliveryReceipt> {
+    if tool != "AIRTABLE_CREATE_RECORD" && tool != "AIRTABLE_CREATE_RECORDS" {
+        return None;
+    }
+    let recipient = string_from_args(args, "table_name")
+        .or_else(|| string_from_args(args, "tableId"));
+    let message_id = string_from_data(&resp.data, "id")
+        .or_else(|| nested_string(&resp.data, &["records", "0", "id"]));
+    Some(DeliveryReceipt {
+        tool: tool.to_string(),
+        side_effect_kind: SideEffectKind::RecordCreated {
+            provider: "airtable".to_string(),
+        },
+        recipient,
+        message_id,
+        link: None,
+        at: Utc::now(),
+    })
+}
+
+fn classify_hubspot_create_contact(
+    tool: &str,
+    args: Option<&Value>,
+    resp: &ComposioExecuteResponse,
+) -> Option<DeliveryReceipt> {
+    if tool != "HUBSPOT_CREATE_CONTACT"
+        && tool != "HUBSPOT_CRM_CONTACTS_CREATE"
+        && tool != "HUBSPOT_CONTACTS_CREATE"
+    {
+        return None;
+    }
+    let recipient = nested_string(args.unwrap_or(&Value::Null), &["properties", "email"])
+        .or_else(|| string_from_args(args, "email"))
+        .or_else(|| nested_string(args.unwrap_or(&Value::Null), &["properties", "firstname"]));
+    let message_id = string_from_data(&resp.data, "id");
+    Some(DeliveryReceipt {
+        tool: tool.to_string(),
+        side_effect_kind: SideEffectKind::RecordCreated {
+            provider: "hubspot".to_string(),
+        },
+        recipient,
+        message_id,
+        link: None,
+        at: Utc::now(),
+    })
+}
+
 // ── Generic write fall-through ─────────────────────────────────────
 
 /// Classify a write-class slug that doesn't match a curated rule.
@@ -263,6 +865,38 @@ fn string_from_args(args: Option<&Value>, key: &str) -> Option<String> {
 
 fn string_from_data(data: &Value, key: &str) -> Option<String> {
     data.get(key).and_then(|v| v.as_str()).map(str::to_string)
+}
+
+/// Walk a JSON path of keys, returning the leaf string if present.
+/// Numeric keys (e.g. `"0"`) are interpreted as array indices.
+/// Used by classifiers whose providers nest the relevant id /
+/// link / title under multi-level structures (Linear, Jira, Asana,
+/// Hubspot).
+fn nested_string(root: &Value, path: &[&str]) -> Option<String> {
+    let mut cursor = root;
+    for segment in path {
+        cursor = match cursor {
+            Value::Object(map) => map.get(*segment)?,
+            Value::Array(items) => {
+                let idx: usize = segment.parse().ok()?;
+                items.get(idx)?
+            }
+            _ => return None,
+        };
+    }
+    cursor.as_str().map(str::to_string)
+}
+
+/// Cap a free-form text string at `max_chars` Unicode scalars so a
+/// long recipient (LinkedIn post body, tweet text) doesn't blow out
+/// the receipt row's layout. Adds a single-char ellipsis when
+/// truncated.
+fn truncate_for_display(s: &str, max_chars: usize) -> String {
+    if s.chars().count() <= max_chars {
+        return s.to_string();
+    }
+    let truncated: String = s.chars().take(max_chars).collect();
+    format!("{truncated}…")
 }
 
 /// Some Composio responses surface a top-level `id` at the response
@@ -489,5 +1123,322 @@ mod tests {
         // shows up in production logs, add it to write_verb_from_slug.
         let resp = resp_with_data(json!({}));
         assert!(classify("FOO_SUBSCRIBE_BAR", None, &resp).is_none());
+    }
+
+    // ── T-2b: extended curated rules ───────────────────────────────
+
+    // Communication
+
+    #[test]
+    fn classify_gmail_create_draft_emits_file_created_with_draft_link() {
+        let args = json!({ "recipient_email": "x@y.com", "subject": "draft" });
+        let resp = resp_with_data(json!({ "id": "draft_abc" }));
+        let receipt = classify("GMAIL_CREATE_DRAFT", Some(&args), &resp).unwrap();
+        assert!(matches!(
+            receipt.side_effect_kind,
+            SideEffectKind::FileCreated { ref provider } if provider == "gmail"
+        ));
+        assert_eq!(
+            receipt.link.as_deref(),
+            Some("https://mail.google.com/mail/u/0/#drafts/draft_abc")
+        );
+        assert_eq!(receipt.recipient.as_deref(), Some("x@y.com"));
+    }
+
+    #[test]
+    fn classify_linkedin_send_message_classifies_as_message_posted_linkedin() {
+        let args = json!({ "recipient_urn": "urn:li:person:abc", "message": "hi" });
+        let resp = resp_with_data(json!({ "id": "msg_xyz" }));
+        let receipt = classify("LINKEDIN_SEND_MESSAGE", Some(&args), &resp).unwrap();
+        assert!(matches!(
+            receipt.side_effect_kind,
+            SideEffectKind::MessagePosted { ref provider } if provider == "linkedin"
+        ));
+        assert_eq!(receipt.recipient.as_deref(), Some("urn:li:person:abc"));
+        assert_eq!(receipt.message_id.as_deref(), Some("msg_xyz"));
+        assert!(receipt.link.is_none());
+    }
+
+    #[test]
+    fn classify_twilio_create_message_extracts_sid_and_to() {
+        let args = json!({ "to": "+15551234567", "body": "hello" });
+        let resp = resp_with_data(json!({ "sid": "SMabc123" }));
+        let receipt = classify("TWILIO_CREATE_MESSAGE", Some(&args), &resp).unwrap();
+        assert!(matches!(
+            receipt.side_effect_kind,
+            SideEffectKind::MessagePosted { ref provider } if provider == "twilio"
+        ));
+        assert_eq!(receipt.recipient.as_deref(), Some("+15551234567"));
+        assert_eq!(receipt.message_id.as_deref(), Some("SMabc123"));
+    }
+
+    #[test]
+    fn classify_discord_send_message_uses_channel_id() {
+        let args = json!({ "channel_id": "1234567890", "content": "hi" });
+        let resp = resp_with_data(json!({ "id": "msg_1" }));
+        let receipt = classify("DISCORD_SEND_MESSAGE", Some(&args), &resp).unwrap();
+        assert!(matches!(
+            receipt.side_effect_kind,
+            SideEffectKind::MessagePosted { ref provider } if provider == "discord"
+        ));
+        assert_eq!(receipt.recipient.as_deref(), Some("1234567890"));
+    }
+
+    #[test]
+    fn classify_telegram_send_message_extracts_numeric_message_id() {
+        let args = json!({ "chat_id": "5555", "text": "hi" });
+        let resp = resp_with_data(json!({ "message_id": 42 }));
+        let receipt = classify("TELEGRAM_SEND_MESSAGE", Some(&args), &resp).unwrap();
+        assert!(matches!(
+            receipt.side_effect_kind,
+            SideEffectKind::MessagePosted { ref provider } if provider == "telegram"
+        ));
+        assert_eq!(receipt.message_id.as_deref(), Some("42"));
+    }
+
+    // Files & docs
+
+    #[test]
+    fn classify_notion_update_page_classifies_as_record_updated() {
+        let args = json!({ "page_id": "p1" });
+        let resp = resp_with_data(json!({ "id": "p1", "url": "https://notion.so/p1" }));
+        let receipt = classify("NOTION_UPDATE_PAGE", Some(&args), &resp).unwrap();
+        assert!(matches!(
+            receipt.side_effect_kind,
+            SideEffectKind::RecordUpdated { ref provider } if provider == "notion"
+        ));
+        assert_eq!(receipt.link.as_deref(), Some("https://notion.so/p1"));
+    }
+
+    #[test]
+    fn classify_googledrive_upload_file_extracts_webview_link() {
+        let args = json!({ "file_name": "report.pdf" });
+        let resp = resp_with_data(json!({
+            "id": "drive_abc",
+            "webViewLink": "https://drive.google.com/file/d/drive_abc/view"
+        }));
+        let receipt = classify("GOOGLEDRIVE_UPLOAD_FILE", Some(&args), &resp).unwrap();
+        assert!(matches!(
+            receipt.side_effect_kind,
+            SideEffectKind::FileCreated { ref provider } if provider == "googledrive"
+        ));
+        assert_eq!(receipt.recipient.as_deref(), Some("report.pdf"));
+        assert_eq!(
+            receipt.link.as_deref(),
+            Some("https://drive.google.com/file/d/drive_abc/view")
+        );
+    }
+
+    #[test]
+    fn classify_googledocs_create_doc_builds_link_from_document_id() {
+        let args = json!({ "title": "Meeting notes" });
+        let resp = resp_with_data(json!({ "documentId": "doc_xyz" }));
+        let receipt = classify("GOOGLEDOCS_CREATE_DOC", Some(&args), &resp).unwrap();
+        assert!(matches!(
+            receipt.side_effect_kind,
+            SideEffectKind::FileCreated { ref provider } if provider == "googledocs"
+        ));
+        assert_eq!(
+            receipt.link.as_deref(),
+            Some("https://docs.google.com/document/d/doc_xyz/edit")
+        );
+    }
+
+    #[test]
+    fn classify_googlesheets_append_values_record_created() {
+        let args = json!({
+            "spreadsheet_id": "sheet_abc",
+            "range": "Sheet1!A1:C1",
+            "values": [["a", "b", "c"]]
+        });
+        let resp = resp_with_data(json!({ "spreadsheetId": "sheet_abc" }));
+        let receipt = classify("GOOGLESHEETS_APPEND_VALUES", Some(&args), &resp).unwrap();
+        assert!(matches!(
+            receipt.side_effect_kind,
+            SideEffectKind::RecordCreated { ref provider } if provider == "googlesheets"
+        ));
+        assert_eq!(receipt.recipient.as_deref(), Some("Sheet1!A1:C1"));
+        assert_eq!(
+            receipt.link.as_deref(),
+            Some("https://docs.google.com/spreadsheets/d/sheet_abc/edit")
+        );
+    }
+
+    #[test]
+    fn classify_googlesheets_update_values_record_updated() {
+        let args = json!({ "spreadsheet_id": "sheet_xyz", "range": "Sheet1!B2" });
+        let resp = resp_with_data(json!({ "spreadsheetId": "sheet_xyz" }));
+        let receipt =
+            classify("GOOGLESHEETS_UPDATE_SPREADSHEET_VALUES", Some(&args), &resp).unwrap();
+        assert!(matches!(
+            receipt.side_effect_kind,
+            SideEffectKind::RecordUpdated { ref provider } if provider == "googlesheets"
+        ));
+        assert!(receipt
+            .link
+            .as_deref()
+            .unwrap()
+            .starts_with("https://docs.google.com/spreadsheets/d/sheet_xyz"));
+    }
+
+    // Issue trackers
+
+    #[test]
+    fn classify_linear_create_issue_extracts_nested_identifier_and_url() {
+        let args = json!({ "title": "Fix the bug" });
+        let resp = resp_with_data(json!({
+            "issue": {
+                "id": "uuid-abc",
+                "identifier": "ENG-123",
+                "url": "https://linear.app/acme/issue/ENG-123"
+            }
+        }));
+        let receipt = classify("LINEAR_CREATE_ISSUE", Some(&args), &resp).unwrap();
+        assert!(matches!(
+            receipt.side_effect_kind,
+            SideEffectKind::IssueCreated { ref provider } if provider == "linear"
+        ));
+        assert_eq!(receipt.recipient.as_deref(), Some("Fix the bug"));
+        assert_eq!(receipt.message_id.as_deref(), Some("ENG-123"));
+        assert_eq!(
+            receipt.link.as_deref(),
+            Some("https://linear.app/acme/issue/ENG-123")
+        );
+    }
+
+    #[test]
+    fn classify_github_create_issue_formats_number_with_hash() {
+        let args = json!({ "title": "Login broken" });
+        let resp = resp_with_data(json!({
+            "number": 42,
+            "html_url": "https://github.com/owner/repo/issues/42"
+        }));
+        let receipt = classify("GITHUB_CREATE_ISSUE", Some(&args), &resp).unwrap();
+        assert!(matches!(
+            receipt.side_effect_kind,
+            SideEffectKind::IssueCreated { ref provider } if provider == "github"
+        ));
+        assert_eq!(receipt.message_id.as_deref(), Some("#42"));
+        assert_eq!(
+            receipt.link.as_deref(),
+            Some("https://github.com/owner/repo/issues/42")
+        );
+    }
+
+    #[test]
+    fn classify_github_create_pull_request_classifies_as_issue_too() {
+        // PRs visually fit "issue created" — different artifact type
+        // but same affordance for the user: clickable link, identifier.
+        let args = json!({ "title": "Refactor auth" });
+        let resp = resp_with_data(json!({
+            "number": 7,
+            "html_url": "https://github.com/owner/repo/pull/7"
+        }));
+        let receipt = classify("GITHUB_CREATE_PULL_REQUEST", Some(&args), &resp).unwrap();
+        assert!(matches!(
+            receipt.side_effect_kind,
+            SideEffectKind::IssueCreated { ref provider } if provider == "github"
+        ));
+        assert!(receipt.link.as_deref().unwrap().contains("/pull/7"));
+    }
+
+    #[test]
+    fn classify_jira_create_issue_extracts_key_from_response() {
+        // Jira's response carries `key` (e.g. "PROJ-42") + `fields.summary`
+        // in the request body.
+        let args = json!({ "fields": { "summary": "Investigate latency" } });
+        let resp = resp_with_data(json!({ "key": "PROJ-42", "id": "10042" }));
+        let receipt = classify("JIRA_CREATE_ISSUE", Some(&args), &resp).unwrap();
+        assert!(matches!(
+            receipt.side_effect_kind,
+            SideEffectKind::IssueCreated { ref provider } if provider == "jira"
+        ));
+        assert_eq!(receipt.recipient.as_deref(), Some("Investigate latency"));
+        assert_eq!(receipt.message_id.as_deref(), Some("PROJ-42"));
+    }
+
+    #[test]
+    fn classify_asana_create_task_extracts_nested_gid_and_permalink() {
+        let args = json!({ "name": "Write the doc" });
+        let resp = resp_with_data(json!({
+            "data": {
+                "gid": "asana_123",
+                "permalink_url": "https://app.asana.com/0/0/asana_123"
+            }
+        }));
+        let receipt = classify("ASANA_CREATE_TASK", Some(&args), &resp).unwrap();
+        assert!(matches!(
+            receipt.side_effect_kind,
+            SideEffectKind::IssueCreated { ref provider } if provider == "asana"
+        ));
+        assert_eq!(receipt.message_id.as_deref(), Some("asana_123"));
+        assert_eq!(
+            receipt.link.as_deref(),
+            Some("https://app.asana.com/0/0/asana_123")
+        );
+    }
+
+    // Social
+
+    #[test]
+    fn classify_linkedin_create_post_classifies_as_social_post() {
+        let args = json!({
+            "commentary": "Excited to announce we shipped Trust UX in OpenHuman 🎉 Lots more to come!"
+        });
+        let resp = resp_with_data(json!({ "id": "urn:li:share:abc" }));
+        let receipt = classify("LINKEDIN_CREATE_LINKED_IN_POST", Some(&args), &resp).unwrap();
+        assert!(matches!(
+            receipt.side_effect_kind,
+            SideEffectKind::SocialPostCreated { ref provider } if provider == "linkedin"
+        ));
+        assert!(
+            receipt.recipient.as_deref().unwrap().ends_with('…'),
+            "long post bodies must truncate; got: {:?}",
+            receipt.recipient
+        );
+    }
+
+    #[test]
+    fn classify_twitter_post_tweet_builds_permalink_from_id() {
+        let args = json!({ "text": "hello world" });
+        let resp = resp_with_data(json!({ "data": { "id": "1799999999999999999" } }));
+        let receipt = classify("TWITTER_POST_TWEET", Some(&args), &resp).unwrap();
+        assert!(matches!(
+            receipt.side_effect_kind,
+            SideEffectKind::SocialPostCreated { ref provider } if provider == "twitter"
+        ));
+        assert_eq!(
+            receipt.link.as_deref(),
+            Some("https://twitter.com/i/web/status/1799999999999999999")
+        );
+    }
+
+    // CRM / structured records
+
+    #[test]
+    fn classify_airtable_create_record_classifies_as_record_created() {
+        let args = json!({ "table_name": "Leads" });
+        let resp = resp_with_data(json!({ "id": "rec_abc" }));
+        let receipt = classify("AIRTABLE_CREATE_RECORD", Some(&args), &resp).unwrap();
+        assert!(matches!(
+            receipt.side_effect_kind,
+            SideEffectKind::RecordCreated { ref provider } if provider == "airtable"
+        ));
+        assert_eq!(receipt.recipient.as_deref(), Some("Leads"));
+    }
+
+    #[test]
+    fn classify_hubspot_create_contact_extracts_nested_email() {
+        let args = json!({
+            "properties": { "email": "lead@example.com", "firstname": "Alex" }
+        });
+        let resp = resp_with_data(json!({ "id": "contact_42" }));
+        let receipt = classify("HUBSPOT_CREATE_CONTACT", Some(&args), &resp).unwrap();
+        assert!(matches!(
+            receipt.side_effect_kind,
+            SideEffectKind::RecordCreated { ref provider } if provider == "hubspot"
+        ));
+        assert_eq!(receipt.recipient.as_deref(), Some("lead@example.com"));
+        assert_eq!(receipt.message_id.as_deref(), Some("contact_42"));
     }
 }

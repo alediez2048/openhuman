@@ -896,6 +896,11 @@ const de5: TranslationMap = {
   'workflows.outcome.record_created_in': 'Created record {name} in {provider}',
   'workflows.outcome.record_updated_in': 'Updated record {name} in {provider}',
   'workflows.outcome.calendar_event_created': 'Created calendar event {title}',
+  // T-2b: extended-coverage variants (IssueCreated, SocialPostCreated).
+  'workflows.outcome.issue_created_in': 'Created issue {title} in {provider}',
+  'workflows.outcome.social_post_created': 'Posted on {provider}: "{snippet}"',
+  'workflows.outcome.open_issue': 'Open',
+  'workflows.outcome.open_post': 'Open',
   'workflows.outcome.other_action': '{verb} via {tool}',
   'workflows.outcome.unknown_recipient': '(unspecified recipient)',
   'workflows.outcome.open_in_gmail': 'Open in Gmail',

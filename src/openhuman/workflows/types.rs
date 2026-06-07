@@ -286,6 +286,16 @@ pub enum SideEffectKind {
     RecordUpdated { provider: String },
     /// Calendar event creation.
     CalendarEventCreated,
+    /// Issue / ticket / task created on a tracker (Linear, GitHub,
+    /// Jira, Asana, ClickUp, …). Visually distinct from
+    /// [`Self::RecordCreated`] — users think about issues as a
+    /// different kind of artifact than CRM records. `provider` is the
+    /// lowercase toolkit slug for icon selection.
+    IssueCreated { provider: String },
+    /// Public social-media post (LinkedIn post, X/Twitter tweet,
+    /// Facebook update). Distinct from [`Self::MessagePosted`] which
+    /// covers DMs / channel messages. `provider` drives the icon.
+    SocialPostCreated { provider: String },
     /// Catch-all for write tools that don't fit a curated variant.
     /// `verb` is rendered verbatim ("Performed X", "Deleted X", etc.)
     /// so the UI stays honest about what the user is looking at
