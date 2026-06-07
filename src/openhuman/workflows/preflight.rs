@@ -403,11 +403,14 @@ mod tests {
             !report.passed,
             "claude-opus-4-7 model_tier must fail preflight (would 400 at first run)"
         );
-        assert!(report.checks.iter().any(|c| c.status == PreflightStatus::Fail
-            && matches!(
-                c.kind,
-                PreflightCheckKind::ModelAvailable { ref tier } if tier == "claude-opus-4-7"
-            )));
+        assert!(report
+            .checks
+            .iter()
+            .any(|c| c.status == PreflightStatus::Fail
+                && matches!(
+                    c.kind,
+                    PreflightCheckKind::ModelAvailable { ref tier } if tier == "claude-opus-4-7"
+                )));
     }
 
     #[tokio::test]
@@ -432,10 +435,7 @@ mod tests {
             }],
         );
         let report = run_preflight(&config, &proposal).await;
-        assert!(
-            !report.passed,
-            "missing connection must fail preflight"
-        );
+        assert!(!report.passed, "missing connection must fail preflight");
         let fail = report
             .checks
             .iter()

@@ -541,9 +541,7 @@ fn handle_preflight(params: Map<String, Value>) -> ControllerFuture {
         let proposal: crate::openhuman::workflows::types::WorkflowProposal =
             serde_json::from_value(proposal_value)
                 .map_err(|e| format!("invalid `proposal`: {e}"))?;
-        to_json(
-            crate::openhuman::workflows::rpc::workflows_preflight(&config, proposal).await,
-        )
+        to_json(crate::openhuman::workflows::rpc::workflows_preflight(&config, proposal).await)
     })
 }
 

@@ -238,8 +238,7 @@ describe('<WorkflowProposalPreview> — T-3 pre-flight gating', () => {
         {
           kind: { kind: 'model_available', tier: 'claude-opus-4-7' },
           status: 'fail',
-          detail:
-            "Model `claude-opus-4-7` isn't in the OpenHuman backend's tier list.",
+          detail: "Model `claude-opus-4-7` isn't in the OpenHuman backend's tier list.",
           fix_hint: 'Replace with one of: reasoning-v1, agentic-v1, …',
         },
       ],
@@ -257,9 +256,7 @@ describe('<WorkflowProposalPreview> — T-3 pre-flight gating', () => {
     expect(
       screen.getByText(/claude-opus-4-7.* isn't in the OpenHuman backend/i)
     ).toBeInTheDocument();
-    expect(
-      screen.getByText(/Replace with one of: reasoning-v1, agentic-v1/i)
-    ).toBeInTheDocument();
+    expect(screen.getByText(/Replace with one of: reasoning-v1, agentic-v1/i)).toBeInTheDocument();
     // create + enable must NOT have been called — preflight blocked Save.
     expect(createMock).not.toHaveBeenCalled();
     expect(enableMock).not.toHaveBeenCalled();
@@ -284,9 +281,7 @@ describe('<WorkflowProposalPreview> — T-3 pre-flight gating', () => {
     // SavedStub renders the workflow name in a "Saved as ..." line —
     // the absence of the proposal preview region is the signal that
     // we transitioned to the saved state.
-    await waitFor(() =>
-      expect(screen.queryByText('Save & Enable')).not.toBeInTheDocument()
-    );
+    await waitFor(() => expect(screen.queryByText('Save & Enable')).not.toBeInTheDocument());
     expect(screen.getByText(/Saved as/)).toBeInTheDocument();
     // preflight should NOT have been called on the paused path.
     expect(preflightMock).not.toHaveBeenCalled();
@@ -300,9 +295,7 @@ describe('<WorkflowProposalPreview> — T-3 pre-flight gating', () => {
 
     render(<WorkflowProposalPreview proposal={baseProposal} />);
     fireEvent.click(screen.getByText('Save & Enable'));
-    await waitFor(() =>
-      expect(screen.getByText(/Saved & enabled/)).toBeInTheDocument()
-    );
+    await waitFor(() => expect(screen.getByText(/Saved & enabled/)).toBeInTheDocument());
     expect(preflightMock).toHaveBeenCalledTimes(1);
     expect(createMock).toHaveBeenCalledTimes(1);
     expect(enableMock).toHaveBeenCalledTimes(1);

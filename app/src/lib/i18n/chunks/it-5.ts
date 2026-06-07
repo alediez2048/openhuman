@@ -600,7 +600,8 @@ const it5: TranslationMap = {
   'workflows.outcome.open_link': 'Open',
   // T-3 (Phase 2.5 Trust UX) — pre-flight blocking banner.
   'workflows.preflight.blocked_heading': 'This workflow can’t be enabled yet:',
-  'workflows.preflight.save_paused_hint': 'You can still Save (paused) to keep your work, fix the issues, then enable later from /workflows.',
+  'workflows.preflight.save_paused_hint':
+    'You can still Save (paused) to keep your work, fix the issues, then enable later from /workflows.',
   'workflows.list_error': 'Couldn’t load your workflows.',
   'workflows.list_retry': 'Retry',
   'workflows.search_placeholder': 'Search workflows…',

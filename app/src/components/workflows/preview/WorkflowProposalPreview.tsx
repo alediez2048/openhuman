@@ -20,11 +20,7 @@ import { useState } from 'react';
 import { useT } from '../../../lib/i18n/I18nContext';
 import { workflowsApi } from '../../../services/api/workflows';
 import type { ConnectionRef } from '../../../types/connections';
-import type {
-  PreflightReport,
-  Workflow,
-  WorkflowProposal,
-} from '../../../types/workflows';
+import type { PreflightReport, Workflow, WorkflowProposal } from '../../../types/workflows';
 import { useWorkflowProposalActions } from './hooks/useWorkflowProposalActions';
 import { ActionRow, type ActionState } from './internal/ActionRow';
 import { ConnectionChips } from './internal/ConnectionChips';
@@ -99,10 +95,7 @@ export function WorkflowProposalPreview({
         const report = await workflowsApi.preflight(proposal);
         setPreflight(report);
         if (!report.passed) {
-          console.warn(
-            '[workflows-ui] preflight_blocked checks=%d',
-            report.checks.length
-          );
+          console.warn('[workflows-ui] preflight_blocked checks=%d', report.checks.length);
           setState('pending');
           return;
         }
@@ -197,8 +190,7 @@ export function WorkflowProposalPreview({
         <div
           data-testid="workflow-preflight-banner"
           role="alert"
-          className="mt-3 rounded-md border border-coral-200 dark:border-coral-800 bg-coral-50 dark:bg-coral-950/30 p-3 space-y-2"
-        >
+          className="mt-3 rounded-md border border-coral-200 dark:border-coral-800 bg-coral-50 dark:bg-coral-950/30 p-3 space-y-2">
           <div className="text-xs font-semibold text-coral-900 dark:text-coral-200">
             {t('workflows.preflight.blocked_heading')}
           </div>
