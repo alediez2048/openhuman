@@ -281,7 +281,8 @@ fn classify_gmail_create_draft(
     if tool != "GMAIL_CREATE_DRAFT" && tool != "GMAIL_CREATE_EMAIL_DRAFT" {
         return None;
     }
-    let recipient = string_from_args(args, "recipient_email").or_else(|| string_from_args(args, "to"));
+    let recipient =
+        string_from_args(args, "recipient_email").or_else(|| string_from_args(args, "to"));
     let message_id =
         string_from_data(&resp.data, "id").or_else(|| nested_string(&resp.data, &["draft", "id"]));
     let link = message_id
@@ -337,7 +338,8 @@ fn classify_twilio_send_message(
     }
     let recipient = string_from_args(args, "to");
     // Twilio's response surfaces `sid` (e.g. `SMxxxxxxxx`).
-    let message_id = string_from_data(&resp.data, "sid").or_else(|| string_from_data(&resp.data, "id"));
+    let message_id =
+        string_from_data(&resp.data, "sid").or_else(|| string_from_data(&resp.data, "id"));
     Some(DeliveryReceipt {
         tool: tool.to_string(),
         side_effect_kind: SideEffectKind::MessagePosted {
@@ -358,7 +360,8 @@ fn classify_discord_send_message(
     if tool != "DISCORD_SEND_MESSAGE" && tool != "DISCORD_POST_MESSAGE" {
         return None;
     }
-    let recipient = string_from_args(args, "channel_id").or_else(|| string_from_args(args, "channel"));
+    let recipient =
+        string_from_args(args, "channel_id").or_else(|| string_from_args(args, "channel"));
     let message_id = string_from_data(&resp.data, "id");
     Some(DeliveryReceipt {
         tool: tool.to_string(),
@@ -385,7 +388,11 @@ fn classify_telegram_send_message(
     let message_id = resp
         .data
         .get("message_id")
-        .and_then(|v| v.as_i64().map(|n| n.to_string()).or_else(|| v.as_str().map(str::to_string)))
+        .and_then(|v| {
+            v.as_i64()
+                .map(|n| n.to_string())
+                .or_else(|| v.as_str().map(str::to_string))
+        })
         .or_else(|| nested_string(&resp.data, &["result", "message_id"]));
     Some(DeliveryReceipt {
         tool: tool.to_string(),
@@ -539,8 +546,8 @@ fn classify_googlesheets_update_values(
     }
     let spreadsheet_id = string_from_args(args, "spreadsheet_id")
         .or_else(|| string_from_args(args, "spreadsheetId"));
-    let range = string_from_args(args, "range")
-        .or_else(|| string_from_data(&resp.data, "updatedRange"));
+    let range =
+        string_from_args(args, "range").or_else(|| string_from_data(&resp.data, "updatedRange"));
     let recipient = range.or_else(|| spreadsheet_id.clone());
     let message_id = string_from_data(&resp.data, "spreadsheetId").or(spreadsheet_id.clone());
     let link = message_id
@@ -650,7 +657,8 @@ fn classify_jira_create_issue(
     }
     let recipient = nested_string(args.unwrap_or(&Value::Null), &["fields", "summary"])
         .or_else(|| string_from_args(args, "summary"));
-    let message_id = string_from_data(&resp.data, "key").or_else(|| string_from_data(&resp.data, "id"));
+    let message_id =
+        string_from_data(&resp.data, "key").or_else(|| string_from_data(&resp.data, "id"));
     let link = string_from_data(&resp.data, "self");
     Some(DeliveryReceipt {
         tool: tool.to_string(),
@@ -733,8 +741,8 @@ fn classify_twitter_create_tweet(
         return None;
     }
     let recipient = string_from_args(args, "text").map(|r| truncate_for_display(&r, 60));
-    let message_id = string_from_data(&resp.data, "id")
-        .or_else(|| nested_string(&resp.data, &["data", "id"]));
+    let message_id =
+        string_from_data(&resp.data, "id").or_else(|| nested_string(&resp.data, &["data", "id"]));
     // Tweet permalink template uses /i/web/status/{id} which redirects
     // to the canonical username URL.
     let link = message_id
@@ -760,8 +768,8 @@ fn classify_airtable_create_record(
     if tool != "AIRTABLE_CREATE_RECORD" && tool != "AIRTABLE_CREATE_RECORDS" {
         return None;
     }
-    let recipient = string_from_args(args, "table_name")
-        .or_else(|| string_from_args(args, "tableId"));
+    let recipient =
+        string_from_args(args, "table_name").or_else(|| string_from_args(args, "tableId"));
     let message_id = string_from_data(&resp.data, "id")
         .or_else(|| nested_string(&resp.data, &["records", "0", "id"]));
     Some(DeliveryReceipt {
