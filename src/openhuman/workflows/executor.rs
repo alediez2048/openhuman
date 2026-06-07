@@ -511,6 +511,7 @@ pub async fn dispatch_run_with_payload(
         completed_at: None,
         error: None,
         cancelled: false,
+        failure_reason: None,
     };
 
     if let Err(err) = store::insert_run(config, &run) {
@@ -701,12 +702,21 @@ fn fail_delayed_run(
     let _ = store::clear_pending_resume_at(config, &run_id.to_string());
     let error =
         format!("delay_interrupted_by_core_restart (reason={reason}, resume_at={resume_at})");
+    // T-4: delay-interruption is a distinct failure mode that doesn't
+    // fit any of the catalogued classifier rules, so it goes through
+    // as Unknown — the raw_detail carries the informative string.
+    let failure_reason = Some(
+        crate::openhuman::workflows::types::FailureReason::Unknown {
+            raw_detail: error.clone(),
+        },
+    );
     if let Err(err) = store::mark_run_terminal(
         config,
         &run_id.to_string(),
         RunStatus::Failed,
         now,
         Some(error.clone()),
+        failure_reason.as_ref(),
     ) {
         tracing::error!(
             target: "workflows-run",
@@ -1213,12 +1223,24 @@ fn finalize_run(
     terminal_status: RunStatus,
     terminal_error: Option<String>,
 ) {
+    // T-4 (Phase 2.5 Trust UX): classify the failure reason at the
+    // terminal-flip site so the per-run outcome card can render a
+    // curated one-liner + fix-it action instead of forcing the user
+    // to parse the raw error string. None for Succeeded / Cancelled.
+    let failure_reason = if matches!(terminal_status, RunStatus::Failed) {
+        terminal_error.as_deref().map(|err| {
+            crate::openhuman::workflows::failure_classifier::classify_failure(err, 0)
+        })
+    } else {
+        None
+    };
     if let Err(err) = store::mark_run_terminal(
         config,
         &run_id.to_string(),
         terminal_status,
         Utc::now(),
         terminal_error,
+        failure_reason.as_ref(),
     ) {
         tracing::error!(
             target: "workflows-run",

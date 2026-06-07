@@ -25,7 +25,14 @@ import { invoke } from '@tauri-apps/api/core';
 import { useState } from 'react';
 
 import { useT } from '../../lib/i18n/I18nContext';
-import type { DeliveryReceipt, Run, RunStatus, RunStep, Workflow } from '../../types/workflows';
+import type {
+  DeliveryReceipt,
+  FailureReason,
+  Run,
+  RunStatus,
+  RunStep,
+  Workflow,
+} from '../../types/workflows';
 
 interface Props {
   run: Run;
@@ -260,6 +267,113 @@ function relativeTime(iso: string): string {
   return `${diffDay}d ago`;
 }
 
+/**
+ * T-4 (Phase 2.5 Trust UX): render a structured `FailureReason` as a
+ * plain-English row with an optional fix-it action. Exhaustive match
+ * on every variant — adding a variant to `FailureReason` trips the
+ * TS exhaustiveness check here.
+ */
+function FailureReasonRow({
+  reason,
+  t,
+}: {
+  reason: FailureReason;
+  t: (key: string) => string;
+}) {
+  const { icon, primary, hint } = describeFailure(reason, t);
+  return (
+    <div
+      data-testid="run-outcome-failure"
+      className="px-3 py-2 rounded bg-coral-50 dark:bg-coral-950/30 space-y-1.5">
+      <div className="flex items-start gap-2 text-sm text-coral-900 dark:text-coral-200">
+        <span className="text-base leading-none mt-0.5" aria-hidden="true">
+          {icon}
+        </span>
+        <div className="flex-1 min-w-0 whitespace-pre-wrap break-words">{primary}</div>
+      </div>
+      {hint && (
+        <div className="text-xs text-coral-700 dark:text-coral-300 pl-6 italic">→ {hint}</div>
+      )}
+    </div>
+  );
+}
+
+function describeFailure(
+  reason: FailureReason,
+  t: (key: string) => string
+): { icon: string; primary: string; hint: string | null } {
+  switch (reason.kind) {
+    case 'agent_narrated_without_acting':
+      return {
+        icon: '🤖',
+        primary: t('workflows.failure.agent_narrated').replace(
+          '{chars}',
+          String(reason.narrative_chars)
+        ),
+        hint: t('workflows.failure.agent_narrated_hint'),
+      };
+    case 'composio_upstream_rejected':
+      return {
+        icon: '⚠️',
+        primary: t('workflows.failure.composio_rejected')
+          .replace('{tool}', reason.tool)
+          .replace('{detail}', reason.detail),
+        hint: t('workflows.failure.composio_rejected_hint'),
+      };
+    case 'model_unavailable':
+      return {
+        icon: '🚫',
+        primary: t('workflows.failure.model_unavailable').replace(
+          '{model}',
+          reason.model_tried
+        ),
+        hint: t('workflows.failure.model_unavailable_hint').replace(
+          '{tiers}',
+          reason.valid_tiers.join(', ')
+        ),
+      };
+    case 'llm_auth_failed':
+      return {
+        icon: '🔑',
+        primary: t('workflows.failure.llm_auth_failed').replace(
+          '{provider}',
+          humanProvider(reason.provider)
+        ),
+        hint: t('workflows.failure.llm_auth_failed_hint'),
+      };
+    case 'connection_expired':
+      return {
+        icon: '🔌',
+        primary: t('workflows.failure.connection_expired').replace(
+          '{provider}',
+          humanProvider(reason.provider)
+        ),
+        hint: t('workflows.failure.connection_expired_hint').replace(
+          '{provider}',
+          humanProvider(reason.provider)
+        ),
+      };
+    case 'tool_slug_invalid':
+      return {
+        icon: '🤖',
+        primary: t('workflows.failure.tool_slug_invalid').replace(
+          '{slug}',
+          reason.slug
+        ),
+        hint: t('workflows.failure.tool_slug_invalid_hint'),
+      };
+    case 'unknown':
+      return {
+        icon: '❓',
+        primary: t('workflows.failure.unknown_detail').replace(
+          '{detail}',
+          reason.raw_detail
+        ),
+        hint: null,
+      };
+  }
+}
+
 function workflowHasActionConnections(workflow: Workflow | undefined): boolean {
   if (!workflow) return false;
   for (const node of workflow.nodes) {
@@ -325,17 +439,21 @@ export default function RunOutcomeCard({ run, steps, workflow }: Props) {
         </div>
       )}
 
-      {/* Failure (failed branch) */}
+      {/* Failure (failed branch) — T-4 structured rendering */}
       {isFailed && (
         <div>
           <div className="text-xs uppercase tracking-wide text-stone-500 dark:text-stone-400 mb-1 px-3">
             {t('workflows.outcome.why_failed')}
           </div>
-          <div
-            data-testid="run-outcome-failure"
-            className="px-3 py-2 rounded bg-coral-50 dark:bg-coral-950/30 text-sm text-coral-900 dark:text-coral-200 font-mono whitespace-pre-wrap break-words">
-            {stepError ?? t('workflows.outcome.unknown_failure')}
-          </div>
+          {run.failure_reason ? (
+            <FailureReasonRow reason={run.failure_reason} t={t} />
+          ) : (
+            <div
+              data-testid="run-outcome-failure"
+              className="px-3 py-2 rounded bg-coral-50 dark:bg-coral-950/30 text-sm text-coral-900 dark:text-coral-200 font-mono whitespace-pre-wrap break-words">
+              {stepError ?? t('workflows.outcome.unknown_failure')}
+            </div>
+          )}
         </div>
       )}
 

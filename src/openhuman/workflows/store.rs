@@ -25,6 +25,7 @@ const MIGRATION_003: &str = include_str!("migrations/003_run_steps.sql");
 const MIGRATION_004: &str = include_str!("migrations/004_workflow_soft_delete.sql");
 const MIGRATION_005: &str = include_str!("migrations/005_delay_resume.sql");
 const MIGRATION_006: &str = include_str!("migrations/006_delivery_receipts.sql");
+const MIGRATION_007: &str = include_str!("migrations/007_run_failure_reason.sql");
 
 /// Resolves the database path for this workspace: `${workspace_dir}/workflows.db`.
 fn db_path(config: &Config) -> PathBuf {
@@ -82,6 +83,7 @@ fn apply_migrations(conn: &Connection) -> Result<()> {
     apply_one(conn, 4, "004_workflow_soft_delete", MIGRATION_004)?;
     apply_one(conn, 5, "005_delay_resume", MIGRATION_005)?;
     apply_one(conn, 6, "006_delivery_receipts", MIGRATION_006)?;
+    apply_one(conn, 7, "007_run_failure_reason", MIGRATION_007)?;
 
     Ok(())
 }
@@ -608,22 +610,36 @@ pub fn insert_run(config: &Config, run: &Run) -> Result<()> {
 /// Mark a run as terminal (Succeeded / Failed / Cancelled / TimedOut).
 /// Returns `false` when the id was unknown (e.g. the workflow was
 /// deleted mid-run and the cascade swept the row).
+///
+/// T-4 (Phase 2.5 Trust UX): `failure_reason` is the structured
+/// classification of *why* the run failed. `None` for Succeeded /
+/// Cancelled runs and for failures that don't (yet) classify. Stored
+/// as JSON in the `failure_reason_json` column (migration 007).
 pub fn mark_run_terminal(
     config: &Config,
     run_id: &RunId,
     status: RunStatus,
     completed_at: DateTime<Utc>,
     error: Option<String>,
+    failure_reason: Option<&crate::openhuman::workflows::types::FailureReason>,
 ) -> Result<bool> {
+    let failure_reason_json = match failure_reason {
+        Some(reason) => Some(
+            serde_json::to_string(reason).context("serialize failure_reason")?,
+        ),
+        None => None,
+    };
     with_connection(config, |db| {
         let rows = db
             .execute(
-                "UPDATE workflow_runs SET status = ?2, completed_at = ?3, error = ?4 WHERE id = ?1",
+                "UPDATE workflow_runs SET status = ?2, completed_at = ?3, error = ?4, \
+                 failure_reason_json = ?5 WHERE id = ?1",
                 rusqlite::params![
                     run_id,
                     run_status_str(&status),
                     completed_at.to_rfc3339(),
                     error,
+                    failure_reason_json,
                 ],
             )
             .context("Failed to mark run terminal")?;
@@ -884,7 +900,7 @@ pub fn list_runs(
     with_connection(config, |db| {
         let mut stmt = db
             .prepare(
-                "SELECT id, workflow_id, trigger_source, status, started_at, completed_at, error, cancelled \
+                "SELECT id, workflow_id, trigger_source, status, started_at, completed_at, error, cancelled, failure_reason_json \
                  FROM workflow_runs \
                  WHERE workflow_id = ?1 \
                  ORDER BY started_at DESC \
@@ -922,7 +938,7 @@ pub fn get_run(config: &Config, run_id: &RunId) -> Result<Option<(Run, Vec<RunSt
     with_connection(config, |db| {
         let run: Option<Run> = {
             let mut stmt = db.prepare(
-                "SELECT id, workflow_id, trigger_source, status, started_at, completed_at, error, cancelled \
+                "SELECT id, workflow_id, trigger_source, status, started_at, completed_at, error, cancelled, failure_reason_json \
                  FROM workflow_runs WHERE id = ?1",
             )?;
             let mut rows = stmt.query(rusqlite::params![run_id])?;
@@ -957,6 +973,15 @@ fn row_to_run(row: &Row<'_>) -> Result<Run> {
     let completed_at_raw: Option<String> = row.get(5).context("read run.completed_at")?;
     let error: Option<String> = row.get(6).context("read run.error")?;
     let cancelled: i64 = row.get(7).context("read run.cancelled")?;
+    // T-4 (Phase 2.5): failure_reason_json added by migration 007. NULL
+    // when status != Failed and on pre-T-4 rows. Best-effort decode —
+    // a malformed JSON blob degrades to None rather than breaking the
+    // run read entirely.
+    let failure_reason_raw: Option<String> =
+        row.get(8).unwrap_or(None);
+    let failure_reason = failure_reason_raw.and_then(|s| {
+        serde_json::from_str::<crate::openhuman::workflows::types::FailureReason>(&s).ok()
+    });
     Ok(Run {
         id,
         workflow_id,
@@ -972,6 +997,7 @@ fn row_to_run(row: &Row<'_>) -> Result<Run> {
             .context("parse completed_at")?,
         error,
         cancelled: cancelled != 0,
+        failure_reason,
     })
 }
 

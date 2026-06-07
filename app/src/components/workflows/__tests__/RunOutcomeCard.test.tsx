@@ -58,6 +58,35 @@ vi.mock('../../../lib/i18n/I18nContext', () => ({
           return 'Succeeded';
         case 'workflows.outcome.failed':
           return 'Failed';
+        case 'workflows.outcome.why_failed':
+          return 'Why this run failed';
+        // T-4 failure-mode renderer keys
+        case 'workflows.failure.agent_narrated':
+          return 'The agent described what it would do ({chars} chars of text) but never actually emitted a tool call.';
+        case 'workflows.failure.agent_narrated_hint':
+          return 'Common cause: model stuck in chain-of-thought. Try `agentic-v1`.';
+        case 'workflows.failure.model_unavailable':
+          return 'Model `{model}` isn’t available in your account.';
+        case 'workflows.failure.model_unavailable_hint':
+          return 'Edit the workflow → set model_tier to one of: {tiers}.';
+        case 'workflows.failure.connection_expired':
+          return 'Your {provider} connection expired or was revoked.';
+        case 'workflows.failure.connection_expired_hint':
+          return 'Reconnect {provider} in Settings → Connections.';
+        case 'workflows.failure.composio_rejected':
+          return '`{tool}` was rejected by the connected provider: {detail}';
+        case 'workflows.failure.composio_rejected_hint':
+          return 'The provider’s reason is verbatim above.';
+        case 'workflows.failure.llm_auth_failed':
+          return 'Your {provider} API key was rejected.';
+        case 'workflows.failure.llm_auth_failed_hint':
+          return 'Update the key in Settings → Providers.';
+        case 'workflows.failure.tool_slug_invalid':
+          return 'The agent tried to use an invalid tool name (`{slug}`).';
+        case 'workflows.failure.tool_slug_invalid_hint':
+          return 'Retry the run.';
+        case 'workflows.failure.unknown_detail':
+          return '{detail}';
         default:
           return key;
       }
@@ -321,6 +350,82 @@ describe('<RunOutcomeCard>', () => {
     expect(
       screen.getByText(/Posted on Linkedin: "Excited to ship Trust UX in OpenHuman…"/)
     ).toBeInTheDocument();
+  });
+
+  // ── T-4 (Phase 2.5 Trust UX): structured failure-mode rendering ──
+
+  it('renders structured AgentNarratedWithoutActing failure with fix-it hint', () => {
+    render(
+      <RunOutcomeCard
+        run={runOf({
+          status: 'failed',
+          error: 'agent narrated next-action intent in 340 chars',
+          failure_reason: { kind: 'agent_narrated_without_acting', narrative_chars: 340 },
+        })}
+        steps={[stepOf({ status: 'failed', error: 'agent narrated' })]}
+      />
+    );
+    expect(screen.getByTestId('run-outcome-failure')).toHaveTextContent(
+      /described what it would do \(340 chars/
+    );
+    // Fix-it hint surfaces the agentic-v1 suggestion
+    expect(screen.getByText(/agentic-v1/)).toBeInTheDocument();
+  });
+
+  it('renders structured ModelUnavailable failure with valid_tiers in the hint', () => {
+    render(
+      <RunOutcomeCard
+        run={runOf({
+          status: 'failed',
+          error: "Model 'claude-opus-4-7' is not available.",
+          failure_reason: {
+            kind: 'model_unavailable',
+            model_tried: 'claude-opus-4-7',
+            valid_tiers: ['agentic-v1', 'reasoning-v1', 'chat-v1'],
+          },
+        })}
+        steps={[stepOf({ status: 'failed' })]}
+      />
+    );
+    expect(screen.getByTestId('run-outcome-failure')).toHaveTextContent(
+      /Model `claude-opus-4-7` isn.t available/
+    );
+    expect(screen.getByText(/agentic-v1, reasoning-v1, chat-v1/)).toBeInTheDocument();
+  });
+
+  it('renders structured ConnectionExpired failure with provider in hint', () => {
+    render(
+      <RunOutcomeCard
+        run={runOf({
+          status: 'failed',
+          error: 'gmail auth_failed',
+          failure_reason: { kind: 'connection_expired', provider: 'gmail' },
+        })}
+        steps={[stepOf({ status: 'failed' })]}
+      />
+    );
+    expect(screen.getByTestId('run-outcome-failure')).toHaveTextContent(
+      /Your Gmail connection expired/
+    );
+    expect(screen.getByText(/Reconnect Gmail in Settings/)).toBeInTheDocument();
+  });
+
+  it('falls back to raw error string when failure_reason is null', () => {
+    // Pre-T-4 rows (or transient cases where classification didn't
+    // run) still surface the raw error rather than a blank section.
+    render(
+      <RunOutcomeCard
+        run={runOf({
+          status: 'failed',
+          error: 'some legacy opaque error string',
+          failure_reason: null,
+        })}
+        steps={[stepOf({ status: 'failed', error: 'some legacy opaque error string' })]}
+      />
+    );
+    expect(screen.getByTestId('run-outcome-failure')).toHaveTextContent(
+      /some legacy opaque error string/
+    );
   });
 
   it('renders multiple receipts in order across steps', () => {

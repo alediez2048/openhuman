@@ -56,9 +56,9 @@ fn open_creates_workflows_db_and_applies_all_migrations() {
             .unwrap();
         assert_eq!(
             versions,
-            vec![1, 2, 3, 4, 5, 6],
+            vec![1, 2, 3, 4, 5, 6, 7],
             "ledger must record every migration (F2-14 added 004, F2-7b added 005, \
-             Phase 2.5 T-1 added 006)"
+             Phase 2.5 T-1 added 006, Phase 2.5 T-4 added 007)"
         );
         Ok(())
     })
@@ -79,9 +79,9 @@ fn re_open_is_idempotent_and_does_not_duplicate_ledger_rows() {
             })
             .unwrap();
         assert_eq!(
-            count, 6,
-            "six migrations must record exactly six rows (F2-14 added 004, F2-7b added 005, \
-             Phase 2.5 T-1 added 006)"
+            count, 7,
+            "seven migrations must record exactly seven rows (F2-14 added 004, F2-7b added 005, \
+             Phase 2.5 T-1 added 006, Phase 2.5 T-4 added 007)"
         );
         Ok(())
     })
@@ -366,6 +366,7 @@ fn set_and_read_cancelled_flag_round_trip() {
         completed_at: None,
         error: None,
         cancelled: false,
+        failure_reason: None,
     };
     store::insert_run(&config, &run).unwrap();
 
@@ -408,6 +409,7 @@ fn orphan_running_runs_marks_running_rows_failed_with_core_crashed() {
         completed_at: None,
         error: None,
         cancelled: false,
+        failure_reason: None,
     };
     let r_run2 = Run {
         id: "r-run2".into(),
@@ -420,6 +422,7 @@ fn orphan_running_runs_marks_running_rows_failed_with_core_crashed() {
         completed_at: None,
         error: None,
         cancelled: false,
+        failure_reason: None,
     };
     let r_succ = Run {
         id: "r-succ".into(),
@@ -430,6 +433,7 @@ fn orphan_running_runs_marks_running_rows_failed_with_core_crashed() {
         completed_at: Some(Utc::now()),
         error: None,
         cancelled: false,
+        failure_reason: None,
     };
     store::insert_run(&config, &r_run1).unwrap();
     store::insert_run(&config, &r_run2).unwrap();

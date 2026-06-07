@@ -188,6 +188,64 @@ pub struct Run {
     /// reached a natural terminal state. Read alongside `status` to render
     /// "Cancelled" in the UI.
     pub cancelled: bool,
+    /// T-4 (Phase 2.5 Trust UX): structured classification of the
+    /// failure mode when `status == Failed`. None for Succeeded /
+    /// Cancelled runs and for pre-T-4 rows (migration 007 defaults
+    /// the column to NULL).
+    ///
+    /// Drives the per-run outcome card's "Why this run failed"
+    /// section: each variant has a curated one-liner + optional
+    /// fix-it action, so the user never has to parse the raw `error`
+    /// string. The raw string stays persisted for debug context.
+    #[serde(default)]
+    pub failure_reason: Option<FailureReason>,
+}
+
+/// T-4 (Phase 2.5 Trust UX): stable classification of *why* a workflow
+/// run failed. Mirror of the seven-variant catalog from T-4's ticket
+/// primer — small + stable on purpose so the UI renderer can match
+/// exhaustively and a new failure mode means a new variant + a new
+/// renderer entry, not a paragraph of free-form error text.
+///
+/// Populated by [`crate::openhuman::workflows::failure_classifier::classify_failure`]
+/// at the moment the executor flips a step to `RunStatus::Failed`.
+/// Persisted on the run row via migration 007's `failure_reason_json`
+/// column.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum FailureReason {
+    /// F-21's signature: the agent emitted zero successful tool calls
+    /// in a workflow that granted action connections. Common cause:
+    /// model gets stuck in chain-of-thought without acting.
+    AgentNarratedWithoutActing { narrative_chars: u32 },
+    /// `composio_execute` reached the upstream provider but the
+    /// provider rejected the call (Gmail 4xx, Slack "invalid field",
+    /// etc.). `tool` is the action slug; `detail` is the upstream
+    /// provider's verbatim reason so the agent's narrative can
+    /// reference it.
+    ComposioUpstreamRejected { tool: String, detail: String },
+    /// The OpenHuman backend returned `Model 'X' is not available` —
+    /// `model_tried` carries the offending slug + `valid_tiers` lists
+    /// the canonical alternatives so the fix-it action can deep-link
+    /// to a model-picker pre-populated with `valid_tiers`.
+    ModelUnavailable {
+        model_tried: String,
+        valid_tiers: Vec<String>,
+    },
+    /// LLM provider rejected the API key with 401. `provider` is the
+    /// lowercase slug (`"anthropic"`, `"openai"`, etc.).
+    LlmAuthFailed { provider: String },
+    /// Composio reported `auth_failed` for an upstream connection —
+    /// token expired or revoked. `provider` is the toolkit slug.
+    ConnectionExpired { provider: String },
+    /// `composio_execute` rejected the agent's `tool` argument as
+    /// shape-invalid (lowercase, toolkit name, etc.) before dispatch.
+    ToolSlugInvalid { slug: String },
+    /// Catch-all for failure signals the classifier doesn't recognise.
+    /// `raw_detail` carries the executor's original error string so
+    /// the UI can still surface something useful. Drift telemetry
+    /// fires on every Unknown so unrecognised signals get noticed.
+    Unknown { raw_detail: String },
 }
 
 /// One node-level step within a [`Run`]. Output is capped at 64 KiB

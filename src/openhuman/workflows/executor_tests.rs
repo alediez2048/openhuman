@@ -549,6 +549,7 @@ async fn dispatch_run_rejects_second_overlapping_dispatch_with_already_running()
         completed_at: None,
         error: None,
         cancelled: false,
+        failure_reason: None,
     };
     store::insert_run(&config, &prior_run).unwrap();
     executor::state_in_flight_insert_for_test(created.id.clone(), prior_run.id.clone());
@@ -671,6 +672,7 @@ async fn orphan_recovery_sweep_marks_stale_running_runs_failed_core_crashed() {
         completed_at: None,
         error: None,
         cancelled: false,
+        failure_reason: None,
     };
     store::insert_run(&config, &stale).unwrap();
 
@@ -1174,6 +1176,7 @@ async fn delivery_receipt_round_trips_through_sqlite() {
         completed_at: Some(now),
         error: None,
         cancelled: false,
+        failure_reason: None,
     };
     store::insert_run(&config, &run).unwrap();
     let step = RunStep {
@@ -1541,6 +1544,7 @@ fn dispatch_test_run() -> Run {
         completed_at: None,
         error: None,
         cancelled: false,
+        failure_reason: None,
     }
 }
 
@@ -4396,6 +4400,7 @@ fn seed_delayed_running_run(
         completed_at: None,
         error: None,
         cancelled: false,
+        failure_reason: None,
     };
     store::insert_run(config, &run).expect("insert_run");
     store::set_pending_resume_at(config, &run.id, resume_at).expect("set_pending_resume_at");

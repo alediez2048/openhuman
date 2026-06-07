@@ -3747,6 +3747,32 @@ const en: TranslationMap = {
   'workflows.preflight.blocked_heading': 'This workflow can’t be enabled yet:',
   'workflows.preflight.save_paused_hint':
     'You can still Save (paused) to keep your work, fix the issues, then enable later from /workflows.',
+  // T-4 (Phase 2.5 Trust UX) — structured failure-mode catalog.
+  'workflows.failure.agent_narrated':
+    'The agent described what it would do ({chars} chars of text) but never actually emitted a tool call.',
+  'workflows.failure.agent_narrated_hint':
+    'Common cause: the model is getting stuck in chain-of-thought. Try pinning the workflow to `agentic-v1` (Settings → workflow_node).',
+  'workflows.failure.composio_rejected':
+    '`{tool}` was rejected by the connected provider: {detail}',
+  'workflows.failure.composio_rejected_hint':
+    'The provider’s reason is verbatim above — usually a parameter rename or missing field. Edit the workflow prompt to use the corrected argument.',
+  'workflows.failure.model_unavailable':
+    'Model `{model}` isn’t available in your account.',
+  'workflows.failure.model_unavailable_hint':
+    'Edit the workflow → set model_tier to one of: {tiers}.',
+  'workflows.failure.llm_auth_failed':
+    'Your {provider} API key was rejected.',
+  'workflows.failure.llm_auth_failed_hint':
+    'Update the key in Settings → Providers, then retry the run.',
+  'workflows.failure.connection_expired':
+    'Your {provider} connection expired or was revoked.',
+  'workflows.failure.connection_expired_hint':
+    'Reconnect {provider} in Settings → Connections, then retry the run.',
+  'workflows.failure.tool_slug_invalid':
+    'The agent tried to use an invalid tool name (`{slug}`).',
+  'workflows.failure.tool_slug_invalid_hint':
+    'Usually a model hallucination — retry the run. If it recurs, file a bug.',
+  'workflows.failure.unknown_detail': '{detail}',
   'workflows.list_error': 'Couldn’t load your workflows.',
   'workflows.list_retry': 'Retry',
   'workflows.search_placeholder': 'Search workflows…',

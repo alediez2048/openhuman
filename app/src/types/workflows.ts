@@ -192,7 +192,33 @@ export interface Run {
   completed_at?: string | null;
   error?: string | null;
   cancelled: boolean;
+  /**
+   * T-4 (Phase 2.5 Trust UX): structured classification of why this
+   * run failed. `null` for Succeeded / Cancelled runs and for pre-T-4
+   * rows. Drives `<RunOutcomeCard>`'s "Why this run failed" section
+   * — each variant maps to a curated one-liner + fix-it action.
+   */
+  failure_reason?: FailureReason | null;
 }
+
+/**
+ * T-4 (Phase 2.5 Trust UX): stable classification of a workflow run
+ * failure. Mirror of Rust's `FailureReason` enum. The catalog is
+ * deliberately small + stable; the UI renderer matches exhaustively
+ * and unknown signals fall through to `{ kind: 'unknown' }`.
+ */
+export type FailureReason =
+  | { kind: 'agent_narrated_without_acting'; narrative_chars: number }
+  | { kind: 'composio_upstream_rejected'; tool: string; detail: string }
+  | {
+      kind: 'model_unavailable';
+      model_tried: string;
+      valid_tiers: string[];
+    }
+  | { kind: 'llm_auth_failed'; provider: string }
+  | { kind: 'connection_expired'; provider: string }
+  | { kind: 'tool_slug_invalid'; slug: string }
+  | { kind: 'unknown'; raw_detail: string };
 
 export interface RunStep {
   id: RunStepId;
