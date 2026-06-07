@@ -44,6 +44,7 @@ pub mod ops;
 pub mod proposer;
 pub mod retention;
 pub mod rpc;
+pub mod run_context;
 pub mod scheduler;
 pub mod schemas;
 pub mod store;

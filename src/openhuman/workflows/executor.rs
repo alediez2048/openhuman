@@ -83,6 +83,7 @@ use crate::core::event_bus::{publish_global, DomainEvent};
 use crate::openhuman::config::Config;
 use crate::openhuman::connections::types::ConnectionRef;
 use crate::openhuman::workflows::memory as workflow_memory;
+use crate::openhuman::workflows::run_context;
 use crate::openhuman::workflows::store;
 use crate::openhuman::workflows::types::{
     AgentPromptConfig, Node, NodeConfig, NodeKind, Run, RunId, RunStatus, RunStep, RunStepId,
@@ -1519,6 +1520,7 @@ async fn execute_tool_call(
         completed_at: None,
         output_json: None,
         error: None,
+        delivery_receipts: Vec::new(),
     };
     if let Err(err) = store::insert_run_step(config, &step) {
         anyhow::bail!("insert_run_step failed: {err:#}");
@@ -1557,6 +1559,7 @@ async fn execute_tool_call(
         Utc::now(),
         output_json,
         error.clone(),
+        &[],
     ) {
         anyhow::bail!("update_run_step_terminal failed: {err:#}");
     }
@@ -1797,6 +1800,7 @@ async fn execute_http_request(
         completed_at: None,
         output_json: None,
         error: None,
+        delivery_receipts: Vec::new(),
     };
     if let Err(err) = store::insert_run_step(config, &step) {
         anyhow::bail!("insert_run_step failed: {err:#}");
@@ -1831,6 +1835,7 @@ async fn execute_http_request(
         Utc::now(),
         output_json,
         error.clone(),
+        &[],
     ) {
         anyhow::bail!("update_run_step_terminal failed: {err:#}");
     }
@@ -2175,6 +2180,7 @@ async fn execute_channel_message(
         completed_at: None,
         output_json: None,
         error: None,
+        delivery_receipts: Vec::new(),
     };
     if let Err(err) = store::insert_run_step(config, &step) {
         anyhow::bail!("insert_run_step failed: {err:#}");
@@ -2213,6 +2219,7 @@ async fn execute_channel_message(
         Utc::now(),
         output_json,
         error.clone(),
+        &[],
     ) {
         anyhow::bail!("update_run_step_terminal failed: {err:#}");
     }
@@ -2370,6 +2377,7 @@ async fn execute_condition(
         completed_at: None,
         output_json: None,
         error: None,
+        delivery_receipts: Vec::new(),
     };
     if let Err(err) = store::insert_run_step(config, &step) {
         anyhow::bail!("insert_run_step failed: {err:#}");
@@ -2400,6 +2408,7 @@ async fn execute_condition(
         Utc::now(),
         output_json,
         error.clone(),
+        &[],
     ) {
         anyhow::bail!("update_run_step_terminal failed: {err:#}");
     }
@@ -2518,6 +2527,7 @@ async fn execute_delay(
         completed_at: None,
         output_json: None,
         error: None,
+        delivery_receipts: Vec::new(),
     };
     if let Err(err) = store::insert_run_step(config, &step) {
         anyhow::bail!("insert_run_step failed: {err:#}");
@@ -2569,6 +2579,7 @@ async fn execute_delay(
             Utc::now(),
             None,
             Some("cancelled during delay".into()),
+            &[],
         ) {
             anyhow::bail!("update_run_step_terminal failed: {err:#}");
         }
@@ -2590,6 +2601,7 @@ async fn execute_delay(
         Utc::now(),
         Some(payload),
         None,
+        &[],
     ) {
         anyhow::bail!("update_run_step_terminal failed: {err:#}");
     }
@@ -2694,6 +2706,7 @@ async fn execute_agent_prompt(
         completed_at: None,
         output_json: None,
         error: None,
+        delivery_receipts: Vec::new(),
     };
     if let Err(err) = store::insert_run_step(config, &step) {
         anyhow::bail!("insert_run_step failed: {err:#}");
@@ -2717,98 +2730,115 @@ async fn execute_agent_prompt(
         resolved_prompt_config.model_tier.clone(),
     );
 
-    let (terminal_status, output_json, error, agent_narrative, observed_tool_calls) =
-        match run_agent_prompt(
-            config,
-            &run.workflow_id,
-            &run.id,
-            &resolved_prompt_config,
-            &agent_def,
-        )
-        .await
-        {
-            Ok(output) => {
-                let narrative = output.text.clone();
-                let trace = output.tool_calls.clone();
-                let truncated = store::truncate_output_to_64kib(output.text);
-                let payload = serde_json::to_string(&serde_json::json!({ "text": truncated }))
-                    .unwrap_or_else(|_| "{}".into());
-                let successful_tool_calls = output.tool_calls.iter().filter(|c| c.success).count();
-                if output.tool_failure_count > 0 {
-                    // F-16 D: tool denials / executed-with-error count
-                    // overrides the "agent returned text" success
-                    // signal. The text payload is still persisted (so
-                    // the run-history view can show what the agent
-                    // tried to say), but the status reads honest.
-                    let summary = format!(
+    let (
+        terminal_status,
+        output_json,
+        error,
+        agent_narrative,
+        observed_tool_calls,
+        observed_receipts,
+    ) = match run_agent_prompt(
+        config,
+        &run.workflow_id,
+        &run.id,
+        &resolved_prompt_config,
+        &agent_def,
+    )
+    .await
+    {
+        Ok(output) => {
+            let narrative = output.text.clone();
+            let trace = output.tool_calls.clone();
+            let receipts = output.delivery_receipts.clone();
+            let truncated = store::truncate_output_to_64kib(output.text);
+            let payload = serde_json::to_string(&serde_json::json!({ "text": truncated }))
+                .unwrap_or_else(|_| "{}".into());
+            let successful_tool_calls = output.tool_calls.iter().filter(|c| c.success).count();
+            if output.tool_failure_count > 0 {
+                // F-16 D: tool denials / executed-with-error count
+                // overrides the "agent returned text" success
+                // signal. The text payload is still persisted (so
+                // the run-history view can show what the agent
+                // tried to say), but the status reads honest.
+                let summary = format!(
                     "agent run completed with {} tool call(s) reported as failed by the harness \
-                         (denied by allowlist or returned is_error=true). \
-                         Check workflows-run + agent_loop logs for details.",
+                     (denied by allowlist or returned is_error=true). \
+                     Check workflows-run + agent_loop logs for details.",
                     output.tool_failure_count
                 );
-                    (
-                        RunStatus::Failed,
-                        Some(payload),
-                        Some(summary),
-                        narrative,
-                        trace,
-                    )
-                } else if successful_tool_calls == 0
-                    && !resolved_prompt_config.allowed_connections.is_empty()
-                {
-                    // F-21 deferred follow-up — structural counterpart to
-                    // F-16. F-16 catches "tool failed → run Failed". This
-                    // catches "agent never called a tool → run still
-                    // showed Succeeded". Live repro: 2026-06-05 / 06-07
-                    // morning email digest where the model (reasoning-v1
-                    // after the Anthropic+OpenAI router shift) narrated
-                    // its next-action intent ("Let me try X") in plain
-                    // text without emitting any tool_use blocks, hit
-                    // iteration cap, and the run was marked Succeeded
-                    // because no tool failure was observed.
-                    //
-                    // Rule: workflow granted action connection(s) but the
-                    // agent made zero successful tool calls ⇒ Failed. The
-                    // conservative `allowed_connections.is_empty()` guard
-                    // means pure read-only / summarisation workflows that
-                    // legitimately produce only text are NOT touched.
-                    let summary = format!(
-                        "agent narrated next-action intent in {} chars of text without emitting \
-                         any tool_use blocks. Workflow granted {} action connection(s) but the \
-                         agent made zero successful tool calls — the run accomplished nothing \
-                         measurable. Common causes: model gets stuck in chain-of-thought (try \
-                         pinning workflow_node to a stronger model via [teams.workflow_node] \
-                         agent_model in config.toml), or the prompt asks for an action the \
-                         allowlist doesn't grant.",
-                        narrative.chars().count(),
-                        resolved_prompt_config.allowed_connections.len()
-                    );
-                    tracing::warn!(
-                        target: "workflows-run",
-                        run_id = %run.id,
-                        narrative_chars = narrative.chars().count(),
-                        allowed_connections = resolved_prompt_config.allowed_connections.len(),
-                        "[workflows-run] no successful tool calls — flipping run to Failed (F-21)"
-                    );
-                    (
-                        RunStatus::Failed,
-                        Some(payload),
-                        Some(summary),
-                        narrative,
-                        trace,
-                    )
-                } else {
-                    (RunStatus::Succeeded, Some(payload), None, narrative, trace)
-                }
+                (
+                    RunStatus::Failed,
+                    Some(payload),
+                    Some(summary),
+                    narrative,
+                    trace,
+                    receipts,
+                )
+            } else if successful_tool_calls == 0
+                && !resolved_prompt_config.allowed_connections.is_empty()
+            {
+                // F-21 deferred follow-up — structural counterpart to
+                // F-16. F-16 catches "tool failed → run Failed". This
+                // catches "agent never called a tool → run still
+                // showed Succeeded". Live repro: 2026-06-05 / 06-07
+                // morning email digest where the model (reasoning-v1
+                // after the Anthropic+OpenAI router shift) narrated
+                // its next-action intent ("Let me try X") in plain
+                // text without emitting any tool_use blocks, hit
+                // iteration cap, and the run was marked Succeeded
+                // because no tool failure was observed.
+                //
+                // Rule: workflow granted action connection(s) but the
+                // agent made zero successful tool calls ⇒ Failed. The
+                // conservative `allowed_connections.is_empty()` guard
+                // means pure read-only / summarisation workflows that
+                // legitimately produce only text are NOT touched.
+                let summary = format!(
+                    "agent narrated next-action intent in {} chars of text without emitting \
+                     any tool_use blocks. Workflow granted {} action connection(s) but the \
+                     agent made zero successful tool calls — the run accomplished nothing \
+                     measurable. Common causes: model gets stuck in chain-of-thought (try \
+                     pinning workflow_node to a stronger model via [teams.workflow_node] \
+                     agent_model in config.toml), or the prompt asks for an action the \
+                     allowlist doesn't grant.",
+                    narrative.chars().count(),
+                    resolved_prompt_config.allowed_connections.len()
+                );
+                tracing::warn!(
+                    target: "workflows-run",
+                    run_id = %run.id,
+                    narrative_chars = narrative.chars().count(),
+                    allowed_connections = resolved_prompt_config.allowed_connections.len(),
+                    "[workflows-run] no successful tool calls — flipping run to Failed (F-21)"
+                );
+                (
+                    RunStatus::Failed,
+                    Some(payload),
+                    Some(summary),
+                    narrative,
+                    trace,
+                    receipts,
+                )
+            } else {
+                (
+                    RunStatus::Succeeded,
+                    Some(payload),
+                    None,
+                    narrative,
+                    trace,
+                    receipts,
+                )
             }
-            Err(err) => (
-                RunStatus::Failed,
-                None,
-                Some(format!("{err:#}")),
-                String::new(),
-                Vec::new(),
-            ),
-        };
+        }
+        Err(err) => (
+            RunStatus::Failed,
+            None,
+            Some(format!("{err:#}")),
+            String::new(),
+            Vec::new(),
+            Vec::new(),
+        ),
+    };
 
     // F-17 deliverable C: persist the run as a structured chunk in the
     // Memory Tree, ground-truth-first. Best-effort — a failed store
@@ -2830,6 +2860,7 @@ async fn execute_agent_prompt(
         Utc::now(),
         output_json.clone(),
         error.clone(),
+        &observed_receipts,
     ) {
         anyhow::bail!("update_run_step_terminal failed: {err:#}");
     }
@@ -2911,6 +2942,13 @@ pub struct NodeOutput {
     /// Used to build `ActualOutcome.tool_calls` in the post-run
     /// memory chunk.
     pub tool_calls: Vec<ToolCallObservation>,
+    /// T-1 (Phase 2.5 Trust UX): every `DeliveryReceiptObserved`
+    /// event captured during the run, in dispatch order. Populated by
+    /// the same subscriber that records `tool_calls`; passed through
+    /// to `update_run_step_terminal` so the receipts land on the
+    /// persisted row and feed T-2's outcome card. Empty for read-only
+    /// runs and runs where no write tool succeeded.
+    pub delivery_receipts: Vec<crate::openhuman::workflows::types::DeliveryReceipt>,
 }
 
 /// Test-only override for [`run_agent_prompt`]. Production code
@@ -3008,10 +3046,14 @@ async fn run_agent_prompt(
     let failure_counter = Arc::new(AtomicU32::new(0));
     let observations: Arc<parking_lot::Mutex<Vec<ToolCallObservation>>> =
         Arc::new(parking_lot::Mutex::new(Vec::new()));
+    let receipts: Arc<
+        parking_lot::Mutex<Vec<crate::openhuman::workflows::types::DeliveryReceipt>>,
+    > = Arc::new(parking_lot::Mutex::new(Vec::new()));
     let _sub_handle = subscribe_tool_call_recorder(
         session_id.clone(),
         failure_counter.clone(),
         observations.clone(),
+        receipts.clone(),
     );
 
     // F-17 deliverable B: pre-run memory recall. Fetch up to 3 prior
@@ -3033,24 +3075,33 @@ async fn run_agent_prompt(
         "[workflows-run] pre-run recall composed into user prompt"
     );
 
-    let text = {
+    // T-1 (Phase 2.5): enter the workflow-run task-local scope around
+    // the agent body so write tools (composio_execute today; others
+    // later) can publish DeliveryReceiptObserved events tagged with
+    // this run's session id. Outside the scope tools see `None` and
+    // skip emission — preserves the chat-driven Composio path
+    // unchanged.
+    let text = run_context::scope_workflow_run(session_id.clone(), async {
         #[cfg(test)]
-        if let Some(stub) = current_test_override() {
-            let stubbed = stub(&composed_prompt, def)?;
-            tracing::debug!(
-                target: "workflows-run",
-                "[workflows-run] run_agent_prompt via test override (text_len={})",
-                stubbed.len()
-            );
-            stubbed
-        } else {
-            run_workflow_node_agent(config, &session_id, &composed_prompt, def).await?
+        {
+            if let Some(stub) = current_test_override() {
+                let stubbed = stub(&composed_prompt, def)?;
+                tracing::debug!(
+                    target: "workflows-run",
+                    "[workflows-run] run_agent_prompt via test override (text_len={})",
+                    stubbed.len()
+                );
+                Ok::<String, anyhow::Error>(stubbed)
+            } else {
+                run_workflow_node_agent(config, &session_id, &composed_prompt, def).await
+            }
         }
         #[cfg(not(test))]
         {
-            run_workflow_node_agent(config, &session_id, &composed_prompt, def).await?
+            run_workflow_node_agent(config, &session_id, &composed_prompt, def).await
         }
-    };
+    })
+    .await?;
 
     // Subscriber drains lazily; give it one tokio tick to consume
     // any in-flight events that arrived after the agent returned.
@@ -3060,12 +3111,15 @@ async fn run_agent_prompt(
     tokio::task::yield_now().await;
     let tool_failure_count = failure_counter.load(Ordering::Relaxed);
     let tool_calls: Vec<ToolCallObservation> = observations.lock().clone();
+    let delivery_receipts: Vec<crate::openhuman::workflows::types::DeliveryReceipt> =
+        receipts.lock().clone();
     if tool_failure_count > 0 {
         tracing::warn!(
             target: "workflows-run",
             run_id = %run_id,
             tool_failure_count,
             tool_call_count = tool_calls.len(),
+            receipt_count = delivery_receipts.len(),
             "[workflows-run] observed tool failures during run — step will be marked Failed"
         );
     } else {
@@ -3073,6 +3127,7 @@ async fn run_agent_prompt(
             target: "workflows-run",
             run_id = %run_id,
             tool_call_count = tool_calls.len(),
+            receipt_count = delivery_receipts.len(),
             "[workflows-run] agent finished cleanly"
         );
     }
@@ -3080,6 +3135,7 @@ async fn run_agent_prompt(
         text,
         tool_failure_count,
         tool_calls,
+        delivery_receipts,
     })
 }
 
@@ -3314,6 +3370,9 @@ fn subscribe_tool_call_recorder(
     target_session_id: String,
     counter: Arc<AtomicU32>,
     observations: Arc<parking_lot::Mutex<Vec<ToolCallObservation>>>,
+    receipts: Arc<
+        parking_lot::Mutex<Vec<crate::openhuman::workflows::types::DeliveryReceipt>>,
+    >,
 ) -> Option<crate::core::event_bus::SubscriptionHandle> {
     use crate::core::event_bus::{subscribe_global, DomainEvent, EventHandler};
     use async_trait::async_trait;
@@ -3322,6 +3381,12 @@ fn subscribe_tool_call_recorder(
         target_session_id: String,
         counter: Arc<AtomicU32>,
         observations: Arc<parking_lot::Mutex<Vec<ToolCallObservation>>>,
+        // T-1 (Phase 2.5): receipts are recorded by the same
+        // subscriber as tool calls so a single subscription handle
+        // covers both event kinds; dropping the handle cancels both.
+        receipts: Arc<
+            parking_lot::Mutex<Vec<crate::openhuman::workflows::types::DeliveryReceipt>>,
+        >,
     }
 
     #[async_trait]
@@ -3331,31 +3396,61 @@ fn subscribe_tool_call_recorder(
         }
 
         fn domains(&self) -> Option<&[&str]> {
-            // ToolExecutionCompleted lives in the "tool" domain; the
-            // filter saves us from waking on every memory / channel
-            // event during the run.
+            // Both ToolExecutionCompleted and DeliveryReceiptObserved
+            // live in the "tool" domain; one filter covers both.
             Some(&["tool"])
         }
 
         async fn handle(&self, event: &DomainEvent) {
-            if let DomainEvent::ToolExecutionCompleted {
-                tool_name,
-                session_id,
-                success,
-                elapsed_ms,
-            } = event
-            {
-                if session_id != &self.target_session_id {
-                    return;
+            match event {
+                DomainEvent::ToolExecutionCompleted {
+                    tool_name,
+                    session_id,
+                    success,
+                    elapsed_ms,
+                } => {
+                    if session_id != &self.target_session_id {
+                        return;
+                    }
+                    if !*success {
+                        self.counter.fetch_add(1, Ordering::Relaxed);
+                    }
+                    self.observations.lock().push(ToolCallObservation {
+                        tool_name: tool_name.clone(),
+                        success: *success,
+                        elapsed_ms: *elapsed_ms,
+                    });
                 }
-                if !*success {
-                    self.counter.fetch_add(1, Ordering::Relaxed);
+                DomainEvent::DeliveryReceiptObserved {
+                    session_id,
+                    receipt_json,
+                } => {
+                    if session_id != &self.target_session_id {
+                        return;
+                    }
+                    // Decode best-effort; a malformed receipt drops
+                    // silently with a warn rather than failing the
+                    // subscriber. The receipts surface is purely
+                    // user-visible UX — never gates run correctness.
+                    match serde_json::from_str::<
+                        crate::openhuman::workflows::types::DeliveryReceipt,
+                    >(receipt_json)
+                    {
+                        Ok(receipt) => {
+                            self.receipts.lock().push(receipt);
+                        }
+                        Err(err) => {
+                            tracing::warn!(
+                                target: "workflows-run",
+                                session_id = %session_id,
+                                "[workflows-run] failed to decode \
+                                 DeliveryReceiptObserved payload: \
+                                 {err:#} — dropping receipt"
+                            );
+                        }
+                    }
                 }
-                self.observations.lock().push(ToolCallObservation {
-                    tool_name: tool_name.clone(),
-                    success: *success,
-                    elapsed_ms: *elapsed_ms,
-                });
+                _ => {}
             }
         }
     }
@@ -3364,5 +3459,6 @@ fn subscribe_tool_call_recorder(
         target_session_id,
         counter,
         observations,
+        receipts,
     }))
 }

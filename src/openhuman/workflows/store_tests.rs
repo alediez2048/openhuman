@@ -56,8 +56,9 @@ fn open_creates_workflows_db_and_applies_all_migrations() {
             .unwrap();
         assert_eq!(
             versions,
-            vec![1, 2, 3, 4, 5],
-            "ledger must record every migration (F2-14 added 004, F2-7b added 005)"
+            vec![1, 2, 3, 4, 5, 6],
+            "ledger must record every migration (F2-14 added 004, F2-7b added 005, \
+             Phase 2.5 T-1 added 006)"
         );
         Ok(())
     })
@@ -78,8 +79,9 @@ fn re_open_is_idempotent_and_does_not_duplicate_ledger_rows() {
             })
             .unwrap();
         assert_eq!(
-            count, 5,
-            "five migrations must record exactly five rows (F2-14 added 004, F2-7b added 005)"
+            count, 6,
+            "six migrations must record exactly six rows (F2-14 added 004, F2-7b added 005, \
+             Phase 2.5 T-1 added 006)"
         );
         Ok(())
     })

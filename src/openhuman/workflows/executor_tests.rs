@@ -1019,6 +1019,197 @@ async fn run_step_succeeded_when_zero_tool_calls_and_no_action_connections() {
     );
 }
 
+// ─────────────────────────────────────────────────────────────
+// T-1 (Phase 2.5 Trust UX): DeliveryReceiptObserved end-to-end
+// ─────────────────────────────────────────────────────────────
+
+/// Publish a synthetic `DeliveryReceiptObserved` event tagged with the
+/// matching `workflow:<run_id>` session id. Mirrors
+/// `publish_synthetic_tool_failure` for the F-21 path.
+fn publish_synthetic_delivery_receipt(
+    run_id: &str,
+    tool: &str,
+    kind: super::types::SideEffectKind,
+    recipient: Option<&str>,
+) {
+    use crate::core::event_bus::{publish_global, DomainEvent};
+    let receipt = super::types::DeliveryReceipt {
+        tool: tool.to_string(),
+        side_effect_kind: kind,
+        recipient: recipient.map(str::to_string),
+        message_id: Some("test-message-id".to_string()),
+        link: Some("https://example.com/test".to_string()),
+        at: chrono::Utc::now(),
+    };
+    let receipt_json = serde_json::to_string(&receipt).expect("serialise receipt");
+    publish_global(DomainEvent::DeliveryReceiptObserved {
+        session_id: format!("workflow:{run_id}"),
+        receipt_json,
+    });
+}
+
+/// T-1 — when `composio_execute` (simulated here by direct event
+/// publication) fires a `DeliveryReceiptObserved` for the active run
+/// session, the workflows executor's subscriber records it into the
+/// run step's `delivery_receipts` field.
+#[tokio::test]
+async fn run_step_records_delivery_receipt_when_event_observed_during_run() {
+    ensure_event_bus_initialised();
+    let (_dir, config) = config_with_temp_workspace();
+    // Grant action connections so the F-21 zero-tool-calls guard
+    // doesn't flip this run to Failed (the test stub fires no real
+    // tool calls; F-21 would catch the empty trace otherwise).
+    let created = ops::create(
+        &config,
+        create_request_with_connections(
+            "send a brief via gmail",
+            vec![ConnectionRef::Composio {
+                toolkit_id: "gmail".into(),
+                account_id: None,
+            }],
+        ),
+    )
+    .await
+    .unwrap()
+    .value;
+    let run_id = executor::dispatch_run(
+        &config,
+        created.id.clone(),
+        TriggerSource::Manual {
+            initiator: "user".into(),
+        },
+    )
+    .await
+    .unwrap();
+
+    // Race the agent's run_single: publish a synthetic delivery
+    // receipt + a paired synthetic successful tool_call (so F-21
+    // doesn't flip the run to Failed for zero-successful-calls).
+    // Same loop-publish strategy as F-16's failure test.
+    let publish_run_id = run_id.clone();
+    let publish_handle = tokio::spawn(async move {
+        use crate::core::event_bus::{publish_global, DomainEvent};
+        for _ in 0..50 {
+            publish_global(DomainEvent::ToolExecutionCompleted {
+                tool_name: "composio_execute".into(),
+                session_id: format!("workflow:{publish_run_id}"),
+                success: true,
+                elapsed_ms: 100,
+            });
+            publish_synthetic_delivery_receipt(
+                &publish_run_id,
+                "GMAIL_SEND_EMAIL",
+                super::types::SideEffectKind::EmailSent,
+                Some("alediez2408@gmail.com"),
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    });
+
+    let terminal = wait_for_terminal_run(&config, &created.id).await;
+    publish_handle.abort();
+
+    let (_run, steps) = store::get_run(&config, &terminal.id)
+        .unwrap()
+        .expect("run row");
+    let step = &steps[0];
+    assert!(
+        !step.delivery_receipts.is_empty(),
+        "T-1: synthetic DeliveryReceiptObserved must be recorded; got empty receipts vec"
+    );
+    let receipt = &step.delivery_receipts[0];
+    assert_eq!(receipt.tool, "GMAIL_SEND_EMAIL");
+    assert_eq!(
+        receipt.side_effect_kind,
+        super::types::SideEffectKind::EmailSent
+    );
+    assert_eq!(
+        receipt.recipient.as_deref(),
+        Some("alediez2408@gmail.com")
+    );
+}
+
+/// T-1 — receipts round-trip through SQLite serialisation. Persisting
+/// + reading back must preserve every field byte-identically; the
+/// migration's `'[]'` default applies cleanly to pre-T-1 rows.
+#[tokio::test]
+async fn delivery_receipt_round_trips_through_sqlite() {
+    let (_dir, config) = config_with_temp_workspace();
+    // Touch the DB so migrations run, then directly persist a step
+    // row with receipts and read it back. The full executor path is
+    // covered by the test above; this test pins the SQL contract
+    // independently so a migration regression surfaces here.
+    let now = chrono::Utc::now();
+    let receipts = vec![
+        super::types::DeliveryReceipt {
+            tool: "GMAIL_SEND_EMAIL".into(),
+            side_effect_kind: super::types::SideEffectKind::EmailSent,
+            recipient: Some("a@b.com".into()),
+            message_id: Some("mid123".into()),
+            link: Some("https://mail.google.com/mail/u/0/#sent/mid123".into()),
+            at: now,
+        },
+        super::types::DeliveryReceipt {
+            tool: "SLACK_SEND_MESSAGE".into(),
+            side_effect_kind: super::types::SideEffectKind::MessagePosted {
+                provider: "slack".into(),
+            },
+            recipient: Some("#general".into()),
+            message_id: Some("1.0".into()),
+            link: None,
+            at: now,
+        },
+    ];
+
+    // Insert a real Run row first so the FK on steps holds.
+    let created = ops::create(&config, create_request("round-trip"))
+        .await
+        .unwrap()
+        .value;
+    let run = Run {
+        id: "test-run-id".into(),
+        workflow_id: created.id.clone(),
+        trigger_source: TriggerSource::Manual {
+            initiator: "user".into(),
+        },
+        status: RunStatus::Succeeded,
+        started_at: now,
+        completed_at: Some(now),
+        error: None,
+        cancelled: false,
+    };
+    store::insert_run(&config, &run).unwrap();
+    let step = RunStep {
+        id: "test-step-id".into(),
+        run_id: run.id.clone(),
+        node_id: "n1".into(),
+        status: RunStatus::Running,
+        started_at: now,
+        completed_at: None,
+        output_json: None,
+        error: None,
+        delivery_receipts: Vec::new(),
+    };
+    store::insert_run_step(&config, &step).unwrap();
+    store::update_run_step_terminal(
+        &config,
+        &step.id,
+        RunStatus::Succeeded,
+        now,
+        Some("{}".into()),
+        None,
+        &receipts,
+    )
+    .unwrap();
+
+    let (_run, steps) = store::get_run(&config, &run.id).unwrap().expect("run row");
+    assert_eq!(steps.len(), 1);
+    assert_eq!(
+        steps[0].delivery_receipts, receipts,
+        "round-trip must preserve every receipt byte-identically"
+    );
+}
+
 /// F-16 — `build_node_agent_definition`'s output is the exact wire
 /// the executor passes into `from_config_for_agent_with_tool_override`.
 /// This is the contract test for the C deliverable.

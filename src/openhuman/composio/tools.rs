@@ -1291,6 +1291,11 @@ impl Tool for ComposioExecuteTool {
         };
 
         let started = std::time::Instant::now();
+        // T-1 (Phase 2.5): keep a clone of the arguments around so the
+        // delivery_receipt classifier (called on the success branch
+        // below) can extract `recipient` from them. `arguments` itself
+        // is consumed by the dispatch pipeline.
+        let arguments_for_receipt = arguments.clone();
         // Centralized prepare → retry → error-mapping pipeline (#1797),
         // mode-aware over the backend/direct split (#1710).
         let res = super::execute_dispatch::execute_composio_action_kind(
@@ -1326,6 +1331,42 @@ impl Tool for ComposioExecuteTool {
                     },
                 );
                 if resp.successful {
+                    // T-1 (Phase 2.5 Trust UX): if a workflow run is
+                    // active on this task, classify the call into a
+                    // DeliveryReceipt and publish a
+                    // DeliveryReceiptObserved event scoped to the
+                    // run's session id. Outside a workflow run (chat
+                    // turns, direct RPC) this is a no-op — the
+                    // task-local is unset and no receipt is emitted.
+                    if let Some(session_id) =
+                        crate::openhuman::workflows::run_context::current_workflow_session_id()
+                    {
+                        if let Some(receipt) = super::delivery_receipt::classify(
+                            &tool,
+                            arguments_for_receipt.as_ref(),
+                            &resp,
+                        ) {
+                            match serde_json::to_string(&receipt) {
+                                Ok(receipt_json) => {
+                                    crate::core::event_bus::publish_global(
+                                        crate::core::event_bus::DomainEvent::DeliveryReceiptObserved {
+                                            session_id,
+                                            receipt_json,
+                                        },
+                                    );
+                                }
+                                Err(err) => {
+                                    tracing::warn!(
+                                        target: "composio",
+                                        tool = %tool,
+                                        "[composio] failed to serialise DeliveryReceipt for \
+                                         publication: {err:#} — skipping receipt (the run \
+                                         itself is unaffected)"
+                                    );
+                                }
+                            }
+                        }
+                    }
                     // Prefer the backend-rendered markdown when available
                     // (tinyhumansai/backend#683). The backend handles parsing
                     // for all composio actions; if a tool isn't formatted

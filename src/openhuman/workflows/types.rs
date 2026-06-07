@@ -205,6 +205,92 @@ pub struct RunStep {
     pub output_json: Option<String>,
     #[serde(default)]
     pub error: Option<String>,
+    /// T-1 (Phase 2.5 Trust UX): concrete delivery receipts produced
+    /// during this step. Each entry is a structured record of a real-
+    /// world side effect (email sent, message posted, file created)
+    /// the agent triggered. Empty for read-only steps, steps that
+    /// failed before any write, and pre-T-1 rows (the migration
+    /// defaults the column to `'[]'`).
+    ///
+    /// Drives T-2's per-run outcome card — instead of rendering the
+    /// agent's free-form prose as the headline, the UI lists these
+    /// receipts as plain-English rows with deep links to the
+    /// resulting artifact.
+    #[serde(default)]
+    pub delivery_receipts: Vec<DeliveryReceipt>,
+}
+
+/// T-1 (Phase 2.5 Trust UX): concrete, user-renderable evidence that a
+/// workflow run produced a real-world side effect.
+///
+/// Emitted by `composio_execute` (and, in the future, by other write
+/// tools that opt into [`crate::core::event_bus::DomainEvent::DeliveryReceiptObserved`])
+/// when the upstream provider confirms success. The workflows executor
+/// subscribes to the same `session_id` scope used by the F-16 tool-call
+/// observer and accumulates receipts into the per-run trace.
+///
+/// All fields except `tool`, `side_effect_kind`, and `at` are best-
+/// effort: `recipient` may be missing if extraction from arguments
+/// failed (OQ-T1-A: prefer surfacing `None` over inventing a placeholder
+/// — the user sees that something was sent but the system can't say to
+/// whom). `message_id` and `link` are `None` when the provider doesn't
+/// return one.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DeliveryReceipt {
+    /// The Composio action slug (or other tool name) that produced
+    /// this side effect, e.g. `GMAIL_SEND_EMAIL`, `SLACK_SEND_MESSAGE`.
+    pub tool: String,
+    /// Coarse-grained classification of the side effect kind. Drives
+    /// the UI icon + verb rendering ("📧 Sent email" / "💬 Posted
+    /// message" / ...).
+    pub side_effect_kind: SideEffectKind,
+    /// Human-readable target (recipient email, Slack channel name,
+    /// file path). `None` when extraction failed or the tool has no
+    /// clear "to whom" notion.
+    #[serde(default)]
+    pub recipient: Option<String>,
+    /// Provider-side stable id (Gmail message id, Slack `ts`, Notion
+    /// page id). Lets the UI link back to the artifact.
+    #[serde(default)]
+    pub message_id: Option<String>,
+    /// Canonical deep link to view the artifact in the provider's UI.
+    /// `None` when no link is derivable.
+    #[serde(default)]
+    pub link: Option<String>,
+    /// Captured at receipt time so the UI can sort + render relative
+    /// timestamps ("Sent 3 minutes ago").
+    pub at: DateTime<Utc>,
+}
+
+/// T-1: coarse classification of the side effect a delivery receipt
+/// describes. The catalog is deliberately small + stable; each
+/// variant maps to a curated UI verb + icon. Unknown write tools fall
+/// through to `Other { verb }` rather than hallucinating an icon —
+/// see OQ-T1-B (deletes also use `Other { verb: "Deleted" }`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SideEffectKind {
+    /// `GMAIL_SEND_EMAIL` and friends.
+    EmailSent,
+    /// Chat-channel post (`SLACK_SEND_MESSAGE`, `DISCORD_POST_MESSAGE`,
+    /// `TELEGRAM_SEND_MESSAGE`, ...). `provider` is the lowercase
+    /// toolkit slug for icon selection.
+    MessagePosted { provider: String },
+    /// File / document creation on a storage / docs provider
+    /// (`NOTION_CREATE_PAGE`, `GOOGLEDRIVE_UPLOAD_FILE`, ...).
+    FileCreated { provider: String },
+    /// Structured-record creation on a CRM / DB
+    /// (`ATTIO_CREATE_RECORD`, `AIRTABLE_CREATE_RECORD`, ...).
+    RecordCreated { provider: String },
+    /// Structured-record update on a CRM / DB.
+    RecordUpdated { provider: String },
+    /// Calendar event creation.
+    CalendarEventCreated,
+    /// Catch-all for write tools that don't fit a curated variant.
+    /// `verb` is rendered verbatim ("Performed X", "Deleted X", etc.)
+    /// so the UI stays honest about what the user is looking at
+    /// instead of inventing a richer classification.
+    Other { verb: String },
 }
 
 // ── Enums ───────────────────────────────────────────────────────────────

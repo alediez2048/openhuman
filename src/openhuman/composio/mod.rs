@@ -39,6 +39,7 @@ pub mod action_tool;
 pub mod auth_retry;
 pub mod bus;
 pub mod client;
+pub mod delivery_receipt;
 pub mod error_mapping;
 pub mod execute_dispatch;
 pub mod execute_prepare;

@@ -24,6 +24,7 @@ const MIGRATION_002: &str = include_str!("migrations/002_runs.sql");
 const MIGRATION_003: &str = include_str!("migrations/003_run_steps.sql");
 const MIGRATION_004: &str = include_str!("migrations/004_workflow_soft_delete.sql");
 const MIGRATION_005: &str = include_str!("migrations/005_delay_resume.sql");
+const MIGRATION_006: &str = include_str!("migrations/006_delivery_receipts.sql");
 
 /// Resolves the database path for this workspace: `${workspace_dir}/workflows.db`.
 fn db_path(config: &Config) -> PathBuf {
@@ -80,6 +81,7 @@ fn apply_migrations(conn: &Connection) -> Result<()> {
     apply_one(conn, 3, "003_run_steps", MIGRATION_003)?;
     apply_one(conn, 4, "004_workflow_soft_delete", MIGRATION_004)?;
     apply_one(conn, 5, "005_delay_resume", MIGRATION_005)?;
+    apply_one(conn, 6, "006_delivery_receipts", MIGRATION_006)?;
 
     Ok(())
 }
@@ -782,7 +784,10 @@ pub fn list_delayed_running_runs(
 }
 
 /// Insert a `workflow_run_steps` row with status = Running. The
-/// executor calls this right before invoking the agent.
+/// executor calls this right before invoking the agent. Migration 006
+/// adds `delivery_receipts_json` with a `'[]'` default, so insert sites
+/// don't need to populate it — receipts land via
+/// [`update_run_step_terminal`] on completion.
 pub fn insert_run_step(config: &Config, step: &RunStep) -> Result<()> {
     with_connection(config, |db| {
         db.execute(
@@ -806,7 +811,10 @@ pub fn insert_run_step(config: &Config, step: &RunStep) -> Result<()> {
 }
 
 /// Update a step row's terminal fields. `output_json` is truncated to
-/// 64 KiB by the caller (executor) before this is called.
+/// 64 KiB by the caller (executor) before this is called. T-1 (Phase
+/// 2.5): also writes the `delivery_receipts_json` column — empty slice
+/// serializes to `'[]'`, matching the migration's default for
+/// pre-T-1 rows.
 pub fn update_run_step_terminal(
     config: &Config,
     step_id: &RunStepId,
@@ -814,12 +822,16 @@ pub fn update_run_step_terminal(
     completed_at: DateTime<Utc>,
     output_json: Option<String>,
     error: Option<String>,
+    delivery_receipts: &[crate::openhuman::workflows::types::DeliveryReceipt],
 ) -> Result<bool> {
+    let receipts_json = serde_json::to_string(delivery_receipts)
+        .context("serialize delivery_receipts for workflow_run_steps")?;
     with_connection(config, |db| {
         let rows = db
             .execute(
                 "UPDATE workflow_run_steps SET \
-                 status = ?2, completed_at = ?3, output_json = ?4, error = ?5 \
+                 status = ?2, completed_at = ?3, output_json = ?4, error = ?5, \
+                 delivery_receipts_json = ?6 \
                  WHERE id = ?1",
                 rusqlite::params![
                     step_id,
@@ -827,6 +839,7 @@ pub fn update_run_step_terminal(
                     completed_at.to_rfc3339(),
                     output_json,
                     error,
+                    receipts_json,
                 ],
             )
             .context("Failed to update workflow_run_steps row")?;
@@ -923,7 +936,8 @@ pub fn get_run(config: &Config, run_id: &RunId) -> Result<Option<(Run, Vec<RunSt
             return Ok(None);
         };
         let mut stmt = db.prepare(
-            "SELECT id, run_id, node_id, status, started_at, completed_at, output_json, error \
+            "SELECT id, run_id, node_id, status, started_at, completed_at, output_json, error, \
+             delivery_receipts_json \
              FROM workflow_run_steps WHERE run_id = ?1 ORDER BY started_at ASC",
         )?;
         let raw_rows = stmt
@@ -970,6 +984,17 @@ fn row_to_run_step(row: &Row<'_>) -> Result<RunStep> {
     let completed_at_raw: Option<String> = row.get(5).context("read step.completed_at")?;
     let output_json: Option<String> = row.get(6).context("read step.output_json")?;
     let error: Option<String> = row.get(7).context("read step.error")?;
+    // T-1 (Phase 2.5): receipts column added by migration 006 with
+    // `'[]'` default — read may be absent on rows persisted by tests
+    // that hand-construct a connection without running migrations.
+    // Treat any read failure as "empty vec" rather than bubbling up;
+    // the receipts surface is best-effort and never gates correctness.
+    let receipts_raw: String = row.get(8).unwrap_or_else(|_| "[]".to_string());
+    let delivery_receipts =
+        serde_json::from_str::<Vec<crate::openhuman::workflows::types::DeliveryReceipt>>(
+            &receipts_raw,
+        )
+        .unwrap_or_default();
     Ok(RunStep {
         id,
         run_id,
@@ -984,6 +1009,7 @@ fn row_to_run_step(row: &Row<'_>) -> Result<RunStep> {
             .context("parse step.completed_at")?,
         output_json,
         error,
+        delivery_receipts,
     })
 }
 

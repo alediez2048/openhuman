@@ -281,6 +281,27 @@ pub enum DomainEvent {
         success: bool,
         elapsed_ms: u64,
     },
+    /// T-1 (Phase 2.5 Trust UX): a tool produced a concrete real-world
+    /// side effect (email sent, message posted, file created). Emitted
+    /// alongside [`Self::ToolExecutionCompleted`] when a write tool's
+    /// upstream provider confirms success. The workflows executor
+    /// subscribes to the same `session_id` scope and accumulates
+    /// receipts into the run step's `delivery_receipts` field.
+    ///
+    /// Carries a `String`-encoded `serde_json` payload of
+    /// [`crate::openhuman::workflows::types::DeliveryReceipt`] to keep
+    /// the `event_bus` crate free of a downstream type dependency on
+    /// the workflows domain; subscribers parse it back via
+    /// `serde_json::from_str`. Decoding failure is logged + dropped
+    /// (best-effort — never blocks the dispatch path).
+    DeliveryReceiptObserved {
+        /// Same scope key the F-16 `ToolExecutionCompleted` events use
+        /// ("workflow:<run_id>"). Subscribers filter on exact match.
+        session_id: String,
+        /// JSON-encoded `DeliveryReceipt`. The wire format keeps the
+        /// event bus type-agnostic; parsing happens in the subscriber.
+        receipt_json: String,
+    },
 
     // ── Approval ────────────────────────────────────────────────────────
     /// Agent attempted a tool call that produces an external side
@@ -792,7 +813,9 @@ impl DomainEvent {
             | Self::SkillStartFailed { .. }
             | Self::SkillExecuted { .. } => "skill",
 
-            Self::ToolExecutionStarted { .. } | Self::ToolExecutionCompleted { .. } => "tool",
+            Self::ToolExecutionStarted { .. }
+            | Self::ToolExecutionCompleted { .. }
+            | Self::DeliveryReceiptObserved { .. } => "tool",
 
             Self::WebhookIncomingRequest { .. }
             | Self::WebhookReceived { .. }
