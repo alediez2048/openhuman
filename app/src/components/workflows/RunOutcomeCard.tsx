@@ -21,16 +21,11 @@
  * happening (it flips such runs to Failed) — the subtitle is the belt
  * for those suspenders.
  */
-import { useState } from 'react';
-import { useT } from '../../lib/i18n/I18nContext';
 import { invoke } from '@tauri-apps/api/core';
-import type {
-  DeliveryReceipt,
-  Run,
-  RunStep,
-  RunStatus,
-  Workflow,
-} from '../../types/workflows';
+import { useState } from 'react';
+
+import { useT } from '../../lib/i18n/I18nContext';
+import type { DeliveryReceipt, Run, RunStatus, RunStep, Workflow } from '../../types/workflows';
 
 interface Props {
   run: Run;
@@ -137,8 +132,7 @@ function ReceiptRow({ receipt, t }: ReceiptRowProps) {
   return (
     <div
       data-testid="receipt-row"
-      className="flex items-start gap-3 py-2 px-3 rounded-md hover:bg-stone-50 dark:hover:bg-stone-800/30"
-    >
+      className="flex items-start gap-3 py-2 px-3 rounded-md hover:bg-stone-50 dark:hover:bg-stone-800/30">
       <span className="text-lg leading-none mt-0.5" aria-hidden="true">
         {icon}
       </span>
@@ -154,8 +148,7 @@ function ReceiptRow({ receipt, t }: ReceiptRowProps) {
         <button
           type="button"
           onClick={handleOpen}
-          className="text-xs px-2 py-1 rounded text-primary-700 dark:text-primary-300 hover:bg-primary-50 dark:hover:bg-primary-900/30 whitespace-nowrap"
-        >
+          className="text-xs px-2 py-1 rounded text-primary-700 dark:text-primary-300 hover:bg-primary-50 dark:hover:bg-primary-900/30 whitespace-nowrap">
           {openLabel} →
         </button>
       )}
@@ -267,7 +260,7 @@ export default function RunOutcomeCard({ run, steps, workflow }: Props) {
 
   const receipts = collectReceipts(steps);
   const narrative = readNarrative(steps);
-  const stepError = steps.find((s) => s.error)?.error ?? run.error ?? null;
+  const stepError = steps.find(s => s.error)?.error ?? run.error ?? null;
   const isFailed = run.status === 'failed' || run.status === 'timed_out';
   const isTerminal = run.status !== 'running' && run.status !== 'pending';
 
@@ -275,15 +268,12 @@ export default function RunOutcomeCard({ run, steps, workflow }: Props) {
   // receipts is a regression signal. Render a warning subtitle so the
   // user notices even if F-21's flip-to-Failed somehow doesn't fire.
   const showZeroReceiptsWarning =
-    run.status === 'succeeded' &&
-    receipts.length === 0 &&
-    workflowHasActionConnections(workflow);
+    run.status === 'succeeded' && receipts.length === 0 && workflowHasActionConnections(workflow);
 
   return (
     <div
       data-testid="run-outcome-card"
-      className="rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-4 space-y-3"
-    >
+      className="rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-4 space-y-3">
       {/* Header */}
       <div className="flex items-center gap-2">
         <span className="text-xl leading-none" aria-hidden="true">
@@ -327,8 +317,7 @@ export default function RunOutcomeCard({ run, steps, workflow }: Props) {
           </div>
           <div
             data-testid="run-outcome-failure"
-            className="px-3 py-2 rounded bg-coral-50 dark:bg-coral-950/30 text-sm text-coral-900 dark:text-coral-200 font-mono whitespace-pre-wrap break-words"
-          >
+            className="px-3 py-2 rounded bg-coral-50 dark:bg-coral-950/30 text-sm text-coral-900 dark:text-coral-200 font-mono whitespace-pre-wrap break-words">
             {stepError ?? t('workflows.outcome.unknown_failure')}
           </div>
         </div>
@@ -346,9 +335,8 @@ export default function RunOutcomeCard({ run, steps, workflow }: Props) {
         <div className="pt-1">
           <button
             type="button"
-            onClick={() => setNarrativeOpen((v) => !v)}
-            className="text-xs text-stone-500 dark:text-stone-400 hover:text-stone-700 dark:hover:text-stone-200 flex items-center gap-1"
-          >
+            onClick={() => setNarrativeOpen(v => !v)}
+            className="text-xs text-stone-500 dark:text-stone-400 hover:text-stone-700 dark:hover:text-stone-200 flex items-center gap-1">
             <span aria-hidden="true">{narrativeOpen ? '▾' : '▸'}</span>
             <span>
               {narrativeOpen
@@ -359,8 +347,7 @@ export default function RunOutcomeCard({ run, steps, workflow }: Props) {
           {narrativeOpen && (
             <div
               data-testid="run-outcome-narrative"
-              className="mt-2 px-3 py-2 text-sm text-stone-700 dark:text-stone-300 whitespace-pre-wrap bg-stone-50 dark:bg-stone-800/50 rounded"
-            >
+              className="mt-2 px-3 py-2 text-sm text-stone-700 dark:text-stone-300 whitespace-pre-wrap bg-stone-50 dark:bg-stone-800/50 rounded">
               {narrative}
             </div>
           )}

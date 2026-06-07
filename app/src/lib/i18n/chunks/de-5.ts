@@ -886,9 +886,10 @@ const de5: TranslationMap = {
   'workflows.outcome.why_failed': 'Why this run failed',
   'workflows.outcome.unknown_failure': 'The run failed for an unspecified reason.',
   'workflows.outcome.running_subtitle': 'Run in progress — refresh in a moment to see the outcome.',
-  'workflows.outcome.show_agent_notes': 'Show agent\'s notes',
-  'workflows.outcome.hide_agent_notes': 'Hide agent\'s notes',
-  'workflows.outcome.zero_receipts_warning': 'This run completed but produced no observable side effects. Check the agent notes for what went wrong.',
+  'workflows.outcome.show_agent_notes': "Show agent's notes",
+  'workflows.outcome.hide_agent_notes': "Hide agent's notes",
+  'workflows.outcome.zero_receipts_warning':
+    'This run completed but produced no observable side effects. Check the agent notes for what went wrong.',
   'workflows.outcome.email_sent_to': 'Sent email to {recipient}',
   'workflows.outcome.message_posted_in': 'Posted message in {provider} ({recipient})',
   'workflows.outcome.file_created_in': 'Created {title} in {provider}',

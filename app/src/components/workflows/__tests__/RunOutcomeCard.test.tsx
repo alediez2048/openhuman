@@ -5,21 +5,14 @@
  * failure / running / zero-receipts-warning branches so future renderer
  * changes can't silently break the trust UX.
  */
-import { render, screen, fireEvent } from '@testing-library/react';
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { fireEvent, render, screen } from '@testing-library/react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type {
-  DeliveryReceipt,
-  Run,
-  RunStep,
-  Workflow,
-} from '../../../types/workflows';
+import type { DeliveryReceipt, Run, RunStep, Workflow } from '../../../types/workflows';
 import RunOutcomeCard from '../RunOutcomeCard';
 
 const invokeMock = vi.fn();
-vi.mock('@tauri-apps/api/core', () => ({
-  invoke: (...args: unknown[]) => invokeMock(...args),
-}));
+vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => invokeMock(...args) }));
 
 vi.mock('../../../lib/i18n/I18nContext', () => ({
   useT: () => ({

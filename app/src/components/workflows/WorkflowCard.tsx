@@ -218,7 +218,7 @@ export default function WorkflowCard({ workflow }: Props) {
       // pending after that, the user can refresh manually.
       void (async () => {
         for (let i = 0; i < 60; i++) {
-          await new Promise((res) => setTimeout(res, 1500));
+          await new Promise(res => setTimeout(res, 1500));
           try {
             const fetched = await workflowsApi.getRun(runId);
             if (!fetched) continue;
