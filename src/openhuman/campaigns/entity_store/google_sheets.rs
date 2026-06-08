@@ -217,11 +217,7 @@ impl GoogleSheetsAdapter {
             .as_array()
             .ok_or_else(|| anyhow!("google_sheets: values is not an array"))?
             .iter()
-            .map(|row| {
-                row.as_array()
-                    .cloned()
-                    .unwrap_or_else(|| vec![Value::Null])
-            })
+            .map(|row| row.as_array().cloned().unwrap_or_else(|| vec![Value::Null]))
             .collect();
         Ok(rows)
     }
@@ -325,9 +321,9 @@ impl EntityStore for GoogleSheetsAdapter {
         let rows = self.fetch_values().await?;
         let schema = self.derive_schema(&rows);
         let records = self.rows_to_records(&rows, &schema);
-        Ok(records.into_iter().find(|r| {
-            parse_row_number(&r.id.native).is_ok_and(|rn| rn == row_number)
-        }))
+        Ok(records
+            .into_iter()
+            .find(|r| parse_row_number(&r.id.native).is_ok_and(|rn| rn == row_number)))
     }
 
     async fn update(&self, id: &EntityId, patch: EntityPatch) -> Result<()> {
@@ -630,9 +626,9 @@ fn matches_filter(record: &EntityRecord, filter: &EntityFilter) -> bool {
         (Some(v), EntityFilterOp::Eq) => values_equal(v, &filter.value),
         (Some(v), EntityFilterOp::NotEq) => !values_equal(v, &filter.value),
         (Some(v), EntityFilterOp::Contains) => match (v.as_str(), filter.value.as_str()) {
-            (Some(haystack), Some(needle)) => haystack
-                .to_lowercase()
-                .contains(&needle.to_lowercase()),
+            (Some(haystack), Some(needle)) => {
+                haystack.to_lowercase().contains(&needle.to_lowercase())
+            }
             _ => false,
         },
     }

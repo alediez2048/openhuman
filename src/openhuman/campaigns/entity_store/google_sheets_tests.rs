@@ -62,12 +62,13 @@ impl FakeComposioExecutor {
 impl ComposioExecutor for FakeComposioExecutor {
     async fn execute(&self, tool: &str, args: Value) -> Result<ComposioExecuteResponse> {
         self.calls.lock().push((tool.to_string(), args));
-        if let Some(resp) = self
-            .responses
-            .lock()
-            .get_mut(tool)
-            .and_then(|q| if q.is_empty() { None } else { Some(q.remove(0)) })
-        {
+        if let Some(resp) = self.responses.lock().get_mut(tool).and_then(|q| {
+            if q.is_empty() {
+                None
+            } else {
+                Some(q.remove(0))
+            }
+        }) {
             return Ok(resp);
         }
         if let Some(default) = self.default.lock().clone() {
@@ -153,26 +154,14 @@ fn infer_field_kind_recognizes_iso_date_and_rfc3339() {
 
 #[test]
 fn infer_field_kind_recognizes_number_and_bool_falls_through_to_string() {
-    assert!(matches!(
-        infer_field_kind("42"),
-        EntityFieldKind::Number
-    ));
-    assert!(matches!(
-        infer_field_kind("3.14"),
-        EntityFieldKind::Number
-    ));
-    assert!(matches!(
-        infer_field_kind("yes"),
-        EntityFieldKind::Bool
-    ));
+    assert!(matches!(infer_field_kind("42"), EntityFieldKind::Number));
+    assert!(matches!(infer_field_kind("3.14"), EntityFieldKind::Number));
+    assert!(matches!(infer_field_kind("yes"), EntityFieldKind::Bool));
     assert!(matches!(
         infer_field_kind("Acme Corp"),
         EntityFieldKind::String
     ));
-    assert!(matches!(
-        infer_field_kind(""),
-        EntityFieldKind::Unknown
-    ));
+    assert!(matches!(infer_field_kind(""), EntityFieldKind::Unknown));
 }
 
 // ── column_letter ──────────────────────────────────────────────────
@@ -194,17 +183,41 @@ async fn schema_infers_field_kinds_from_first_data_row() {
     exec.queue(
         "GOOGLESHEETS_SPREADSHEETS_VALUES_GET",
         values_resp(json!([
-            ["email", "name", "status", "last_contacted", "interest_score"],
-            ["alice@acme.io", "Alice", "active", "2026-05-26T10:00:00Z", "8.4"]
+            [
+                "email",
+                "name",
+                "status",
+                "last_contacted",
+                "interest_score"
+            ],
+            [
+                "alice@acme.io",
+                "Alice",
+                "active",
+                "2026-05-26T10:00:00Z",
+                "8.4"
+            ]
         ])),
     );
     let adapter = GoogleSheetsAdapter::new(exec, "sheet_abc", "Vendors!A1:E100");
     let schema = adapter.schema().await.unwrap();
 
     let keys: Vec<&str> = schema.fields.iter().map(|f| f.key.as_str()).collect();
-    assert_eq!(keys, vec!["email", "name", "status", "last_contacted", "interest_score"]);
+    assert_eq!(
+        keys,
+        vec![
+            "email",
+            "name",
+            "status",
+            "last_contacted",
+            "interest_score"
+        ]
+    );
 
-    assert!(matches!(schema.fields[0].kind, EntityFieldKind::EmailAddress));
+    assert!(matches!(
+        schema.fields[0].kind,
+        EntityFieldKind::EmailAddress
+    ));
     assert!(matches!(schema.fields[1].kind, EntityFieldKind::String));
     assert!(matches!(schema.fields[2].kind, EntityFieldKind::String));
     assert!(matches!(schema.fields[3].kind, EntityFieldKind::DateTime));
@@ -314,7 +327,10 @@ async fn get_returns_record_for_known_row_and_none_for_unknown() {
     let exec = FakeComposioExecutor::new();
     // Two fetches: one for the known row, one for the unknown.
     let body = json!([["email"], ["a@x.io"]]);
-    exec.queue("GOOGLESHEETS_SPREADSHEETS_VALUES_GET", values_resp(body.clone()));
+    exec.queue(
+        "GOOGLESHEETS_SPREADSHEETS_VALUES_GET",
+        values_resp(body.clone()),
+    );
     exec.queue("GOOGLESHEETS_SPREADSHEETS_VALUES_GET", values_resp(body));
     let adapter = GoogleSheetsAdapter::new(exec, "sid", "Sheet1!A1:A10");
 
@@ -351,11 +367,11 @@ async fn update_writes_full_row_through_update_values_action() {
     let exec_clone = Arc::clone(&exec);
     // Two reads happen: one for schema cache (schema() inside update),
     // and one for the existing-row fetch (also a GET).
-    let body = json!([
-        ["email", "status", "note"],
-        ["a@x.io", "active", "hello"]
-    ]);
-    exec.queue("GOOGLESHEETS_SPREADSHEETS_VALUES_GET", values_resp(body.clone()));
+    let body = json!([["email", "status", "note"], ["a@x.io", "active", "hello"]]);
+    exec.queue(
+        "GOOGLESHEETS_SPREADSHEETS_VALUES_GET",
+        values_resp(body.clone()),
+    );
     exec.queue("GOOGLESHEETS_SPREADSHEETS_VALUES_GET", values_resp(body));
     exec.queue("GOOGLESHEETS_SPREADSHEETS_VALUES_UPDATE", ok_empty());
 
@@ -389,7 +405,10 @@ async fn update_writes_full_row_through_update_values_action() {
 async fn update_errors_when_row_does_not_exist() {
     let exec = FakeComposioExecutor::new();
     let body = json!([["email"], ["a@x.io"]]);
-    exec.queue("GOOGLESHEETS_SPREADSHEETS_VALUES_GET", values_resp(body.clone()));
+    exec.queue(
+        "GOOGLESHEETS_SPREADSHEETS_VALUES_GET",
+        values_resp(body.clone()),
+    );
     exec.queue("GOOGLESHEETS_SPREADSHEETS_VALUES_GET", values_resp(body));
     let adapter = GoogleSheetsAdapter::new(exec, "sid", "Sheet1!A1:A100");
     let mut patch = serde_json::Map::new();
@@ -408,7 +427,10 @@ async fn update_errors_when_row_does_not_exist() {
 async fn update_propagates_composio_failure() {
     let exec = FakeComposioExecutor::new();
     let body = json!([["email"], ["a@x.io"]]);
-    exec.queue("GOOGLESHEETS_SPREADSHEETS_VALUES_GET", values_resp(body.clone()));
+    exec.queue(
+        "GOOGLESHEETS_SPREADSHEETS_VALUES_GET",
+        values_resp(body.clone()),
+    );
     exec.queue("GOOGLESHEETS_SPREADSHEETS_VALUES_GET", values_resp(body));
     exec.queue(
         "GOOGLESHEETS_SPREADSHEETS_VALUES_UPDATE",
@@ -442,15 +464,8 @@ async fn subscribe_emits_created_event_when_new_row_appears() {
     // (after the new row appears) sees the appended row. We set the
     // default so any further background polls keep returning the
     // post-append snapshot without panicking the test on extra calls.
-    let initial = values_resp(json!([
-        ["email"],
-        ["a@x.io"]
-    ]));
-    let after_append = values_resp(json!([
-        ["email"],
-        ["a@x.io"],
-        ["b@x.io"]
-    ]));
+    let initial = values_resp(json!([["email"], ["a@x.io"]]));
+    let after_append = values_resp(json!([["email"], ["a@x.io"], ["b@x.io"]]));
     exec.queue("GOOGLESHEETS_SPREADSHEETS_VALUES_GET", initial.clone());
     exec.queue("GOOGLESHEETS_SPREADSHEETS_VALUES_GET", after_append.clone());
     exec.set_default(after_append);
