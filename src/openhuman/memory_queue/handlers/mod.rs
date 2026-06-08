@@ -424,7 +424,19 @@ async fn handle_seal(config: &Config, job: &Job) -> Result<JobOutcome> {
     // same SQLite transaction that commits the seal. This eliminates the
     // crash window where the seal succeeds but the follow-up enqueues
     // are silently lost.
-    let summary_id = seal_one_level(config, &tree, &buf, &strategy, true).await?;
+    //
+    // T-5 (Phase 2.5 Trust UX): returns Ok(None) when the buffer
+    // hydrated to nothing (orphan-only references). Treat that as a
+    // benign no-op job completion — pre-T-5 this dead-lettered the
+    // job and surfaced as "N failed job(s)" in the Memory UI.
+    let Some(summary_id) = seal_one_level(config, &tree, &buf, &strategy, true).await? else {
+        log::info!(
+            "[memory::jobs] seal no-op: buffer hydrated to zero items (orphan-only refs); \
+             marking job done without follow-ups"
+        );
+        super::worker::wake_workers();
+        return Ok(JobOutcome::Done);
+    };
 
     // Phase MD-content: rewrite the `tags:` block in the sealed summary's
     // on-disk .md file. Entity index rows were committed inside
@@ -1108,6 +1120,9 @@ mod tests {
             )
             .await
             .unwrap()
+            // T-5: seal_one_level → Option<String>; this test feeds a
+            // populated buffer so Some(_) is expected.
+            .expect("test seal feeds a non-empty buffer and must mint a summary")
         })
         .await;
 

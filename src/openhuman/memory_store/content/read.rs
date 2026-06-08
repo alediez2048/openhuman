@@ -158,21 +158,51 @@ pub fn read_chunk_body(
         }
     }
 
-    let pointers = get_chunk_content_pointers(config, chunk_id)?.ok_or_else(|| {
-        anyhow::anyhow!(
-            "[content_store::read] no content_path or raw_refs for chunk_id={} \
-             (pre-MD-migration row?)",
-            chunk_id
-        )
-    })?;
-    let (rel_path, expected_sha256) = pointers;
-    if rel_path.is_empty() {
-        return Err(anyhow::anyhow!(
-            "[content_store::read] empty content_path and no raw_refs for chunk_id={} \
-             — chunk has no resolvable body source",
-            chunk_id
-        ));
+    // T-5 (Phase 2.5 Trust UX) — inline-content fallback for pre-
+    // MD-migration rows. The chunks table carries BOTH `content TEXT
+    // NOT NULL` (the legacy full-content column) and `content_path
+    // TEXT` (the post-migration disk pointer). Rows ingested before
+    // the MD-on-disk migration have content_path = NULL or empty
+    // string AND no raw_refs, but their full body is preserved in
+    // the inline `content` column. Pre-T-5 the resolver erred out on
+    // these rows, dead-lettering the bucket_seal jobs that referenced
+    // them and surfacing in the UI as "N failed job(s) in pipeline".
+    //
+    // Fallback contract:
+    //   - If get_chunk_content_pointers returns None → pre-migration
+    //     row with NULL content_path. Fall back to inline content.
+    //   - If pointers exist but rel_path is empty → same case
+    //     (NOT NULL DEFAULT '' OR migration partial). Fall back.
+    //   - If pointers exist with a non-empty path → read the on-disk
+    //     file as before.
+    //
+    // The inline column is documented as a ≤500-char preview AFTER
+    // the migration, but pre-migration rows never had it truncated —
+    // they hold the full body. The fallback path warns when invoked
+    // so a downstream backfill ticket can later promote these rows
+    // to the disk-based representation.
+    let pointers = get_chunk_content_pointers(config, chunk_id)?;
+    let need_inline_fallback = match &pointers {
+        None => true,
+        Some((rel_path, _)) => rel_path.is_empty(),
+    };
+    if need_inline_fallback {
+        use crate::openhuman::memory_store::chunks::store::get_chunk;
+        let chunk = get_chunk(config, chunk_id)?.ok_or_else(|| {
+            anyhow::anyhow!(
+                "[content_store::read] inline-content fallback: chunk_id={} not found in DB",
+                chunk_id
+            )
+        })?;
+        log::debug!(
+            "[content_store::read] inline-content fallback chunk_id={} \
+             (pre-MD-migration row, content_path missing) body_chars={}",
+            chunk_id,
+            chunk.content.chars().count()
+        );
+        return Ok(chunk.content);
     }
+    let (rel_path, expected_sha256) = pointers.expect("checked above");
 
     let content_root = config.memory_tree_content_root();
     // Reconstruct the absolute path from the stored relative forward-slash path.
@@ -626,11 +656,39 @@ mod tests {
     }
 
     #[test]
-    fn read_chunk_body_errors_when_pointers_are_missing() {
+    fn read_chunk_body_errors_when_chunk_id_is_unknown() {
+        // T-5 (Phase 2.5 Trust UX) — post-fallback contract: a missing
+        // content_path now triggers an inline-content fallback. The
+        // only remaining error path for read_chunk_body is "the
+        // chunk_id doesn't exist in the DB at all" (no row to fall
+        // back to). The old "no content_path or raw_refs" message is
+        // gone — pre-MD-migration rows now succeed via fallback.
         let tmp = TempDir::new().unwrap();
         let cfg = test_config(&tmp);
         let err = read_chunk_body(&cfg, "missing-chunk").unwrap_err();
-        assert!(err.to_string().contains("no content_path or raw_refs"));
+        assert!(
+            err.to_string().contains("not found in DB"),
+            "expected DB-miss error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn read_chunk_body_falls_back_to_inline_content_when_content_path_missing() {
+        // T-5 regression: a chunk row with no content_path (pre-MD-
+        // migration shape) returns its inline `content` column body
+        // instead of erroring. Closes the 2026-06-08 morning failure
+        // pattern that surfaced as "67 failed job(s)" in the Memory UI.
+        let tmp = TempDir::new().unwrap();
+        let cfg = test_config(&tmp);
+        let chunk = sample_chunk();
+        // upsert_chunks writes the row with `content` set + content_path = NULL
+        // (no stage_chunks / upsert_staged_chunks_tx in this test).
+        upsert_chunks(&cfg, std::slice::from_ref(&chunk)).unwrap();
+        let body = read_chunk_body(&cfg, &chunk.id).unwrap();
+        assert_eq!(
+            body, chunk.content,
+            "fallback must return the inline `content` column verbatim"
+        );
     }
 
     #[test]

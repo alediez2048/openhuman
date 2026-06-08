@@ -289,7 +289,17 @@ pub async fn cascade_all_from(
 
         // Sync cascade — drives the level walk itself; doesn't need the
         // queue follow-ups (we'll hit `seal_one_level` again next iter).
-        let summary_id = seal_one_level(config, tree, &buf, strategy, false).await?;
+        // T-5: if the level hydrates to nothing (orphan-only buffer),
+        // stop the cascade — there's nothing to carry up.
+        let Some(summary_id) = seal_one_level(config, tree, &buf, strategy, false).await? else {
+            log::debug!(
+                "[tree::bucket_seal] cascade halted at level={} for tree_id={} — \
+                 orphan-only buffer",
+                level,
+                tree.id
+            );
+            break;
+        };
         sealed_ids.push(summary_id);
         level += 1;
     }
@@ -356,18 +366,40 @@ pub(crate) async fn seal_one_level(
     buf: &Buffer,
     strategy: &LabelStrategy,
     enqueue_follow_ups: bool,
-) -> Result<String> {
+) -> Result<Option<String>> {
     let level = buf.level;
     let target_level = level + 1;
 
     // Hydrate inputs (synchronous DB reads).
     let inputs = hydrate_inputs(config, level, &buf.item_ids)?;
     if inputs.is_empty() {
-        anyhow::bail!(
-            "[tree::bucket_seal] refused to seal empty buffer tree_id={} level={}",
+        // T-5 (Phase 2.5 Trust UX) — graceful no-op for orphan-only
+        // buffers. Pre-T-5 this `bail!`'d, which the job worker
+        // surfaced as a Failed job (5 retries → dead-lettered). User-
+        // observable as "N failed job(s) in pipeline" in the Memory
+        // panel. 65 of the 67 dead jobs on 2026-06-07 traced here.
+        //
+        // The hydration phase already logs each missing item id at
+        // WARN; if ALL items were missing, the buffer is full of
+        // orphan refs (chunks/summaries that no longer exist).
+        // Sealing across nothing produces nothing meaningful; the
+        // correct behavior is to NOT seal, NOT enqueue follow-ups,
+        // and let the worker mark the job done. Returning Ok(None)
+        // signals "no summary produced" to the caller.
+        //
+        // The buffer's item_ids stay as-is — a future ingestion may
+        // add live items and a subsequent seal cycle can include them
+        // alongside the orphan refs (which will skip again silently).
+        // A dedicated buffer-cleanup pass (T-5b candidate) could
+        // remove the orphan refs proactively; out of scope for T-5.
+        log::warn!(
+            "[tree::bucket_seal] orphan-only buffer — all {} item(s) hydrated to nothing; \
+             skipping seal as no-op tree_id={} level={}",
+            buf.item_ids.len(),
             tree.id,
             level
         );
+        return Ok(None);
     }
 
     // Compute envelope across children (time range, max score).
@@ -729,7 +761,7 @@ pub(crate) async fn seal_one_level(
         buf.item_ids.len()
     );
 
-    Ok(summary_id)
+    Ok(Some(summary_id))
 }
 
 /// Clamp `text` to roughly `max_tokens` tokens before passing to the

@@ -119,7 +119,17 @@ async fn cascade_seals(config: &Config, tree: &Tree) -> Result<Vec<String>> {
                 break;
             }
 
-            let summary_id = seal_one_level(config, tree, &buf).await?;
+            // T-5: orphan-only buffer → cascade halts cleanly at this
+            // level instead of dead-lettering the digest job.
+            let Some(summary_id) = seal_one_level(config, tree, &buf).await? else {
+                log::debug!(
+                    "[tree_global::seal] cascade halted at level={} for tree_id={} — \
+                     orphan-only buffer",
+                    level,
+                    tree.id
+                );
+                break;
+            };
             sealed_ids.push(summary_id);
             level += 1;
         }
@@ -141,17 +151,24 @@ fn should_seal(buf: &Buffer, level: u32) -> bool {
     !buf.is_empty() && buf.item_ids.len() >= threshold
 }
 
-async fn seal_one_level(config: &Config, tree: &Tree, buf: &Buffer) -> Result<String> {
+async fn seal_one_level(config: &Config, tree: &Tree, buf: &Buffer) -> Result<Option<String>> {
     let level = buf.level;
     let target_level = level + 1;
 
     let inputs = hydrate_summary_inputs(config, &buf.item_ids)?;
     if inputs.is_empty() {
-        anyhow::bail!(
-            "[tree_global::seal] refused to seal empty buffer tree_id={} level={}",
+        // T-5 (Phase 2.5 Trust UX): orphan-only buffer — same graceful
+        // no-op contract as bucket_seal::seal_one_level. Pre-T-5 this
+        // bail!'d, dead-lettering the global digest job and adding to
+        // the UI "failed jobs" counter.
+        log::warn!(
+            "[tree_global::seal] orphan-only buffer — all {} item(s) hydrated to nothing; \
+             skipping seal as no-op tree_id={} level={}",
+            buf.item_ids.len(),
             tree.id,
             level
         );
+        return Ok(None);
     }
 
     let time_range_start = inputs
@@ -377,7 +394,7 @@ async fn seal_one_level(config: &Config, tree: &Tree, buf: &Buffer) -> Result<St
         buf.item_ids.len()
     );
 
-    Ok(summary_id)
+    Ok(Some(summary_id))
 }
 
 /// Hydrate summary rows for the ids in a buffer. Global-tree buffers at
