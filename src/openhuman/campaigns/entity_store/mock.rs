@@ -193,9 +193,9 @@ fn matches_filter(record: &EntityRecord, filter: &EntityFilter) -> bool {
         (Some(v), EntityFilterOp::Eq) => v == &filter.value,
         (Some(v), EntityFilterOp::NotEq) => v != &filter.value,
         (Some(v), EntityFilterOp::Contains) => match (v.as_str(), filter.value.as_str()) {
-            (Some(haystack), Some(needle)) => haystack
-                .to_lowercase()
-                .contains(&needle.to_lowercase()),
+            (Some(haystack), Some(needle)) => {
+                haystack.to_lowercase().contains(&needle.to_lowercase())
+            }
             _ => false,
         },
     }

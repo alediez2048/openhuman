@@ -256,8 +256,16 @@ async fn mock_update_applies_patch_at_field_level_leaves_others_alone() {
         .unwrap();
     let row = store.get(&id).await.unwrap().unwrap();
     assert_eq!(row.fields["status"], json!("paused"));
-    assert_eq!(row.fields["name"], json!("Acme"), "untouched field preserved");
-    assert_eq!(row.fields["note"], json!("hello"), "untouched field preserved");
+    assert_eq!(
+        row.fields["name"],
+        json!("Acme"),
+        "untouched field preserved"
+    );
+    assert_eq!(
+        row.fields["note"],
+        json!("hello"),
+        "untouched field preserved"
+    );
     assert!(row.updated_at.is_some());
 }
 
@@ -283,7 +291,11 @@ async fn mock_subscribe_emits_change_event_on_update() {
         "1",
         map_of(&[("status", json!("active"))]),
     )]);
-    let stream = store.subscribe().await.unwrap().expect("mock supports subscribe");
+    let stream = store
+        .subscribe()
+        .await
+        .unwrap()
+        .expect("mock supports subscribe");
     let mut stream = Box::pin(stream);
 
     // Race: update fires AFTER subscriber is attached.
@@ -333,7 +345,9 @@ fn registry_returns_clear_error_for_unimplemented_sheets_adapter() {
         Err(e) => e,
         Ok(_) => panic!("expected unimplemented error"),
     };
-    assert!(err.to_string().contains("google_sheets adapter not yet implemented"));
+    assert!(err
+        .to_string()
+        .contains("google_sheets adapter not yet implemented"));
     assert!(err.to_string().contains("F4-5"));
     assert!(err.to_string().contains("abc"));
 }
@@ -351,7 +365,9 @@ fn registry_returns_clear_error_for_unimplemented_attio_adapter() {
         Err(e) => e,
         Ok(_) => panic!("expected unimplemented error"),
     };
-    assert!(err.to_string().contains("attio adapter not yet implemented"));
+    assert!(err
+        .to_string()
+        .contains("attio adapter not yet implemented"));
     assert!(err.to_string().contains("F4-6"));
     assert!(err.to_string().contains("ws_acme"));
 }
