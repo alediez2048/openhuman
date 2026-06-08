@@ -178,4 +178,16 @@ named = [
     "workflow_propose_enable",
     "workflow_propose_disable",
     "workflow_propose_run_now",
+    # Campaigns (F4-3b). Two read-only tools so the agent can answer
+    # "what campaigns do I have / what's the status of X". Three
+    # propose-state tools that return a `<campaign-preview>` tag for
+    # the chat UI's Apply/Discard card. Same ADR-012 contract as the
+    # workflow propose tools — no mutation; user click commits.
+    # `campaign_propose_create` + `_update` land in F4-3c with the
+    # CampaignDrafter LLM pipeline.
+    "campaign_list",
+    "campaign_get",
+    "campaign_propose_pause",
+    "campaign_propose_resume",
+    "campaign_propose_archive",
 ]

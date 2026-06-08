@@ -1,6 +1,7 @@
 pub mod agent;
 pub mod audio;
 pub mod browser;
+pub mod campaigns;
 pub mod computer;
 pub mod cron;
 pub mod filesystem;
@@ -22,6 +23,10 @@ pub use network::*;
 pub use system::*;
 pub use wallet::*;
 pub use whatsapp_data::*;
+pub use campaigns::{
+    CampaignGetTool, CampaignListTool, CampaignProposeArchiveTool, CampaignProposePauseTool,
+    CampaignProposeResumeTool,
+};
 pub use workflows::{
     ChannelSendStubTool, WebviewAccountSendStubTool, WorkflowGetTool, WorkflowListTool,
     WorkflowProposeCreateTool, WorkflowProposeDeleteTool, WorkflowProposeDisableTool,

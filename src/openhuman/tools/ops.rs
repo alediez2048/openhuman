@@ -189,6 +189,20 @@ pub fn all_tools_with_runtime(
         Box::new(WorkflowProposeEnableTool::new(config.clone())),
         Box::new(WorkflowProposeDisableTool::new(config.clone())),
         Box::new(WorkflowProposeRunNowTool::new(config.clone())),
+        // F4-3b: campaign tools — read-only + propose-state. Same
+        // ADR-012 contract as the workflow propose tools (no mutation;
+        // user's Apply click on the rendered preview triggers the
+        // matching campaigns_* RPC). `campaign_propose_create` +
+        // `_update` land in F4-3c with the CampaignDrafter LLM
+        // pipeline. Allowlist entries MUST be added to the
+        // orchestrator agent.toml `[tools].named` array (per memory:
+        // reference_orchestrator_allowlist) — global registration
+        // alone is necessary but not sufficient.
+        Box::new(CampaignListTool::new(config.clone())),
+        Box::new(CampaignGetTool::new(config.clone())),
+        Box::new(CampaignProposePauseTool::new(config.clone())),
+        Box::new(CampaignProposeResumeTool::new(config.clone())),
+        Box::new(CampaignProposeArchiveTool::new(config.clone())),
         // Stubs for connection-resolved send tools the F-8 executor
         // names in `build_node_agent_definition`. The real bodies are
         // Phase 2 (F2-5). Stubs return a clear deferred-feature error
