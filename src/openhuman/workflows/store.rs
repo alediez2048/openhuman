@@ -506,6 +506,11 @@ fn row_to_workflow(row: &Row<'_>) -> Result<Workflow> {
             .map(|s| DateTime::parse_from_rfc3339(&s).map(|t| t.with_timezone(&Utc)))
             .transpose()
             .context("parse last_run_at")?,
+        // F4-1: campaign_id reads as None for pre-F4-2 rows. The
+        // column will be added by F4-2's migration 008 with a NULL
+        // default; reads against the pre-migration table just don't
+        // include it (none of these SELECTs query column 14 yet).
+        campaign_id: None,
     })
 }
 

@@ -214,6 +214,7 @@ pub async fn create(config: &Config, req: CreateWorkflowRequest) -> Result<RpcOu
         created_at: now,
         updated_at: now,
         last_run_at: None,
+        campaign_id: None,
     };
 
     let mut workflow = workflow_seed;

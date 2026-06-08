@@ -39,6 +39,7 @@ fn sample_workflow(origin: WorkflowOrigin) -> Workflow {
         created_at: Utc.with_ymd_and_hms(2026, 5, 20, 0, 0, 0).unwrap(),
         updated_at: Utc.with_ymd_and_hms(2026, 5, 20, 0, 0, 0).unwrap(),
         last_run_at: None,
+    campaign_id: None,
     }
 }
 

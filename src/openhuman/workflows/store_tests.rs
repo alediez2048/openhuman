@@ -201,6 +201,7 @@ fn insert_minimal_workflow_with_ref(config: &Config, id: &str, r#ref: Connection
         created_at: Utc::now(),
         updated_at: Utc::now(),
         last_run_at: None,
+    campaign_id: None,
     };
     super::store::insert_workflow(config, &wf).unwrap();
 }

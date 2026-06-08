@@ -46,6 +46,7 @@ fn workflow_with(id: &str, enabled: bool, trigger: Trigger, health: WorkflowHeal
         created_at: chrono::Utc::now(),
         updated_at: chrono::Utc::now(),
         last_run_at: None,
+    campaign_id: None,
     }
 }
 

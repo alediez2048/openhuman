@@ -1782,6 +1782,7 @@ fn f2_2_workflow(id: &str, nodes: Vec<Node>, edges: Vec<Edge>) -> Workflow {
         created_at: chrono::Utc::now(),
         updated_at: chrono::Utc::now(),
         last_run_at: None,
+    campaign_id: None,
     }
 }
 
@@ -3804,6 +3805,7 @@ fn f2_10_composio_workflow(
         created_at: chrono::Utc::now(),
         updated_at: chrono::Utc::now(),
         last_run_at: None,
+    campaign_id: None,
     }
 }
 
@@ -4067,6 +4069,7 @@ fn f2_11_channel_workflow(
         created_at: chrono::Utc::now(),
         updated_at: chrono::Utc::now(),
         last_run_at: None,
+    campaign_id: None,
     }
 }
 
@@ -4663,6 +4666,7 @@ async fn reconcile_webhooks_at_startup_re_registers_enabled_webhooks() {
         created_at: chrono::Utc::now(),
         updated_at: chrono::Utc::now(),
         last_run_at: None,
+    campaign_id: None,
     };
     let wh_b = Workflow {
         id: "wf-wh-b".into(),

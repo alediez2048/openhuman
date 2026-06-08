@@ -61,6 +61,18 @@ pub struct Workflow {
     pub updated_at: DateTime<Utc>,
     #[serde(default)]
     pub last_run_at: Option<DateTime<Utc>>,
+    /// F4-1 (Phase 4 Campaigns): soft FK to the campaign that owns
+    /// this workflow. `None` for standalone workflows (the Phase 1+2
+    /// shape — still supported). When `Some`, the campaign's
+    /// lifecycle and throttle gate the workflow's execution: a
+    /// `Paused` / `WoundDown` / `Archived` campaign suspends its
+    /// child workflows.
+    ///
+    /// Additive: `#[serde(default)]` means pre-F4 persisted rows
+    /// (no `campaign_id` field) deserialise cleanly as standalone.
+    /// The hard FK is enforced at the DB level by F4-2's migration.
+    #[serde(default)]
+    pub campaign_id: Option<crate::openhuman::campaigns::CampaignId>,
 }
 
 /// One execution unit inside a workflow. Phase 1 ships a single
