@@ -117,6 +117,8 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers.extend(crate::openhuman::cron::all_cron_registered_controllers());
     // Workflows & Automations Phase 1 — empty in F-1; populated by F-2 onwards.
     controllers.extend(crate::openhuman::workflows::all_workflows_registered_controllers());
+    // Phase 4 Campaigns — F4-3 wires the CRUD + lifecycle RPCs.
+    controllers.extend(crate::openhuman::campaigns::all_campaigns_registered_controllers());
     controllers.extend(crate::openhuman::dashboard::all_dashboard_registered_controllers());
     // MCP client subsystem: Smithery registry browser, local server install/connect, tool dispatch
     controllers.extend(crate::openhuman::mcp_registry::all_mcp_registry_registered_controllers());
@@ -292,6 +294,8 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::cron::all_cron_controller_schemas());
     // Workflows & Automations Phase 1 — empty in F-1; populated by F-2 onwards.
     schemas.extend(crate::openhuman::workflows::all_workflows_controller_schemas());
+    // Phase 4 Campaigns — F4-3.
+    schemas.extend(crate::openhuman::campaigns::all_campaigns_controller_schemas());
     schemas.extend(crate::openhuman::dashboard::all_dashboard_controller_schemas());
     schemas.extend(crate::openhuman::mcp_registry::all_mcp_registry_controller_schemas());
     schemas.extend(crate::openhuman::webview_apis::all_webview_apis_controller_schemas());

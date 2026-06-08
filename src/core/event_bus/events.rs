@@ -759,6 +759,35 @@ pub enum DomainEvent {
     /// "deleted N runs" log line.
     WorkflowPurged { workflow_id: String, run_count: u32 },
 
+    // ── Campaigns (F4-3) ────────────────────────────────────────────────
+    /// A new campaign definition was persisted. Published by
+    /// `campaigns::ops::create`. Subscribers (UI list view, future
+    /// proactive surfacer) react without polling.
+    CampaignDefined { campaign_id: String },
+    /// A campaign's mutable fields were updated (name, description,
+    /// throttle, approval policy, target outcome). Status-only
+    /// transitions get a dedicated event (`CampaignPaused` etc.)
+    /// since callers care about the transition specifically.
+    CampaignUpdated { campaign_id: String },
+    /// Campaign transitioned to `Paused`. Subscribers disable child
+    /// workflows + halt the F4-8 throttle pump for the campaign.
+    CampaignPaused { campaign_id: String },
+    /// Campaign transitioned `Paused → Active` or `Draft → Active`.
+    /// Subscribers re-enable child workflows.
+    CampaignResumed { campaign_id: String },
+    /// Campaign transitioned to `WoundDown` — stop accepting NEW
+    /// records but let in-flight conversations finish. Subscribers
+    /// disable the outbound workflows, keep the inbound handlers
+    /// alive.
+    CampaignWoundDown { campaign_id: String },
+    /// Campaign transitioned to terminal `Archived` state. Every
+    /// child workflow is disabled (regardless of its current state).
+    CampaignArchived { campaign_id: String },
+    /// Campaign soft-deleted (sets `deleted_at`). Hard-delete happens
+    /// later via the retention sweep — at that point the FK
+    /// `ON DELETE SET NULL` orphans the child workflows.
+    CampaignDeleted { campaign_id: String },
+
     // ── Auth ────────────────────────────────────────────────────────────
     /// The local app session is no longer valid — typically detected when
     /// the backend returns 401 to an LLM inference call or a JSON-RPC
@@ -875,6 +904,14 @@ impl DomainEvent {
             | Self::WorkflowRunCompleted { .. }
             | Self::WorkflowRunSkipped { .. }
             | Self::WorkflowPurged { .. } => "workflow",
+
+            Self::CampaignDefined { .. }
+            | Self::CampaignUpdated { .. }
+            | Self::CampaignPaused { .. }
+            | Self::CampaignResumed { .. }
+            | Self::CampaignWoundDown { .. }
+            | Self::CampaignArchived { .. }
+            | Self::CampaignDeleted { .. } => "campaign",
 
             Self::SessionExpired { .. } => "auth",
 

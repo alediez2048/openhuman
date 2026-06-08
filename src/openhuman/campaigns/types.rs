@@ -258,6 +258,104 @@ pub enum NonTieredApprovalMode {
 
 // ── Outcome spec ────────────────────────────────────────────────────────
 
+// ── Request shapes (F4-3) ───────────────────────────────────────────────
+
+/// Payload for `campaigns_create`. Mirrors the workflows equivalent.
+/// Status defaults to `Draft` server-side — the create op fills `id`,
+/// `created_at`, `updated_at`, and `schema_version`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CreateCampaignRequest {
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    pub entity_binding: EntityRef,
+    #[serde(default)]
+    pub throttle: Option<Throttle>,
+    pub approval_policy: ApprovalPolicy,
+    #[serde(default)]
+    pub target_outcome: Option<OutcomeSpec>,
+}
+
+/// Partial update payload — every field is optional. `None` means
+/// "leave as-is." Status updates go through `pause` / `resume` /
+/// `archive` so the lifecycle invariants are enforced by dedicated
+/// transitions (not buried in a generic patch).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct CampaignPatch {
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub entity_binding: Option<EntityRef>,
+    #[serde(default)]
+    pub throttle: Option<Option<Throttle>>,
+    #[serde(default)]
+    pub approval_policy: Option<ApprovalPolicy>,
+    #[serde(default)]
+    pub target_outcome: Option<Option<OutcomeSpec>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct UpdateCampaignRequest {
+    pub id: CampaignId,
+    pub patch: CampaignPatch,
+}
+
+// ── Errors ──────────────────────────────────────────────────────────────
+
+/// Errors the campaigns ops surface. Wire format mirrors
+/// `RunNowError` from workflows — each variant carries a stable
+/// machine-readable `code()` so the UI can branch on it without
+/// parsing the message.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum CampaignOpError {
+    /// Campaign id was not in the store (or was soft-deleted).
+    NotFound { id: CampaignId },
+    /// A status transition was rejected. `from` and `to` are the
+    /// requested transition; the UI uses them to surface a clear
+    /// "you can't go from Archived to Active" message.
+    InvalidTransition {
+        id: CampaignId,
+        from: CampaignStatus,
+        to: CampaignStatus,
+    },
+    /// Underlying store / cascade operation failed. `detail` is the
+    /// best-effort error message; the UI surfaces it verbatim under
+    /// "internal error — please retry."
+    Internal { detail: String },
+}
+
+impl CampaignOpError {
+    /// Stable machine-readable code. The RPC envelope prefixes the
+    /// error string with this so the frontend can branch on it.
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::NotFound { .. } => "not_found",
+            Self::InvalidTransition { .. } => "invalid_transition",
+            Self::Internal { .. } => "internal",
+        }
+    }
+}
+
+impl std::fmt::Display for CampaignOpError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotFound { id } => write!(f, "campaign `{id}` not found"),
+            Self::InvalidTransition { id, from, to } => {
+                write!(
+                    f,
+                    "campaign `{id}` cannot transition {from:?} → {to:?}"
+                )
+            }
+            Self::Internal { detail } => write!(f, "{detail}"),
+        }
+    }
+}
+
+impl std::error::Error for CampaignOpError {}
+
 /// Target outcome the user wants the campaign to drive toward.
 /// Optional — campaigns without a measurable outcome (e.g. "remind me
 /// daily") leave this as `None`.
