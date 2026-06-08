@@ -50,7 +50,7 @@ fn workflow_referencing(id: &str, r#ref: ConnectionRef, initial: WorkflowHealth)
         created_at: Utc::now(),
         updated_at: Utc::now(),
         last_run_at: None,
-    campaign_id: None,
+        campaign_id: None,
     }
 }
 

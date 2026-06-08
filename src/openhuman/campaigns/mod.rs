@@ -47,6 +47,6 @@ pub mod types;
 mod types_tests;
 
 pub use types::{
-    ApprovalPolicy, Campaign, CampaignId, CampaignStatus, EntityRef, OutcomeSpec, TierRule,
-    Throttle, ThrottleWindow,
+    ApprovalPolicy, Campaign, CampaignId, CampaignStatus, EntityRef, OutcomeSpec, Throttle,
+    ThrottleWindow, TierRule,
 };

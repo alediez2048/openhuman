@@ -207,7 +207,10 @@ fn workflow_without_campaign_id_still_deserialises() {
     let wf: Workflow =
         serde_json::from_value(pre_f4).expect("pre-F4 workflow JSON must still deserialise");
     assert_eq!(wf.id, "wf_legacy");
-    assert!(wf.campaign_id.is_none(), "missing campaign_id must default to None");
+    assert!(
+        wf.campaign_id.is_none(),
+        "missing campaign_id must default to None"
+    );
     // Touch the typed deps so the test fails fast on a type rename.
     let _ = (
         Edge {

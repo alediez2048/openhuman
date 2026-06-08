@@ -36,7 +36,7 @@ fn sample_workflow(name: &str) -> Workflow {
         created_at: Utc::now(),
         updated_at: Utc::now(),
         last_run_at: None,
-    campaign_id: None,
+        campaign_id: None,
     }
 }
 
