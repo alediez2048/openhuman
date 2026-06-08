@@ -28,16 +28,20 @@
 //!
 //! See `Automations/Tickets/phase-4-campaigns/F4-4.md`.
 
+pub mod attio;
 pub mod google_sheets;
 pub mod mock;
 pub mod registry;
 pub mod types;
 
 #[cfg(test)]
+mod attio_tests;
+#[cfg(test)]
 mod google_sheets_tests;
 #[cfg(test)]
 mod tests;
 
+pub use attio::AttioAdapter;
 pub use google_sheets::GoogleSheetsAdapter;
 pub use mock::MockEntityStore;
 pub use registry::open_entity_store;

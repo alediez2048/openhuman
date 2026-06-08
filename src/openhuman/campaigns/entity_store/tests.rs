@@ -354,7 +354,7 @@ fn registry_constructs_sheets_adapter_or_reports_missing_composio_session() {
         Err(e) => {
             let msg = e.to_string();
             assert!(
-                msg.contains("google_sheets adapter requires a Composio client"),
+                msg.contains("adapter requires a Composio client"),
                 "got: {msg}"
             );
         }
@@ -362,21 +362,30 @@ fn registry_constructs_sheets_adapter_or_reports_missing_composio_session() {
 }
 
 #[test]
-fn registry_returns_clear_error_for_unimplemented_attio_adapter() {
+fn registry_constructs_attio_adapter_or_reports_missing_composio_session() {
+    // F4-6 wired the live Attio adapter. The default Config has no
+    // backend session token, so the live constructor fails with a
+    // clear error pointing at the missing Composio client. Any env
+    // that DOES carry a real client returns Ok(_) — accept either
+    // and assert the failure shape when it fires.
     let config = Config::default();
-    let err = match open_entity_store(
+    let result = open_entity_store(
         &config,
         &EntityRef::Attio {
             workspace_id: "ws_acme".into(),
             object_type: "people".into(),
         },
-    ) {
-        Err(e) => e,
-        Ok(_) => panic!("expected unimplemented error"),
-    };
-    assert!(err
-        .to_string()
-        .contains("attio adapter not yet implemented"));
-    assert!(err.to_string().contains("F4-6"));
-    assert!(err.to_string().contains("ws_acme"));
+    );
+    match result {
+        Ok(store) => {
+            assert_eq!(store.adapter_id(), "attio");
+        }
+        Err(e) => {
+            let msg = e.to_string();
+            assert!(
+                msg.contains("adapter requires a Composio client"),
+                "got: {msg}"
+            );
+        }
+    }
 }
