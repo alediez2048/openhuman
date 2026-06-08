@@ -15,6 +15,10 @@ pub mod workflows;
 pub use agent::*;
 pub use audio::*;
 pub use browser::*;
+pub use campaigns::{
+    CampaignGetTool, CampaignListTool, CampaignProposeArchiveTool, CampaignProposePauseTool,
+    CampaignProposeResumeTool,
+};
 pub use computer::*;
 pub use cron::*;
 pub use filesystem::*;
@@ -23,10 +27,6 @@ pub use network::*;
 pub use system::*;
 pub use wallet::*;
 pub use whatsapp_data::*;
-pub use campaigns::{
-    CampaignGetTool, CampaignListTool, CampaignProposeArchiveTool, CampaignProposePauseTool,
-    CampaignProposeResumeTool,
-};
 pub use workflows::{
     ChannelSendStubTool, WebviewAccountSendStubTool, WorkflowGetTool, WorkflowListTool,
     WorkflowProposeCreateTool, WorkflowProposeDeleteTool, WorkflowProposeDisableTool,

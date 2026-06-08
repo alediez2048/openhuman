@@ -76,10 +76,7 @@ fn hint_for_illegal_resume(c: &Campaign) -> String {
              campaigns can only be archived."
                 .into()
         }
-        CampaignStatus::Archived => {
-            "Campaign is Archived (terminal). Cannot be resumed."
-                .into()
-        }
+        CampaignStatus::Archived => "Campaign is Archived (terminal). Cannot be resumed.".into(),
         CampaignStatus::Draft | CampaignStatus::Paused => {
             unreachable!("Draft/Paused → Active is legal — should not hit hint")
         }

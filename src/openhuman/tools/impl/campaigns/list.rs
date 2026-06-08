@@ -71,9 +71,7 @@ impl Tool for CampaignListTool {
                 }))?;
                 Ok(ToolResult::success(body))
             }
-            Err(err) => Ok(ToolResult::error(format!(
-                "campaign_list failed: {err}"
-            ))),
+            Err(err) => Ok(ToolResult::error(format!("campaign_list failed: {err}"))),
         }
     }
 }

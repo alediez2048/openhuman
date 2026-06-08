@@ -7,9 +7,7 @@
 
 use super::*;
 use crate::openhuman::campaigns::store::insert_campaign;
-use crate::openhuman::campaigns::types::{
-    ApprovalPolicy, Campaign, CampaignStatus, EntityRef,
-};
+use crate::openhuman::campaigns::types::{ApprovalPolicy, Campaign, CampaignStatus, EntityRef};
 use crate::openhuman::config::Config;
 use crate::openhuman::tools::traits::{Tool, ToolContent, ToolResult};
 use chrono::Utc;
@@ -79,8 +77,14 @@ fn result_text(result: &ToolResult) -> String {
 #[test]
 fn every_tool_reports_its_stable_name() {
     let (_dir, config) = temp_config();
-    assert_eq!(CampaignListTool::new(config.clone()).name(), TOOL_CAMPAIGN_LIST);
-    assert_eq!(CampaignGetTool::new(config.clone()).name(), TOOL_CAMPAIGN_GET);
+    assert_eq!(
+        CampaignListTool::new(config.clone()).name(),
+        TOOL_CAMPAIGN_LIST
+    );
+    assert_eq!(
+        CampaignGetTool::new(config.clone()).name(),
+        TOOL_CAMPAIGN_GET
+    );
     assert_eq!(
         CampaignProposePauseTool::new(config.clone()).name(),
         TOOL_CAMPAIGN_PROPOSE_PAUSE
