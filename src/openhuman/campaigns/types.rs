@@ -344,10 +344,7 @@ impl std::fmt::Display for CampaignOpError {
         match self {
             Self::NotFound { id } => write!(f, "campaign `{id}` not found"),
             Self::InvalidTransition { id, from, to } => {
-                write!(
-                    f,
-                    "campaign `{id}` cannot transition {from:?} → {to:?}"
-                )
+                write!(f, "campaign `{id}` cannot transition {from:?} → {to:?}")
             }
             Self::Internal { detail } => write!(f, "{detail}"),
         }

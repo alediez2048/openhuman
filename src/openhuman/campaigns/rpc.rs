@@ -51,10 +51,7 @@ pub async fn campaigns_update(
     ops::update(config, req).await.map_err(map_err)
 }
 
-pub async fn campaigns_delete(
-    config: &Config,
-    id: CampaignId,
-) -> Result<RpcOutcome<bool>, String> {
+pub async fn campaigns_delete(config: &Config, id: CampaignId) -> Result<RpcOutcome<bool>, String> {
     ops::delete(config, id).await.map_err(map_err)
 }
 

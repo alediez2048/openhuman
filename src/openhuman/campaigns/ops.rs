@@ -153,10 +153,7 @@ pub async fn get(
     id: CampaignId,
 ) -> Result<RpcOutcome<Option<Campaign>>, CampaignOpError> {
     let row = store::get_campaign(config, &id).map_err(map_internal)?;
-    let log = format!(
-        "campaigns_get id={id} found={}",
-        row.as_ref().is_some()
-    );
+    let log = format!("campaigns_get id={id} found={}", row.as_ref().is_some());
     Ok(RpcOutcome::single_log(row, log))
 }
 
@@ -215,10 +212,7 @@ pub async fn update(
     Ok(RpcOutcome::single_log(current, log))
 }
 
-pub async fn delete(
-    config: &Config,
-    id: CampaignId,
-) -> Result<RpcOutcome<bool>, CampaignOpError> {
+pub async fn delete(config: &Config, id: CampaignId) -> Result<RpcOutcome<bool>, CampaignOpError> {
     let touched = store::delete_campaign(config, &id).map_err(map_internal)?;
     if touched {
         publish_global(DomainEvent::CampaignDeleted {
@@ -350,14 +344,16 @@ pub async fn add_workflow(
 ) -> Result<RpcOutcome<bool>, CampaignOpError> {
     // Ensure the campaign exists (and is not soft-deleted).
     let _ = fetch_or_not_found(config, &campaign_id)?;
-    let mut workflow = match workflows::store::get_workflow(config, &workflow_id)
-        .map_err(map_internal)?
-    {
-        Some(w) => w,
-        None => return Ok(RpcOutcome::single_log(false, format!(
-            "campaigns_add_workflow workflow_id={workflow_id} not_found"
-        ))),
-    };
+    let mut workflow =
+        match workflows::store::get_workflow(config, &workflow_id).map_err(map_internal)? {
+            Some(w) => w,
+            None => {
+                return Ok(RpcOutcome::single_log(
+                    false,
+                    format!("campaigns_add_workflow workflow_id={workflow_id} not_found"),
+                ))
+            }
+        };
     workflow.campaign_id = Some(campaign_id.clone());
     workflow.updated_at = Utc::now();
     let touched = workflows::store::update_workflow(config, &workflow).map_err(map_internal)?;
@@ -375,14 +371,16 @@ pub async fn remove_workflow(
     campaign_id: CampaignId,
     workflow_id: workflows::types::WorkflowId,
 ) -> Result<RpcOutcome<bool>, CampaignOpError> {
-    let mut workflow = match workflows::store::get_workflow(config, &workflow_id)
-        .map_err(map_internal)?
-    {
-        Some(w) => w,
-        None => return Ok(RpcOutcome::single_log(false, format!(
-            "campaigns_remove_workflow workflow_id={workflow_id} not_found"
-        ))),
-    };
+    let mut workflow =
+        match workflows::store::get_workflow(config, &workflow_id).map_err(map_internal)? {
+            Some(w) => w,
+            None => {
+                return Ok(RpcOutcome::single_log(
+                    false,
+                    format!("campaigns_remove_workflow workflow_id={workflow_id} not_found"),
+                ))
+            }
+        };
     if workflow.campaign_id.as_deref() != Some(campaign_id.as_str()) {
         return Ok(RpcOutcome::single_log(
             false,

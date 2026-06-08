@@ -3,8 +3,8 @@
 use super::ops;
 use super::store::{insert_campaign, ListCampaignsFilter};
 use super::types::{
-    ApprovalPolicy, Campaign, CampaignOpError, CampaignPatch, CampaignStatus, CreateCampaignRequest,
-    EntityRef, OutcomeSpec, Throttle, ThrottleWindow, UpdateCampaignRequest,
+    ApprovalPolicy, Campaign, CampaignOpError, CampaignPatch, CampaignStatus,
+    CreateCampaignRequest, EntityRef, OutcomeSpec, Throttle, ThrottleWindow, UpdateCampaignRequest,
 };
 use crate::core::event_bus::init_global;
 use crate::openhuman::config::Config;
@@ -191,11 +191,17 @@ async fn resume_from_draft_or_paused_succeeds() {
     ensure_bus();
     let (_dir, config) = temp_config();
     seed_campaign(&config, "from_draft", CampaignStatus::Draft);
-    let a = ops::resume(&config, "from_draft".into()).await.unwrap().value;
+    let a = ops::resume(&config, "from_draft".into())
+        .await
+        .unwrap()
+        .value;
     assert_eq!(a.status, CampaignStatus::Active);
 
     seed_campaign(&config, "from_paused", CampaignStatus::Paused);
-    let b = ops::resume(&config, "from_paused".into()).await.unwrap().value;
+    let b = ops::resume(&config, "from_paused".into())
+        .await
+        .unwrap()
+        .value;
     assert_eq!(b.status, CampaignStatus::Active);
 }
 
