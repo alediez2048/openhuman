@@ -333,23 +333,32 @@ async fn mock_subscribe_emits_change_event_on_update() {
 // ── Registry ───────────────────────────────────────────────────────
 
 #[test]
-fn registry_returns_clear_error_for_unimplemented_sheets_adapter() {
+fn registry_constructs_sheets_adapter_or_reports_missing_composio_session() {
+    // F4-5 wired the live Google Sheets adapter. The default Config
+    // has no backend session token, so the live constructor fails
+    // with a clear error pointing at the missing Composio client.
+    // Any environment that DOES carry a real client returns Ok(_) —
+    // we accept either, and assert the failure shape when it fires.
     let config = Config::default();
-    let err = match open_entity_store(
+    let result = open_entity_store(
         &config,
         &EntityRef::GoogleSheet {
             spreadsheet_id: "abc".into(),
             range: "A1:Z".into(),
         },
-    ) {
-        Err(e) => e,
-        Ok(_) => panic!("expected unimplemented error"),
-    };
-    assert!(err
-        .to_string()
-        .contains("google_sheets adapter not yet implemented"));
-    assert!(err.to_string().contains("F4-5"));
-    assert!(err.to_string().contains("abc"));
+    );
+    match result {
+        Ok(store) => {
+            assert_eq!(store.adapter_id(), "google_sheets");
+        }
+        Err(e) => {
+            let msg = e.to_string();
+            assert!(
+                msg.contains("google_sheets adapter requires a Composio client"),
+                "got: {msg}"
+            );
+        }
+    }
 }
 
 #[test]
