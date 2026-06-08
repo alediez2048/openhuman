@@ -4713,3 +4713,230 @@ async fn reconcile_webhooks_at_startup_returns_zero_on_empty_workspace() {
     let (_dir, config) = config_with_temp_workspace();
     assert_eq!(reconcile_webhooks_at_startup(&config).await.unwrap(), 0);
 }
+
+// ── F4-7: for_each iteration ──────────────────────────────────────────
+
+/// Serialise tests that install the process-wide entity-store factory
+/// override — otherwise parallel tests race on the static slot.
+static ENTITY_STORE_TEST_LOCK: once_cell::sync::Lazy<parking_lot::Mutex<()>> =
+    once_cell::sync::Lazy::new(|| parking_lot::Mutex::new(()));
+
+fn install_mock_entity_store(records: Vec<serde_json::Value>) {
+    use crate::openhuman::campaigns::entity_store::{
+        types::{EntityId, EntityRecord},
+        MockEntityStore,
+    };
+    let entity_records: Vec<EntityRecord> = records
+        .into_iter()
+        .enumerate()
+        .map(|(i, body)| EntityRecord {
+            id: EntityId::new("mock", format!("rec_{i}")),
+            fields: body.as_object().cloned().unwrap_or_default(),
+            updated_at: None,
+        })
+        .collect();
+    executor::set_test_entity_store_factory(move |_cfg, _binding| {
+        Ok(Box::new(MockEntityStore::with_records(entity_records.clone())))
+    });
+}
+
+fn for_each_workflow_request(
+    body_node_id: &str,
+    body_prompt: &str,
+    max_per_run: u32,
+    per_iteration_delay_secs: Option<u32>,
+) -> CreateWorkflowRequest {
+    use crate::openhuman::campaigns::entity_store::types::EntityQuery;
+    use crate::openhuman::campaigns::types::EntityRef;
+    CreateWorkflowRequest {
+        name: "F4-7 for_each".into(),
+        description: None,
+        trigger: Trigger::Manual,
+        nodes: vec![
+            Node {
+                id: "for_each_node".into(),
+                kind: NodeKind::ForEach,
+                config: NodeConfig::ForEach(ForEachConfig {
+                    entity_binding: Some(EntityRef::GoogleSheet {
+                        spreadsheet_id: "sid".into(),
+                        range: "A1:B100".into(),
+                    }),
+                    query: EntityQuery::default(),
+                    body_nodes: vec![body_node_id.into()],
+                    per_iteration_delay_secs,
+                    max_per_run,
+                }),
+                position: None,
+                retry_policy: None,
+            },
+            Node {
+                id: body_node_id.into(),
+                kind: NodeKind::AgentPrompt,
+                config: NodeConfig::AgentPrompt(AgentPromptConfig {
+                    prompt: body_prompt.into(),
+                    allowed_connections: vec![],
+                    iteration_cap: 12,
+                    model_tier: None,
+                }),
+                position: None,
+                retry_policy: None,
+            },
+        ],
+        edges: vec![],
+        settings: None,
+        origin: WorkflowOrigin::UserChat,
+    }
+}
+
+#[tokio::test]
+async fn for_each_runs_body_once_per_record_with_iteration_scope_set() {
+    use serde_json::json;
+    let _guard = ENTITY_STORE_TEST_LOCK.lock();
+    let (_dir, config) = config_with_temp_workspace();
+    install_mock_entity_store(vec![
+        json!({ "email": "a@x.io" }),
+        json!({ "email": "b@x.io" }),
+        json!({ "email": "c@x.io" }),
+    ]);
+
+    let created = ops::create(
+        &config,
+        for_each_workflow_request("body", "Hi {{record.email}}", 10, None),
+    )
+    .await
+    .unwrap()
+    .value;
+    let _ = executor::dispatch_run(
+        &config,
+        created.id.clone(),
+        TriggerSource::Manual {
+            initiator: "user".into(),
+        },
+    )
+    .await
+    .unwrap();
+    let terminal = wait_for_terminal_run(&config, &created.id).await;
+    assert!(
+        matches!(terminal.status, RunStatus::Succeeded),
+        "for_each must succeed when all iterations succeed; got {:?}: {:?}",
+        terminal.status,
+        terminal.error
+    );
+    // 1 parent step row for the for_each + 3 body steps (one per record) = 4 rows.
+    let (_run, steps) = store::get_run(&config, &terminal.id).unwrap().unwrap();
+    assert_eq!(steps.len(), 4, "expected 1 parent + 3 inner step rows");
+
+    // Captured prompts include one per iteration with the email field
+    // substituted into the template. The harness wraps the prompt
+    // with a context preamble — match on `contains` rather than
+    // `starts_with`.
+    let prompts = captured_prompts().lock().clone();
+    assert!(
+        prompts.iter().any(|p| p.contains("Hi a@x.io")),
+        "no 'Hi a@x.io' prompt captured. all_prompts={:?}",
+        prompts
+    );
+    assert!(prompts.iter().any(|p| p.contains("Hi b@x.io")));
+    assert!(prompts.iter().any(|p| p.contains("Hi c@x.io")));
+
+    executor::clear_test_entity_store_factory();
+}
+
+#[tokio::test]
+async fn for_each_respects_max_per_run_cap() {
+    use serde_json::json;
+    let _guard = ENTITY_STORE_TEST_LOCK.lock();
+    let (_dir, config) = config_with_temp_workspace();
+    install_mock_entity_store(
+        (0..10)
+            .map(|i| json!({ "email": format!("user{i}@x.io") }))
+            .collect(),
+    );
+
+    let created = ops::create(
+        &config,
+        for_each_workflow_request("body", "Hi {{record.email}}", 1, None),
+    )
+    .await
+    .unwrap()
+    .value;
+    let _ = executor::dispatch_run(
+        &config,
+        created.id.clone(),
+        TriggerSource::Manual {
+            initiator: "user".into(),
+        },
+    )
+    .await
+    .unwrap();
+    let terminal = wait_for_terminal_run(&config, &created.id).await;
+    assert!(matches!(terminal.status, RunStatus::Succeeded));
+    let (_run, steps) = store::get_run(&config, &terminal.id).unwrap().unwrap();
+    // Parent + 1 inner = 2 rows even though 10 records exist.
+    assert_eq!(steps.len(), 2, "max_per_run=1 must process exactly one record");
+
+    executor::clear_test_entity_store_factory();
+}
+
+#[tokio::test]
+async fn for_each_unknown_body_node_id_fails_the_step_at_runtime() {
+    // `ops::create` doesn't run the proposal validator — that's the
+    // drafter pipeline's surface. Direct-RPC creates skip it. So the
+    // for_each runtime check is what catches a body_node id that
+    // doesn't exist in the workflow's nodes list. Verify the run
+    // terminates `Failed` with the offending id surfaced.
+    use crate::openhuman::campaigns::entity_store::types::EntityQuery;
+    use crate::openhuman::campaigns::types::EntityRef;
+    use serde_json::json;
+    let _guard = ENTITY_STORE_TEST_LOCK.lock();
+    let (_dir, config) = config_with_temp_workspace();
+    install_mock_entity_store(vec![json!({ "email": "a@x.io" })]);
+
+    let req = CreateWorkflowRequest {
+        name: "bad body".into(),
+        description: None,
+        trigger: Trigger::Manual,
+        nodes: vec![Node {
+            id: "for_each_node".into(),
+            kind: NodeKind::ForEach,
+            config: NodeConfig::ForEach(ForEachConfig {
+                entity_binding: Some(EntityRef::GoogleSheet {
+                    spreadsheet_id: "sid".into(),
+                    range: "A1:B100".into(),
+                }),
+                query: EntityQuery::default(),
+                body_nodes: vec!["does_not_exist".into()],
+                per_iteration_delay_secs: None,
+                max_per_run: 10,
+            }),
+            position: None,
+            retry_policy: None,
+        }],
+        edges: vec![],
+        settings: None,
+        origin: WorkflowOrigin::UserChat,
+    };
+    let created = ops::create(&config, req).await.unwrap().value;
+    let _ = executor::dispatch_run(
+        &config,
+        created.id.clone(),
+        TriggerSource::Manual {
+            initiator: "user".into(),
+        },
+    )
+    .await
+    .unwrap();
+    let terminal = wait_for_terminal_run(&config, &created.id).await;
+    assert!(
+        matches!(terminal.status, RunStatus::Failed),
+        "expected runtime to fail the run on unknown body_node; got {:?}",
+        terminal.status
+    );
+    let err = terminal.error.as_deref().unwrap_or("");
+    assert!(
+        err.contains("does_not_exist") || err.contains("body_node"),
+        "expected error to mention the missing body_node id; got: {err}"
+    );
+
+    executor::clear_test_entity_store_factory();
+}

@@ -159,6 +159,10 @@ pub fn referenced_connections(workflow: &Workflow) -> Vec<ConnectionRef> {
             // snapshot. F2-3/F2-6/F2-7 reconfirm this when they land
             // bodies.
             NodeConfig::ToolCall(_) | NodeConfig::Condition(_) | NodeConfig::Delay(_) => {}
+            // F4-7: the for_each node itself doesn't bind a
+            // connection — its body nodes (matched on their own
+            // pass) carry the connection refs.
+            NodeConfig::ForEach(_) => {}
         }
     }
     out

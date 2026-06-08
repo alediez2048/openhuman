@@ -767,7 +767,8 @@ fn validate_workflow_shape(workflow: &Workflow) -> Result<(), DispatchError> {
 /// dispatcher surfaces that as a clean `Failed` terminal status
 /// (the F2-1 design contract — "reachable without behaviour").
 /// F2-4..F2-7 replace each NotImplementedYet arm with a real body.
-const CURRENT_PHASE: u32 = 2;
+/// F4-7 bumped to `4` once `ForEach` shipped its executor body.
+const CURRENT_PHASE: u32 = 4;
 
 /// Order nodes by a topological sort over `edges`, returning the
 /// execution order. Phase 2 chains are linear (single ancestor per
@@ -957,6 +958,21 @@ async fn execute_inner(
         .map(|n| (n.id.clone(), n.clone()))
         .collect();
 
+    // F4-7: collect every node id that is named as a `for_each` body.
+    // These nodes are dispatched once per iteration by `execute_for_each`
+    // — the outer walker MUST skip them, otherwise the body chain
+    // would also run once at workflow scope without an iteration
+    // record in context (and templating `{{record.*}}` would fail).
+    let for_each_body_nodes: std::collections::HashSet<String> = workflow
+        .nodes
+        .iter()
+        .filter_map(|n| match &n.config {
+            NodeConfig::ForEach(cfg) => Some(cfg.body_nodes.iter().cloned()),
+            _ => None,
+        })
+        .flatten()
+        .collect();
+
     // F2-6: precompute the reachability closure so a `condition`
     // node's routing decision can restrict the remainder of the walk
     // to nodes downstream of the routed target. Without this, the
@@ -1011,6 +1027,21 @@ async fn execute_inner(
         let node = nodes_by_id
             .get(node_id)
             .expect("topological_sort returns only node ids from `nodes`");
+
+        // F4-7: skip nodes that exist only as `for_each` body members.
+        // They get dispatched per-iteration by `execute_for_each` with
+        // an `iteration_scope` set; running them at workflow scope
+        // would mis-fire without a `{{record.*}}` source.
+        if for_each_body_nodes.contains(node_id.as_str()) {
+            tracing::debug!(
+                target: "workflows-run",
+                run = %run.id,
+                skipped = %node_id,
+                "[workflows-run] skipping node — runs only inside a for_each body"
+            );
+            cursor += 1;
+            continue;
+        }
 
         // F2-6: when a prior `condition` routed to a target, skip any
         // node not in that target's reachability closure. Lets the
@@ -1311,6 +1342,13 @@ pub(crate) async fn dispatch_node(
         NodeConfig::ChannelMessage(_) => execute_channel_message(config, run, node, ctx).await,
         NodeConfig::Condition(_) => execute_condition(config, run, node, ctx).await,
         NodeConfig::Delay(_) => execute_delay(config, run, node, ctx).await,
+        // F4-7: Box::pin breaks the recursive future-type the compiler
+        // sees: dispatch_node → execute_for_each → dispatch_node_with_retry
+        // → dispatch_node. Even though body nodes are validated to not
+        // be for_each (no actual runtime recursion), the inferred
+        // future type still chases itself without the indirection,
+        // overflowing the stack as state-machine generation expands.
+        NodeConfig::ForEach(_) => Box::pin(execute_for_each(config, run, node, ctx)).await,
     }
 }
 
@@ -1339,7 +1377,13 @@ pub(crate) async fn dispatch_node_with_retry(
     };
     let mut last_err: Option<anyhow::Error> = None;
     for attempt in 1..=max_attempts {
-        match dispatch_node(config, run, node, ctx).await {
+        // F4-7: Box::pin keeps the per-attempt state machine size
+        // small. Without it, dispatch_node's state (which inlines
+        // every per-kind body including the large execute_for_each)
+        // is embedded directly into this retry loop's state machine
+        // — compounded across retries + nested for_each iterations,
+        // it overflows the 2 MiB default tokio task stack.
+        match Box::pin(dispatch_node(config, run, node, ctx)).await {
             Ok(body) => {
                 if attempt > 1 {
                     tracing::info!(
@@ -2665,6 +2709,315 @@ pub fn clear_test_delay_override() {
 
 fn test_delay_override() -> Option<Arc<DelayStubFn>> {
     DELAY_OVERRIDE.get().and_then(|slot| slot.lock().clone())
+}
+
+// ── execute_for_each (F4-7) ────────────────────────────────────────────
+
+/// F4-7: iterate an [`crate::openhuman::campaigns::entity_store::EntityStore`]
+/// query and run the configured `body_nodes` once per matching record.
+///
+/// Structure mirrors the other `execute_*` bodies — one parent step
+/// row for the for_each node itself, plus each body-node iteration
+/// dispatches through `dispatch_node_with_retry` which inserts its
+/// own step rows. A 3-record × 1-body-node for_each produces 1 parent
+/// row + 3 inner rows.
+///
+/// Per-record on-error policy: when an iteration's body chain fails,
+/// the for_each respects the parent node's `on_error` (`Halt`
+/// short-circuits the remaining iterations; `Continue` proceeds).
+/// Aggregate output: `{ records_processed, records_succeeded, records_failed }`.
+async fn execute_for_each(
+    config: &Config,
+    run: &Run,
+    node: &Node,
+    ctx: &crate::openhuman::workflows::templating::NodeContext,
+) -> Result<serde_json::Value> {
+    let cfg = match &node.config {
+        NodeConfig::ForEach(cfg) => cfg.clone(),
+        other => anyhow::bail!(
+            "execute_for_each invoked on non-ForEach node config: {:?}",
+            std::mem::discriminant(other)
+        ),
+    };
+
+    let step_id: RunStepId = Uuid::new_v4().to_string();
+    let started_at = Utc::now();
+    let step = RunStep {
+        id: step_id.clone(),
+        run_id: run.id.clone(),
+        node_id: node.id.clone(),
+        status: RunStatus::Running,
+        started_at,
+        completed_at: None,
+        output_json: None,
+        error: None,
+        delivery_receipts: Vec::new(),
+    };
+    if let Err(err) = store::insert_run_step(config, &step) {
+        anyhow::bail!("insert_run_step failed: {err:#}");
+    }
+    publish_global(DomainEvent::WorkflowRunStepStarted {
+        run_id: run.id.clone(),
+        node_id: node.id.clone(),
+    });
+
+    // Resolve entity_binding — explicit > inherit from parent campaign.
+    let workflow = store::get_workflow(config, &run.workflow_id)
+        .map_err(|e| anyhow::anyhow!("for_each: load workflow failed: {e:#}"))?
+        .ok_or_else(|| anyhow::anyhow!("for_each: workflow {} vanished mid-run", run.workflow_id))?;
+    let binding = match cfg.entity_binding.clone() {
+        Some(b) => b,
+        None => match workflow.campaign_id.as_ref() {
+            Some(campaign_id) => {
+                let campaign = crate::openhuman::campaigns::store::get_campaign(
+                    config,
+                    campaign_id,
+                )
+                .map_err(|e| anyhow::anyhow!("for_each: load campaign {campaign_id}: {e:#}"))?
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "for_each: workflow's campaign {campaign_id} not found"
+                    )
+                })?;
+                campaign.entity_binding
+            }
+            None => {
+                let err = "for_each: entity_binding is None and workflow has no parent campaign \
+                           — set entity_binding explicitly or assign the workflow to a campaign";
+                finalize_for_each_step(config, &run.id, &step_id, &node.id, false, 0, 0, 0, Some(err));
+                anyhow::bail!(err);
+            }
+        },
+    };
+
+    // Open the EntityStore via the (test-overridable) factory.
+    let store_for_records = match open_entity_store_for_executor(config, &binding) {
+        Ok(s) => s,
+        Err(err) => {
+            let msg = format!("for_each: open entity_store: {err:#}");
+            finalize_for_each_step(config, &run.id, &step_id, &node.id, false, 0, 0, 0, Some(&msg));
+            anyhow::bail!(msg);
+        }
+    };
+
+    let records = match store_for_records.list(cfg.query.clone()).await {
+        Ok(r) => r,
+        Err(err) => {
+            let msg = format!("for_each: list records: {err:#}");
+            finalize_for_each_step(config, &run.id, &step_id, &node.id, false, 0, 0, 0, Some(&msg));
+            anyhow::bail!(msg);
+        }
+    };
+
+    let cap = cfg.max_per_run as usize;
+    let records: Vec<_> = records.into_iter().take(cap).collect();
+    let total = records.len();
+
+    // Index body nodes by id for per-iteration lookup. body_nodes are
+    // ids referring to nodes already present in the workflow.
+    let nodes_by_id: HashMap<_, _> = workflow
+        .nodes
+        .iter()
+        .map(|n| (n.id.clone(), n.clone()))
+        .collect();
+    for body_id in &cfg.body_nodes {
+        if !nodes_by_id.contains_key(body_id) {
+            let msg = format!("for_each: body_node id `{body_id}` not in workflow");
+            finalize_for_each_step(
+                config, &run.id, &step_id, &node.id, false, total, 0, 0, Some(&msg),
+            );
+            anyhow::bail!(msg);
+        }
+    }
+
+    let halt_on_error = matches!(
+        workflow.settings.on_error,
+        crate::openhuman::workflows::types::OnErrorPolicy::Halt
+    );
+
+    let mut succeeded: usize = 0;
+    let mut failed: usize = 0;
+    'outer: for record in records {
+        let mut iter_ctx = ctx.clone();
+        iter_ctx.set_iteration_scope(record.clone());
+
+        let mut iteration_failed = false;
+        for body_id in &cfg.body_nodes {
+            let body_node = nodes_by_id
+                .get(body_id)
+                .expect("body_nodes pre-validated above");
+            // Box::pin breaks the type-level recursion the compiler
+            // sees (dispatch_node → execute_for_each →
+            // dispatch_node_with_retry → dispatch_node). At runtime
+            // we never recurse — body nodes are validated to not be
+            // for_each — but the inferred future type still has to
+            // close.
+            match Box::pin(dispatch_node_with_retry(config, run, body_node, &iter_ctx))
+                .await
+            {
+                Ok(body) => {
+                    iter_ctx.record_output(body_id.clone(), body);
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        target: "workflows-run",
+                        run = %run.id,
+                        record = %record.id.native,
+                        body_node = %body_id,
+                        "[for_each] iteration body node failed: {err:#}"
+                    );
+                    iteration_failed = true;
+                    break;
+                }
+            }
+        }
+
+        if iteration_failed {
+            failed += 1;
+            if halt_on_error {
+                break 'outer;
+            }
+        } else {
+            succeeded += 1;
+        }
+
+        if let Some(secs) = cfg.per_iteration_delay_secs {
+            if secs > 0 {
+                if let Some(stub) = test_delay_override() {
+                    stub(secs as u64).await;
+                } else {
+                    tokio::time::sleep(std::time::Duration::from_secs(secs as u64)).await;
+                }
+            }
+        }
+    }
+
+    let processed = succeeded + failed;
+    let final_ok = failed == 0 || !halt_on_error && processed == total;
+    let body = serde_json::json!({
+        "records_processed": processed,
+        "records_succeeded": succeeded,
+        "records_failed": failed,
+    });
+    let error_msg = if final_ok {
+        None
+    } else {
+        Some(format!(
+            "for_each: {failed}/{processed} iterations failed (on_error=halt)"
+        ))
+    };
+    finalize_for_each_step(
+        config,
+        &run.id,
+        &step_id,
+        &node.id,
+        final_ok,
+        total,
+        succeeded,
+        failed,
+        error_msg.as_deref(),
+    );
+    if !final_ok {
+        anyhow::bail!(
+            "for_each terminated early: {failed} failures (on_error=halt)"
+        );
+    }
+    Ok(body)
+}
+
+/// Finalise the parent for_each step row + publish the matching event.
+/// Centralised so the multiple error paths in `execute_for_each` don't
+/// each have to reproduce the persistence + bus boilerplate.
+fn finalize_for_each_step(
+    config: &Config,
+    run_id: &str,
+    step_id: &RunStepId,
+    node_id: &str,
+    ok: bool,
+    total: usize,
+    succeeded: usize,
+    failed: usize,
+    error: Option<&str>,
+) {
+    let status = if ok { RunStatus::Succeeded } else { RunStatus::Failed };
+    let body = serde_json::json!({
+        "records_total": total,
+        "records_succeeded": succeeded,
+        "records_failed": failed,
+    });
+    let payload = serde_json::to_string(&body).unwrap_or_else(|_| "{}".into());
+    if let Err(err) = store::update_run_step_terminal(
+        config,
+        step_id,
+        status,
+        Utc::now(),
+        Some(payload),
+        error.map(|e| e.to_string()),
+        &[],
+    ) {
+        tracing::warn!(
+            target: "workflows-run",
+            "[for_each] update_run_step_terminal failed run={run_id} step={step_id}: {err:#}"
+        );
+    }
+    publish_global(DomainEvent::WorkflowRunStepCompleted {
+        run_id: run_id.to_string(),
+        node_id: node_id.to_string(),
+        status_json: serde_json::to_value(status).unwrap_or(serde_json::Value::Null),
+    });
+}
+
+// ── EntityStore factory (test-overridable) ────────────────────────
+
+type EntityStoreFactoryFn = Box<
+    dyn Fn(
+            &Config,
+            &crate::openhuman::campaigns::types::EntityRef,
+        ) -> Result<Box<dyn crate::openhuman::campaigns::entity_store::EntityStore>>
+        + Send
+        + Sync,
+>;
+
+static ENTITY_STORE_FACTORY_OVERRIDE: OnceLock<Mutex<Option<Arc<EntityStoreFactoryFn>>>> =
+    OnceLock::new();
+
+/// Open an `EntityStore` for the executor. Production path delegates
+/// to `entity_store::open_entity_store`; tests inject a stub
+/// returning a `MockEntityStore` via [`set_test_entity_store_factory`].
+fn open_entity_store_for_executor(
+    config: &Config,
+    binding: &crate::openhuman::campaigns::types::EntityRef,
+) -> Result<Box<dyn crate::openhuman::campaigns::entity_store::EntityStore>> {
+    if let Some(slot) = ENTITY_STORE_FACTORY_OVERRIDE.get() {
+        if let Some(f) = slot.lock().clone() {
+            return (f)(config, binding);
+        }
+    }
+    crate::openhuman::campaigns::entity_store::open_entity_store(config, binding)
+}
+
+#[cfg(any(test, feature = "e2e-test-support"))]
+pub fn set_test_entity_store_factory<F>(stub: F)
+where
+    F: Fn(
+            &Config,
+            &crate::openhuman::campaigns::types::EntityRef,
+        )
+            -> Result<Box<dyn crate::openhuman::campaigns::entity_store::EntityStore>>
+        + Send
+        + Sync
+        + 'static,
+{
+    let boxed: EntityStoreFactoryFn = Box::new(stub);
+    let slot = ENTITY_STORE_FACTORY_OVERRIDE.get_or_init(|| Mutex::new(None));
+    *slot.lock() = Some(Arc::new(boxed));
+}
+
+#[cfg(any(test, feature = "e2e-test-support"))]
+pub fn clear_test_entity_store_factory() {
+    if let Some(slot) = ENTITY_STORE_FACTORY_OVERRIDE.get() {
+        *slot.lock() = None;
+    }
 }
 
 // ── execute_agent_prompt ───────────────────────────────────────────────

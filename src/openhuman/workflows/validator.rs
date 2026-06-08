@@ -73,6 +73,19 @@ pub fn allowed_node_kinds(phase: u32) -> &'static [NodeKind] {
             NodeKind::Condition,
             NodeKind::Delay,
         ],
+        3 => &[
+            NodeKind::AgentPrompt,
+            NodeKind::ToolCall,
+            NodeKind::HttpRequest,
+            NodeKind::ChannelMessage,
+            NodeKind::Condition,
+            NodeKind::Delay,
+            NodeKind::Transform,
+            NodeKind::AwaitHumanApproval,
+            NodeKind::FanOut,
+        ],
+        // Phase 4+ adds `ForEach` (F4-7). Transform / AwaitHumanApproval /
+        // FanOut still ride along — they were Phase-3 placeholders.
         _ => &[
             NodeKind::AgentPrompt,
             NodeKind::ToolCall,
@@ -83,6 +96,7 @@ pub fn allowed_node_kinds(phase: u32) -> &'static [NodeKind] {
             NodeKind::Transform,
             NodeKind::AwaitHumanApproval,
             NodeKind::FanOut,
+            NodeKind::ForEach,
         ],
     }
 }
@@ -405,6 +419,78 @@ pub fn validate(
                         node_id: node.id.clone(),
                         node_kind: node.kind,
                         reason: "delay.seconds must be ≤ 86400 (24h)".into(),
+                    });
+                }
+            }
+            NodeConfig::ForEach(cfg) => {
+                if cfg.max_per_run == 0 || cfg.max_per_run > 1000 {
+                    return Err(ProposalValidationError::InvalidNodeConfig {
+                        node_id: node.id.clone(),
+                        node_kind: node.kind,
+                        reason: format!(
+                            "for_each.max_per_run must be in [1, 1000] (got {})",
+                            cfg.max_per_run
+                        ),
+                    });
+                }
+                if let Some(secs) = cfg.per_iteration_delay_secs {
+                    if secs > 3600 {
+                        return Err(ProposalValidationError::InvalidNodeConfig {
+                            node_id: node.id.clone(),
+                            node_kind: node.kind,
+                            reason: format!(
+                                "for_each.per_iteration_delay_secs must be ≤ 3600 (got {secs})"
+                            ),
+                        });
+                    }
+                }
+                if cfg.body_nodes.is_empty() {
+                    return Err(ProposalValidationError::InvalidNodeConfig {
+                        node_id: node.id.clone(),
+                        node_kind: node.kind,
+                        reason: "for_each.body_nodes must contain at least one node id".into(),
+                    });
+                }
+                let known_ids: std::collections::HashSet<&str> =
+                    proposal.nodes.iter().map(|n| n.id.as_str()).collect();
+                for body_id in &cfg.body_nodes {
+                    if !known_ids.contains(body_id.as_str()) {
+                        return Err(ProposalValidationError::InvalidNodeConfig {
+                            node_id: node.id.clone(),
+                            node_kind: node.kind,
+                            reason: format!(
+                                "for_each.body_nodes id `{body_id}` references a node that doesn't exist"
+                            ),
+                        });
+                    }
+                    // A for_each body must not point at itself (would
+                    // infinitely recurse the dispatcher).
+                    if body_id == &node.id {
+                        return Err(ProposalValidationError::InvalidNodeConfig {
+                            node_id: node.id.clone(),
+                            node_kind: node.kind,
+                            reason: "for_each.body_nodes must not include the for_each node itself"
+                                .into(),
+                        });
+                    }
+                }
+                // entity_binding presence: must be Some when the
+                // proposal isn't part of a campaign. We don't know
+                // here whether the runtime workflow belongs to a
+                // campaign (proposals have no campaign_id), so we
+                // only require non-`None` when the implicit campaign
+                // hand-off is unavailable — for now, require it
+                // explicit and let the executor surface the
+                // inheritance path when running. F4-10 will allow
+                // `None` once the drafter knows whether it's inside
+                // a campaign.
+                if cfg.entity_binding.is_none() {
+                    return Err(ProposalValidationError::InvalidNodeConfig {
+                        node_id: node.id.clone(),
+                        node_kind: node.kind,
+                        reason: "for_each.entity_binding must be set on standalone workflows \
+                                 (campaign-inheritance lands with F4-10)"
+                            .into(),
                     });
                 }
             }

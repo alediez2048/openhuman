@@ -516,6 +516,9 @@ pub enum NodeKind {
     AwaitHumanApproval,
     /// Phase 3 — run children in parallel.
     FanOut,
+    /// Phase 4 (F4-7) — iterate over an `EntityStore` query and run
+    /// the inner `body_nodes` chain once per matching record.
+    ForEach,
 }
 
 /// Per-node configuration payload. Discriminated by `kind` at the wire
@@ -542,6 +545,8 @@ pub enum NodeConfig {
     Condition(ConditionConfig),
     /// Phase 2 — F2-7.
     Delay(DelayConfig),
+    /// Phase 4 — F4-7.
+    ForEach(ForEachConfig),
     // `Transform` / `AwaitHumanApproval` / `FanOut` stay unreachable
     // until Phase 3+ — `NodeKind` carries them so the wire enum doesn't
     // bump, but no `NodeConfig` arm = the validator rejects them via
@@ -747,6 +752,43 @@ pub struct DelayConfig {
 /// tool-call node can omit the field entirely for argumentless tools.
 fn default_empty_object() -> serde_json::Value {
     serde_json::json!({})
+}
+
+/// Configuration for a [`NodeKind::ForEach`] node (F4-7).
+///
+/// Iterates over an [`crate::openhuman::campaigns::entity_store::types::EntityRecord`]
+/// query result, running [`Self::body_nodes`] once per matching record.
+/// `iteration_scope` on the templating context exposes the current
+/// record as `{{record.<field>}}` to inner nodes.
+///
+/// `entity_binding` is optional only when the workflow is part of a
+/// campaign — in that case the executor inherits the parent
+/// campaign's `entity_binding`. Standalone workflows must specify
+/// the binding explicitly; the validator rejects a `None` binding on
+/// a workflow with no parent campaign.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ForEachConfig {
+    /// Which entity store to iterate. `None` means "inherit from the
+    /// parent campaign" (executor resolves at dispatch time).
+    #[serde(default)]
+    pub entity_binding: Option<crate::openhuman::campaigns::types::EntityRef>,
+    /// Query against the entity store (filter + limit/offset).
+    #[serde(default)]
+    pub query: crate::openhuman::campaigns::entity_store::types::EntityQuery,
+    /// Per-iteration sub-chain — these node ids run once per matching
+    /// record, with `{{record.<field>}}` resolving to the current
+    /// record's values. Validator enforces that every id exists in
+    /// the workflow's `nodes`.
+    #[serde(default)]
+    pub body_nodes: Vec<NodeId>,
+    /// Optional per-iteration delay (lets a campaign spread N sends
+    /// across the day instead of bursting). Validator caps at 1h.
+    #[serde(default)]
+    pub per_iteration_delay_secs: Option<u32>,
+    /// Hard cap on records processed per workflow run. The campaign-
+    /// level throttle (F4-8) is the cross-run rate gate; this cap is
+    /// strictly per-run.
+    pub max_per_run: u32,
 }
 
 /// Terminal + transient states for a [`Run`] or [`RunStep`].

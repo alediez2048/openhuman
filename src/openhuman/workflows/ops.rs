@@ -35,7 +35,7 @@ use uuid::Uuid;
 /// The drafter validator (`workflow_propose_create` /
 /// `_update`) reads this constant so chat-driven proposals can now
 /// emit multi-node Phase 2 chains.
-const CURRENT_PHASE: u32 = 2;
+const CURRENT_PHASE: u32 = 4;
 
 /// Wrap [`scheduler::register`] so a scheduler hiccup doesn't fail
 /// the surrounding RPC. The scheduler is a derived view of the

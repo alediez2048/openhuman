@@ -43,6 +43,12 @@ pub struct NodeContext {
     /// keys (failed nodes under `on_error = Continue` — F2-8) leave
     /// downstream `{{node.<failed>.output...}}` references unresolved.
     pub outputs: HashMap<String, Value>,
+    /// F4-7: the current iteration's entity record when inside a
+    /// `for_each` body. `None` outside iteration scope. Inner nodes
+    /// reference `{{record.<field>}}` to resolve against this.
+    #[doc(hidden)]
+    pub iteration_scope:
+        Option<crate::openhuman::campaigns::entity_store::types::EntityRecord>,
 }
 
 impl NodeContext {
@@ -50,11 +56,29 @@ impl NodeContext {
         Self {
             trigger_payload,
             outputs: HashMap::new(),
+            iteration_scope: None,
         }
     }
 
     pub fn record_output(&mut self, node_id: impl Into<String>, body: Value) {
         self.outputs.insert(node_id.into(), body);
+    }
+
+    /// F4-7: set the iteration record for templating inside a
+    /// `for_each` body. The executor calls this once per iteration
+    /// before dispatching the body chain.
+    pub fn set_iteration_scope(
+        &mut self,
+        record: crate::openhuman::campaigns::entity_store::types::EntityRecord,
+    ) {
+        self.iteration_scope = Some(record);
+    }
+
+    /// F4-7: clear the iteration scope after a `for_each` body
+    /// completes so downstream nodes outside the iteration don't see
+    /// the inner record.
+    pub fn clear_iteration_scope(&mut self) {
+        self.iteration_scope = None;
     }
 }
 
@@ -272,8 +296,44 @@ fn resolve_ref(body: &str, ctx: &NodeContext) -> Result<Value, String> {
                 .cloned()
                 .ok_or_else(|| format!("node `{node_id}` output missing path `{}`", rest.join(".")))
         }
+        "record" => {
+            // F4-7: resolves against the current `for_each` iteration's
+            // entity record. `{{record}}` returns the whole row as
+            // `{ id, fields }`; `{{record.email}}` resolves the named
+            // field; nested paths walk into the field's structured
+            // value (`{{record.address.city}}`).
+            let record = ctx.iteration_scope.as_ref().ok_or_else(|| {
+                "no `record` in scope (use `record.*` only inside a `for_each` body)"
+                    .to_string()
+            })?;
+            let rest: Vec<&str> = parts.collect();
+            if rest.is_empty() {
+                return Ok(serde_json::json!({
+                    "id": { "adapter": record.id.adapter, "native": record.id.native },
+                    "fields": Value::Object(record.fields.clone()),
+                }));
+            }
+            let field_name = rest[0];
+            let value = record
+                .fields
+                .get(field_name)
+                .cloned()
+                .ok_or_else(|| format!("record missing field `{field_name}`"))?;
+            if rest.len() == 1 {
+                Ok(value)
+            } else {
+                walk_path(&value, &rest[1..])
+                    .cloned()
+                    .ok_or_else(|| {
+                        format!(
+                            "record.{field_name} missing sub-path `{}`",
+                            rest[1..].join(".")
+                        )
+                    })
+            }
+        }
         other => Err(format!(
-            "unknown template reference root `{other}` (expected `trigger` or `node`)"
+            "unknown template reference root `{other}` (expected `trigger`, `node`, or `record`)"
         )),
     }
 }
