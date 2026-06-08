@@ -165,11 +165,7 @@ impl EntityStore for AttioAdapter {
             .data
             .get("data")
             .or_else(|| resp.data.get("attributes"))
-            .or_else(|| {
-                resp.data
-                    .get("response_data")
-                    .and_then(|d| d.get("data"))
-            })
+            .or_else(|| resp.data.get("response_data").and_then(|d| d.get("data")))
             .cloned()
             .unwrap_or_else(|| Value::Array(Vec::new()));
         let attrs = attrs_value.as_array().cloned().unwrap_or_default();
@@ -306,16 +302,12 @@ impl EntityStore for AttioAdapter {
             let mut ticker = interval(poll);
             // First tick is immediate — used to establish baseline.
             ticker.tick().await;
-            if let Ok(records) =
-                fetch_for_poll(&*executor, &workspace_id, &object_type).await
-            {
+            if let Ok(records) = fetch_for_poll(&*executor, &workspace_id, &object_type).await {
                 snap = snapshot_for(&records);
             }
             loop {
                 ticker.tick().await;
-                let records = match fetch_for_poll(&*executor, &workspace_id, &object_type)
-                    .await
-                {
+                let records = match fetch_for_poll(&*executor, &workspace_id, &object_type).await {
                     Ok(r) => r,
                     Err(_) => continue,
                 };
@@ -377,10 +369,16 @@ fn parse_attio_record(adapter: &AttioAdapter, raw: &Value) -> Option<EntityRecor
             if let Some(s) = v.as_str() {
                 Some(s.to_string())
             } else {
-                v.get("record_id").and_then(|x| x.as_str()).map(String::from)
+                v.get("record_id")
+                    .and_then(|x| x.as_str())
+                    .map(String::from)
             }
         })
-        .or_else(|| raw.get("record_id").and_then(|v| v.as_str()).map(String::from))?;
+        .or_else(|| {
+            raw.get("record_id")
+                .and_then(|v| v.as_str())
+                .map(String::from)
+        })?;
     // Attio stores field values under `values` keyed by api_slug.
     // Fall back to top-level fields for tests that mirror a simpler
     // shape.
@@ -467,7 +465,11 @@ fn snapshot_for(records: &[Value]) -> PollSnapshot {
                         .map(String::from)
                 }
             })
-            .or_else(|| r.get("record_id").and_then(|v| v.as_str()).map(String::from));
+            .or_else(|| {
+                r.get("record_id")
+                    .and_then(|v| v.as_str())
+                    .map(String::from)
+            });
         if let Some(id) = id {
             let mut h = DefaultHasher::new();
             serde_json::to_string(r).unwrap_or_default().hash(&mut h);

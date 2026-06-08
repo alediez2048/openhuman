@@ -33,9 +33,8 @@ pub fn open_entity_store(
     config: &Config,
     binding: &EntityRef,
 ) -> anyhow::Result<Box<dyn EntityStore>> {
-    let kind = create_composio_client(config).map_err(|e| {
-        anyhow::anyhow!("[entity_store] adapter requires a Composio client: {e}")
-    })?;
+    let kind = create_composio_client(config)
+        .map_err(|e| anyhow::anyhow!("[entity_store] adapter requires a Composio client: {e}"))?;
     let executor = Arc::new(LiveComposioExecutor::new(
         kind,
         config.composio.entity_id.clone(),

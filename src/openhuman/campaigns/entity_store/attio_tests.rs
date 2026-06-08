@@ -227,7 +227,12 @@ async fn schema_is_cached_after_first_fetch() {
     let _ = adapter.schema().await.unwrap();
     let _ = adapter.schema().await.unwrap(); // second call MUST hit cache, not the executor
     let calls = exec_clone.calls();
-    assert_eq!(calls.len(), 1, "schema must cache; got {} calls", calls.len());
+    assert_eq!(
+        calls.len(),
+        1,
+        "schema must cache; got {} calls",
+        calls.len()
+    );
 }
 
 // ── list / get ────────────────────────────────────────────────────
@@ -268,10 +273,7 @@ async fn list_parses_records_and_flattens_attio_value_arrays() {
 async fn list_passes_filter_translation_into_query_body() {
     let exec = FakeComposioExecutor::new();
     let exec_clone = Arc::clone(&exec);
-    exec.queue(
-        "ATTIO_QUERY_RECORDS",
-        ok_data(json!({ "data": [] })),
-    );
+    exec.queue("ATTIO_QUERY_RECORDS", ok_data(json!({ "data": [] })));
     let adapter = AttioAdapter::new(exec, "ws_1", "people");
     let _ = adapter
         .list(EntityQuery {
@@ -287,7 +289,10 @@ async fn list_passes_filter_translation_into_query_body() {
     let calls = exec_clone.calls();
     assert_eq!(calls.len(), 1);
     assert_eq!(calls[0].0, "ATTIO_QUERY_RECORDS");
-    assert_eq!(calls[0].1["filter"], json!({ "stage": { "$eq": "active" } }));
+    assert_eq!(
+        calls[0].1["filter"],
+        json!({ "stage": { "$eq": "active" } })
+    );
     assert_eq!(calls[0].1["objectType"], json!("people"));
     assert_eq!(calls[0].1["workspaceId"], json!("ws_1"));
 }
@@ -398,8 +403,8 @@ async fn subscribe_emits_created_event_for_newly_appearing_record() {
     exec.queue("ATTIO_QUERY_RECORDS", after_create.clone());
     exec.set_default(after_create);
 
-    let adapter = AttioAdapter::new(exec, "ws_1", "people")
-        .with_poll_interval(Duration::from_millis(25));
+    let adapter =
+        AttioAdapter::new(exec, "ws_1", "people").with_poll_interval(Duration::from_millis(25));
     let stream = adapter
         .subscribe()
         .await
@@ -437,8 +442,8 @@ async fn subscribe_emits_deleted_event_when_record_disappears() {
     exec.queue("ATTIO_QUERY_RECORDS", after_delete.clone());
     exec.set_default(after_delete);
 
-    let adapter = AttioAdapter::new(exec, "ws_1", "people")
-        .with_poll_interval(Duration::from_millis(25));
+    let adapter =
+        AttioAdapter::new(exec, "ws_1", "people").with_poll_interval(Duration::from_millis(25));
     let stream = adapter.subscribe().await.unwrap().expect("subscribe live");
     let mut stream = Box::pin(stream);
 
@@ -504,10 +509,7 @@ fn expected_hmac_hex(secret: &str, body: &[u8]) -> String {
 async fn webhook_helper_register_returns_id_and_posts_correct_events() {
     let exec = FakeComposioExecutor::new();
     let exec_clone = Arc::clone(&exec);
-    exec.queue(
-        "ATTIO_CREATE_WEBHOOK",
-        ok_data(json!({ "id": "wh_123" })),
-    );
+    exec.queue("ATTIO_CREATE_WEBHOOK", ok_data(json!({ "id": "wh_123" })));
     let helper = AttioWebhookHelper::new(exec, "ws_1", "people");
     let id = helper.register("https://oh.io/hooks/attio").await.unwrap();
     assert_eq!(id, "wh_123");
