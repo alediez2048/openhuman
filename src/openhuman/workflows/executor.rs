@@ -2764,27 +2764,37 @@ async fn execute_for_each(
     // Resolve entity_binding — explicit > inherit from parent campaign.
     let workflow = store::get_workflow(config, &run.workflow_id)
         .map_err(|e| anyhow::anyhow!("for_each: load workflow failed: {e:#}"))?
-        .ok_or_else(|| anyhow::anyhow!("for_each: workflow {} vanished mid-run", run.workflow_id))?;
+        .ok_or_else(|| {
+            anyhow::anyhow!("for_each: workflow {} vanished mid-run", run.workflow_id)
+        })?;
     let binding = match cfg.entity_binding.clone() {
         Some(b) => b,
         None => match workflow.campaign_id.as_ref() {
             Some(campaign_id) => {
-                let campaign = crate::openhuman::campaigns::store::get_campaign(
-                    config,
-                    campaign_id,
-                )
-                .map_err(|e| anyhow::anyhow!("for_each: load campaign {campaign_id}: {e:#}"))?
-                .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "for_each: workflow's campaign {campaign_id} not found"
-                    )
-                })?;
+                let campaign =
+                    crate::openhuman::campaigns::store::get_campaign(config, campaign_id)
+                        .map_err(|e| {
+                            anyhow::anyhow!("for_each: load campaign {campaign_id}: {e:#}")
+                        })?
+                        .ok_or_else(|| {
+                            anyhow::anyhow!("for_each: workflow's campaign {campaign_id} not found")
+                        })?;
                 campaign.entity_binding
             }
             None => {
                 let err = "for_each: entity_binding is None and workflow has no parent campaign \
                            — set entity_binding explicitly or assign the workflow to a campaign";
-                finalize_for_each_step(config, &run.id, &step_id, &node.id, false, 0, 0, 0, Some(err));
+                finalize_for_each_step(
+                    config,
+                    &run.id,
+                    &step_id,
+                    &node.id,
+                    false,
+                    0,
+                    0,
+                    0,
+                    Some(err),
+                );
                 anyhow::bail!(err);
             }
         },
@@ -2795,7 +2805,17 @@ async fn execute_for_each(
         Ok(s) => s,
         Err(err) => {
             let msg = format!("for_each: open entity_store: {err:#}");
-            finalize_for_each_step(config, &run.id, &step_id, &node.id, false, 0, 0, 0, Some(&msg));
+            finalize_for_each_step(
+                config,
+                &run.id,
+                &step_id,
+                &node.id,
+                false,
+                0,
+                0,
+                0,
+                Some(&msg),
+            );
             anyhow::bail!(msg);
         }
     };
@@ -2804,7 +2824,17 @@ async fn execute_for_each(
         Ok(r) => r,
         Err(err) => {
             let msg = format!("for_each: list records: {err:#}");
-            finalize_for_each_step(config, &run.id, &step_id, &node.id, false, 0, 0, 0, Some(&msg));
+            finalize_for_each_step(
+                config,
+                &run.id,
+                &step_id,
+                &node.id,
+                false,
+                0,
+                0,
+                0,
+                Some(&msg),
+            );
             anyhow::bail!(msg);
         }
     };
@@ -2824,7 +2854,15 @@ async fn execute_for_each(
         if !nodes_by_id.contains_key(body_id) {
             let msg = format!("for_each: body_node id `{body_id}` not in workflow");
             finalize_for_each_step(
-                config, &run.id, &step_id, &node.id, false, total, 0, 0, Some(&msg),
+                config,
+                &run.id,
+                &step_id,
+                &node.id,
+                false,
+                total,
+                0,
+                0,
+                Some(&msg),
             );
             anyhow::bail!(msg);
         }
@@ -2852,9 +2890,7 @@ async fn execute_for_each(
             // we never recurse — body nodes are validated to not be
             // for_each — but the inferred future type still has to
             // close.
-            match Box::pin(dispatch_node_with_retry(config, run, body_node, &iter_ctx))
-                .await
-            {
+            match Box::pin(dispatch_node_with_retry(config, run, body_node, &iter_ctx)).await {
                 Ok(body) => {
                     iter_ctx.record_output(body_id.clone(), body);
                 }
@@ -2918,9 +2954,7 @@ async fn execute_for_each(
         error_msg.as_deref(),
     );
     if !final_ok {
-        anyhow::bail!(
-            "for_each terminated early: {failed} failures (on_error=halt)"
-        );
+        anyhow::bail!("for_each terminated early: {failed} failures (on_error=halt)");
     }
     Ok(body)
 }
@@ -2939,7 +2973,11 @@ fn finalize_for_each_step(
     failed: usize,
     error: Option<&str>,
 ) {
-    let status = if ok { RunStatus::Succeeded } else { RunStatus::Failed };
+    let status = if ok {
+        RunStatus::Succeeded
+    } else {
+        RunStatus::Failed
+    };
     let body = serde_json::json!({
         "records_total": total,
         "records_succeeded": succeeded,
@@ -3002,8 +3040,7 @@ where
     F: Fn(
             &Config,
             &crate::openhuman::campaigns::types::EntityRef,
-        )
-            -> Result<Box<dyn crate::openhuman::campaigns::entity_store::EntityStore>>
+        ) -> Result<Box<dyn crate::openhuman::campaigns::entity_store::EntityStore>>
         + Send
         + Sync
         + 'static,

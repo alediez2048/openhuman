@@ -47,8 +47,7 @@ pub struct NodeContext {
     /// `for_each` body. `None` outside iteration scope. Inner nodes
     /// reference `{{record.<field>}}` to resolve against this.
     #[doc(hidden)]
-    pub iteration_scope:
-        Option<crate::openhuman::campaigns::entity_store::types::EntityRecord>,
+    pub iteration_scope: Option<crate::openhuman::campaigns::entity_store::types::EntityRecord>,
 }
 
 impl NodeContext {
@@ -303,8 +302,7 @@ fn resolve_ref(body: &str, ctx: &NodeContext) -> Result<Value, String> {
             // field; nested paths walk into the field's structured
             // value (`{{record.address.city}}`).
             let record = ctx.iteration_scope.as_ref().ok_or_else(|| {
-                "no `record` in scope (use `record.*` only inside a `for_each` body)"
-                    .to_string()
+                "no `record` in scope (use `record.*` only inside a `for_each` body)".to_string()
             })?;
             let rest: Vec<&str> = parts.collect();
             if rest.is_empty() {
@@ -322,14 +320,12 @@ fn resolve_ref(body: &str, ctx: &NodeContext) -> Result<Value, String> {
             if rest.len() == 1 {
                 Ok(value)
             } else {
-                walk_path(&value, &rest[1..])
-                    .cloned()
-                    .ok_or_else(|| {
-                        format!(
-                            "record.{field_name} missing sub-path `{}`",
-                            rest[1..].join(".")
-                        )
-                    })
+                walk_path(&value, &rest[1..]).cloned().ok_or_else(|| {
+                    format!(
+                        "record.{field_name} missing sub-path `{}`",
+                        rest[1..].join(".")
+                    )
+                })
             }
         }
         other => Err(format!(

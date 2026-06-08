@@ -4736,7 +4736,9 @@ fn install_mock_entity_store(records: Vec<serde_json::Value>) {
         })
         .collect();
     executor::set_test_entity_store_factory(move |_cfg, _binding| {
-        Ok(Box::new(MockEntityStore::with_records(entity_records.clone())))
+        Ok(Box::new(MockEntityStore::with_records(
+            entity_records.clone(),
+        )))
     });
 }
 
@@ -4873,7 +4875,11 @@ async fn for_each_respects_max_per_run_cap() {
     assert!(matches!(terminal.status, RunStatus::Succeeded));
     let (_run, steps) = store::get_run(&config, &terminal.id).unwrap().unwrap();
     // Parent + 1 inner = 2 rows even though 10 records exist.
-    assert_eq!(steps.len(), 2, "max_per_run=1 must process exactly one record");
+    assert_eq!(
+        steps.len(),
+        2,
+        "max_per_run=1 must process exactly one record"
+    );
 
     executor::clear_test_entity_store_factory();
 }
