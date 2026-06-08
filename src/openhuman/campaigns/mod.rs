@@ -41,6 +41,7 @@
 //! recordset shape, entity store as trait, chat-primary creation,
 //! draft-mode approval policy).
 
+pub mod entity_store;
 pub mod ops;
 pub mod rpc;
 pub mod schemas;
