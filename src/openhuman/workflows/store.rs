@@ -26,6 +26,7 @@ const MIGRATION_004: &str = include_str!("migrations/004_workflow_soft_delete.sq
 const MIGRATION_005: &str = include_str!("migrations/005_delay_resume.sql");
 const MIGRATION_006: &str = include_str!("migrations/006_delivery_receipts.sql");
 const MIGRATION_007: &str = include_str!("migrations/007_run_failure_reason.sql");
+const MIGRATION_008: &str = include_str!("migrations/008_campaigns.sql");
 
 /// Resolves the database path for this workspace: `${workspace_dir}/workflows.db`.
 fn db_path(config: &Config) -> PathBuf {
@@ -84,6 +85,7 @@ fn apply_migrations(conn: &Connection) -> Result<()> {
     apply_one(conn, 5, "005_delay_resume", MIGRATION_005)?;
     apply_one(conn, 6, "006_delivery_receipts", MIGRATION_006)?;
     apply_one(conn, 7, "007_run_failure_reason", MIGRATION_007)?;
+    apply_one(conn, 8, "008_campaigns", MIGRATION_008)?;
 
     Ok(())
 }
@@ -143,8 +145,8 @@ pub fn insert_workflow(config: &Config, wf: &Workflow) -> Result<()> {
             "INSERT INTO workflows \
              (id, schema_version, name, description, enabled, origin, health, \
               trigger_json, nodes_json, edges_json, settings_json, \
-              created_at, updated_at, last_run_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+              created_at, updated_at, last_run_at, campaign_id) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
             rusqlite::params![
                 wf.id,
                 wf.schema_version,
@@ -160,6 +162,7 @@ pub fn insert_workflow(config: &Config, wf: &Workflow) -> Result<()> {
                 wf.created_at.to_rfc3339(),
                 wf.updated_at.to_rfc3339(),
                 wf.last_run_at.map(|t| t.to_rfc3339()),
+                wf.campaign_id,
             ],
         )
         .context("Failed to insert workflows row")?;
@@ -177,7 +180,7 @@ pub fn get_workflow(config: &Config, id: &WorkflowId) -> Result<Option<Workflow>
             .prepare(
                 "SELECT id, schema_version, name, description, enabled, origin, health, \
                  trigger_json, nodes_json, edges_json, settings_json, \
-                 created_at, updated_at, last_run_at \
+                 created_at, updated_at, last_run_at, campaign_id \
                  FROM workflows WHERE id = ?1 AND deleted_at IS NULL",
             )
             .context("Failed to prepare get_workflow statement")?;
@@ -257,7 +260,7 @@ pub fn update_workflow(config: &Config, wf: &Workflow) -> Result<bool> {
                 "UPDATE workflows SET \
                  name = ?2, description = ?3, enabled = ?4, health = ?5, \
                  trigger_json = ?6, nodes_json = ?7, edges_json = ?8, settings_json = ?9, \
-                 updated_at = ?10, last_run_at = ?11 \
+                 updated_at = ?10, last_run_at = ?11, campaign_id = ?12 \
                  WHERE id = ?1",
                 rusqlite::params![
                     wf.id,
@@ -271,6 +274,7 @@ pub fn update_workflow(config: &Config, wf: &Workflow) -> Result<bool> {
                     settings,
                     wf.updated_at.to_rfc3339(),
                     wf.last_run_at.map(|t| t.to_rfc3339()),
+                    wf.campaign_id,
                 ],
             )
             .context("Failed to update workflows row")?;
@@ -350,7 +354,7 @@ pub fn get_workflow_including_deleted(
             .prepare(
                 "SELECT id, schema_version, name, description, enabled, origin, health, \
                  trigger_json, nodes_json, edges_json, settings_json, \
-                 created_at, updated_at, last_run_at \
+                 created_at, updated_at, last_run_at, campaign_id \
                  FROM workflows WHERE id = ?1",
             )
             .context("Failed to prepare get_workflow_including_deleted statement")?;
@@ -506,11 +510,12 @@ fn row_to_workflow(row: &Row<'_>) -> Result<Workflow> {
             .map(|s| DateTime::parse_from_rfc3339(&s).map(|t| t.with_timezone(&Utc)))
             .transpose()
             .context("parse last_run_at")?,
-        // F4-1: campaign_id reads as None for pre-F4-2 rows. The
-        // column will be added by F4-2's migration 008 with a NULL
-        // default; reads against the pre-migration table just don't
-        // include it (none of these SELECTs query column 14 yet).
-        campaign_id: None,
+        // F4-2: campaign_id column added by migration 008 — NULL for
+        // standalone workflows (the Phase 1+2 shape) + for rows
+        // persisted before migration 008 ran. `unwrap_or(None)` is
+        // defensive against tests that hand-construct a connection
+        // without running all migrations.
+        campaign_id: row.get(14).unwrap_or(None),
     })
 }
 
@@ -1067,7 +1072,7 @@ pub fn list_workflows_referencing(config: &Config, r#ref: &ConnectionRef) -> Res
             .prepare(
                 "SELECT id, schema_version, name, description, enabled, origin, health, \
                  trigger_json, nodes_json, edges_json, settings_json, \
-                 created_at, updated_at, last_run_at \
+                 created_at, updated_at, last_run_at, campaign_id \
                  FROM workflows \
                  WHERE deleted_at IS NULL \
                    AND nodes_json LIKE ?1 ESCAPE '\\' \
@@ -1110,7 +1115,7 @@ pub fn list_workflows_matching_composio_event(
             .prepare(
                 "SELECT id, schema_version, name, description, enabled, origin, health, \
                  trigger_json, nodes_json, edges_json, settings_json, \
-                 created_at, updated_at, last_run_at \
+                 created_at, updated_at, last_run_at, campaign_id \
                  FROM workflows \
                  WHERE enabled = 1 \
                    AND deleted_at IS NULL \
@@ -1161,7 +1166,7 @@ pub fn list_workflows_matching_channel(config: &Config, provider: &str) -> Resul
             .prepare(
                 "SELECT id, schema_version, name, description, enabled, origin, health, \
                  trigger_json, nodes_json, edges_json, settings_json, \
-                 created_at, updated_at, last_run_at \
+                 created_at, updated_at, last_run_at, campaign_id \
                  FROM workflows \
                  WHERE enabled = 1 \
                    AND deleted_at IS NULL \
