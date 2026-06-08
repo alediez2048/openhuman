@@ -1,9 +1,8 @@
 //! F4-2 store tests: CRUD round-trip + soft-delete + workflow FK.
 
 use super::store::{
-    delete_campaign, get_campaign, get_campaign_including_deleted, insert_campaign,
-    list_campaigns, list_workflow_ids_for_campaign, restore_campaign, update_campaign,
-    ListCampaignsFilter,
+    delete_campaign, get_campaign, get_campaign_including_deleted, insert_campaign, list_campaigns,
+    list_workflow_ids_for_campaign, restore_campaign, update_campaign, ListCampaignsFilter,
 };
 use super::types::{
     ApprovalPolicy, Campaign, CampaignStatus, EntityRef, OutcomeSpec, Throttle, ThrottleWindow,
@@ -226,7 +225,10 @@ fn soft_delete_excludes_from_default_get_but_visible_via_including_deleted() {
     assert!(get_campaign(&config, &c.id).unwrap().is_none());
     // including-deleted view surfaces it.
     let raw = get_campaign_including_deleted(&config, &c.id).unwrap();
-    assert!(raw.is_some(), "soft-deleted row must be visible via including_deleted");
+    assert!(
+        raw.is_some(),
+        "soft-deleted row must be visible via including_deleted"
+    );
 }
 
 #[test]
@@ -282,9 +284,21 @@ fn list_workflow_ids_for_campaign_returns_only_matching_rows() {
     insert_campaign(&config, &sample_campaign("camp_a", CampaignStatus::Active)).unwrap();
     insert_campaign(&config, &sample_campaign("camp_b", CampaignStatus::Active)).unwrap();
 
-    insert_workflow(&config, &sample_workflow_in_campaign("wf_a1", Some("camp_a"))).unwrap();
-    insert_workflow(&config, &sample_workflow_in_campaign("wf_a2", Some("camp_a"))).unwrap();
-    insert_workflow(&config, &sample_workflow_in_campaign("wf_b1", Some("camp_b"))).unwrap();
+    insert_workflow(
+        &config,
+        &sample_workflow_in_campaign("wf_a1", Some("camp_a")),
+    )
+    .unwrap();
+    insert_workflow(
+        &config,
+        &sample_workflow_in_campaign("wf_a2", Some("camp_a")),
+    )
+    .unwrap();
+    insert_workflow(
+        &config,
+        &sample_workflow_in_campaign("wf_b1", Some("camp_b")),
+    )
+    .unwrap();
     insert_workflow(&config, &sample_workflow_in_campaign("wf_standalone", None)).unwrap();
 
     let in_a = list_workflow_ids_for_campaign(&config, &"camp_a".into()).unwrap();
@@ -323,7 +337,10 @@ fn deleting_campaign_sets_workflow_campaign_id_to_null_via_fk_cascade() {
 
     // Hard-delete the campaign row directly.
     crate::openhuman::workflows::store::with_connection(&config, |db| {
-        db.execute("DELETE FROM campaigns WHERE id = ?1", rusqlite::params![c.id])?;
+        db.execute(
+            "DELETE FROM campaigns WHERE id = ?1",
+            rusqlite::params![c.id],
+        )?;
         Ok(())
     })
     .unwrap();
