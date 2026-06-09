@@ -31,6 +31,11 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("add_workflow"),
         schemas("remove_workflow"),
         schemas("throttle_status"),
+        schemas("approvals_list_pending"),
+        schemas("approvals_get"),
+        schemas("approvals_approve"),
+        schemas("approvals_reject"),
+        schemas("approvals_batch_approve"),
     ]
 }
 
@@ -88,6 +93,26 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("throttle_status"),
             handler: handle_throttle_status,
+        },
+        RegisteredController {
+            schema: schemas("approvals_list_pending"),
+            handler: handle_approvals_list_pending,
+        },
+        RegisteredController {
+            schema: schemas("approvals_get"),
+            handler: handle_approvals_get,
+        },
+        RegisteredController {
+            schema: schemas("approvals_approve"),
+            handler: handle_approvals_approve,
+        },
+        RegisteredController {
+            schema: schemas("approvals_reject"),
+            handler: handle_approvals_reject,
+        },
+        RegisteredController {
+            schema: schemas("approvals_batch_approve"),
+            handler: handle_approvals_batch_approve,
         },
     ]
 }
@@ -300,6 +325,127 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 required: true,
             }],
         },
+        "approvals_list_pending" => ControllerSchema {
+            namespace: "campaigns",
+            function: "approvals_list_pending",
+            description: "F4-9: list pending approval-queue entries. Optional `campaign_id` filter.",
+            inputs: vec![FieldSchema {
+                name: "campaign_id",
+                ty: TypeSchema::String,
+                comment: "Optional campaign filter. Omit to list every campaign's pending drafts.",
+                required: false,
+            }],
+            outputs: vec![FieldSchema {
+                name: "entries",
+                ty: TypeSchema::Array(Box::new(TypeSchema::Ref("ApprovalEntry"))),
+                comment: "Pending drafts, newest-first.",
+                required: true,
+            }],
+        },
+        "approvals_get" => ControllerSchema {
+            namespace: "campaigns",
+            function: "approvals_get",
+            description: "F4-9: fetch a single approval row by id. Returns null when unknown.",
+            inputs: vec![FieldSchema {
+                name: "id",
+                ty: TypeSchema::String,
+                comment: "Approval id (UUIDv4 string).",
+                required: true,
+            }],
+            outputs: vec![FieldSchema {
+                name: "entry",
+                ty: TypeSchema::Ref("ApprovalEntry"),
+                comment: "The approval row or null when unknown.",
+                required: false,
+            }],
+        },
+        "approvals_approve" => ControllerSchema {
+            namespace: "campaigns",
+            function: "approvals_approve",
+            description: "F4-9: approve a pending draft. Optional `edited_payload` swaps the action body before the re-issue path runs.",
+            inputs: vec![
+                FieldSchema {
+                    name: "id",
+                    ty: TypeSchema::String,
+                    comment: "Approval id.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "edited_payload",
+                    ty: TypeSchema::Json,
+                    comment: "Optional replacement payload. Omit to approve with the original draft.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "decided_by",
+                    ty: TypeSchema::String,
+                    comment: "Optional actor label (defaults to \"user\").",
+                    required: false,
+                },
+            ],
+            outputs: vec![FieldSchema {
+                name: "entry",
+                ty: TypeSchema::Ref("ApprovalEntry"),
+                comment: "Approval row post-decision.",
+                required: true,
+            }],
+        },
+        "approvals_reject" => ControllerSchema {
+            namespace: "campaigns",
+            function: "approvals_reject",
+            description: "F4-9: reject a pending draft. Does NOT re-issue.",
+            inputs: vec![
+                FieldSchema {
+                    name: "id",
+                    ty: TypeSchema::String,
+                    comment: "Approval id.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "reason",
+                    ty: TypeSchema::String,
+                    comment: "Optional reason recorded on the row for the audit log.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "decided_by",
+                    ty: TypeSchema::String,
+                    comment: "Optional actor label (defaults to \"user\").",
+                    required: false,
+                },
+            ],
+            outputs: vec![FieldSchema {
+                name: "entry",
+                ty: TypeSchema::Ref("ApprovalEntry"),
+                comment: "Approval row post-decision.",
+                required: true,
+            }],
+        },
+        "approvals_batch_approve" => ControllerSchema {
+            namespace: "campaigns",
+            function: "approvals_batch_approve",
+            description: "F4-9: approve N drafts in one call. Per-id failures are skipped + logged; never short-circuits the batch.",
+            inputs: vec![
+                FieldSchema {
+                    name: "ids",
+                    ty: TypeSchema::Array(Box::new(TypeSchema::String)),
+                    comment: "Approval ids to approve.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "decided_by",
+                    ty: TypeSchema::String,
+                    comment: "Optional actor label.",
+                    required: false,
+                },
+            ],
+            outputs: vec![FieldSchema {
+                name: "entries",
+                ty: TypeSchema::Array(Box::new(TypeSchema::Ref("ApprovalEntry"))),
+                comment: "Successfully-approved rows. May be shorter than input ids when some failed.",
+                required: true,
+            }],
+        },
         "throttle_status" => ControllerSchema {
             namespace: "campaigns",
             function: "throttle_status",
@@ -473,6 +619,96 @@ fn handle_remove_workflow(params: Map<String, Value>) -> ControllerFuture {
                 &config,
                 campaign_id,
                 workflow_id,
+            )
+            .await?,
+        )
+    })
+}
+
+fn handle_approvals_list_pending(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let campaign_id = params
+            .get("campaign_id")
+            .and_then(|v| v.as_str())
+            .map(str::to_owned);
+        to_json(
+            crate::openhuman::campaigns::rpc::approvals_list_pending(&config, campaign_id).await?,
+        )
+    })
+}
+
+fn handle_approvals_get(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let id = required_string(&params, "id")?;
+        to_json(crate::openhuman::campaigns::rpc::approvals_get(&config, id).await?)
+    })
+}
+
+fn handle_approvals_approve(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let id = required_string(&params, "id")?;
+        let edited_payload = params.get("edited_payload").cloned().filter(|v| !v.is_null());
+        let decided_by = params
+            .get("decided_by")
+            .and_then(|v| v.as_str())
+            .map(str::to_owned);
+        to_json(
+            crate::openhuman::campaigns::rpc::approvals_approve(
+                &config,
+                id,
+                edited_payload,
+                decided_by,
+            )
+            .await?,
+        )
+    })
+}
+
+fn handle_approvals_reject(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let id = required_string(&params, "id")?;
+        let reason = params
+            .get("reason")
+            .and_then(|v| v.as_str())
+            .map(str::to_owned);
+        let decided_by = params
+            .get("decided_by")
+            .and_then(|v| v.as_str())
+            .map(str::to_owned);
+        to_json(
+            crate::openhuman::campaigns::rpc::approvals_reject(
+                &config, id, reason, decided_by,
+            )
+            .await?,
+        )
+    })
+}
+
+fn handle_approvals_batch_approve(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let ids: Vec<String> = params
+            .get("ids")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(str::to_owned))
+                    .collect()
+            })
+            .ok_or_else(|| "missing required param `ids` (string array)".to_string())?;
+        let decided_by = params
+            .get("decided_by")
+            .and_then(|v| v.as_str())
+            .map(str::to_owned);
+        to_json(
+            crate::openhuman::campaigns::rpc::approvals_batch_approve(
+                &config,
+                ids,
+                decided_by,
             )
             .await?,
         )

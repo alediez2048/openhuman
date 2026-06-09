@@ -28,6 +28,7 @@ const MIGRATION_006: &str = include_str!("migrations/006_delivery_receipts.sql")
 const MIGRATION_007: &str = include_str!("migrations/007_run_failure_reason.sql");
 const MIGRATION_008: &str = include_str!("migrations/008_campaigns.sql");
 const MIGRATION_009: &str = include_str!("migrations/009_campaign_throttle.sql");
+const MIGRATION_010: &str = include_str!("migrations/010_approval_queue.sql");
 
 /// Resolves the database path for this workspace: `${workspace_dir}/workflows.db`.
 fn db_path(config: &Config) -> PathBuf {
@@ -88,6 +89,7 @@ fn apply_migrations(conn: &Connection) -> Result<()> {
     apply_one(conn, 7, "007_run_failure_reason", MIGRATION_007)?;
     apply_one(conn, 8, "008_campaigns", MIGRATION_008)?;
     apply_one(conn, 9, "009_campaign_throttle", MIGRATION_009)?;
+    apply_one(conn, 10, "010_approval_queue", MIGRATION_010)?;
 
     Ok(())
 }

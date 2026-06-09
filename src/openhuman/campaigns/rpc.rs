@@ -110,6 +110,83 @@ pub async fn campaigns_remove_workflow(
         .map_err(map_err)
 }
 
+// ── F4-9 approval queue RPC ──────────────────────────────────────
+
+pub async fn approvals_list_pending(
+    config: &Config,
+    campaign_id: Option<String>,
+) -> Result<RpcOutcome<Vec<crate::openhuman::campaigns::approval::ApprovalEntry>>, String> {
+    let entries = crate::openhuman::campaigns::approval::ops::list_pending(config, campaign_id)
+        .await
+        .map_err(|e| format!("approvals_list_failed: {e:#}"))?;
+    Ok(RpcOutcome::single_log(
+        entries,
+        "approvals_list_pending".to_string(),
+    ))
+}
+
+pub async fn approvals_get(
+    config: &Config,
+    id: String,
+) -> Result<RpcOutcome<Option<crate::openhuman::campaigns::approval::ApprovalEntry>>, String> {
+    let entry = crate::openhuman::campaigns::approval::ops::get(config, id.clone())
+        .await
+        .map_err(|e| format!("approvals_get_failed: {e:#}"))?;
+    Ok(RpcOutcome::single_log(
+        entry,
+        format!("approvals_get id={id}"),
+    ))
+}
+
+pub async fn approvals_approve(
+    config: &Config,
+    id: String,
+    edited_payload: Option<serde_json::Value>,
+    decided_by: Option<String>,
+) -> Result<RpcOutcome<crate::openhuman::campaigns::approval::ApprovalEntry>, String> {
+    let decided_by = decided_by.unwrap_or_else(|| "user".to_string());
+    let entry =
+        crate::openhuman::campaigns::approval::ops::approve(config, id.clone(), edited_payload, decided_by)
+            .await
+            .map_err(|e| format!("approvals_approve_failed: {e:#}"))?;
+    Ok(RpcOutcome::single_log(
+        entry,
+        format!("approvals_approve id={id}"),
+    ))
+}
+
+pub async fn approvals_reject(
+    config: &Config,
+    id: String,
+    reason: Option<String>,
+    decided_by: Option<String>,
+) -> Result<RpcOutcome<crate::openhuman::campaigns::approval::ApprovalEntry>, String> {
+    let decided_by = decided_by.unwrap_or_else(|| "user".to_string());
+    let entry =
+        crate::openhuman::campaigns::approval::ops::reject(config, id.clone(), reason, decided_by)
+            .await
+            .map_err(|e| format!("approvals_reject_failed: {e:#}"))?;
+    Ok(RpcOutcome::single_log(
+        entry,
+        format!("approvals_reject id={id}"),
+    ))
+}
+
+pub async fn approvals_batch_approve(
+    config: &Config,
+    ids: Vec<String>,
+    decided_by: Option<String>,
+) -> Result<RpcOutcome<Vec<crate::openhuman::campaigns::approval::ApprovalEntry>>, String> {
+    let decided_by = decided_by.unwrap_or_else(|| "user".to_string());
+    let entries = crate::openhuman::campaigns::approval::ops::batch_approve(config, ids.clone(), decided_by)
+        .await
+        .map_err(|e| format!("approvals_batch_approve_failed: {e:#}"))?;
+    Ok(RpcOutcome::single_log(
+        entries,
+        format!("approvals_batch_approve count={}", ids.len()),
+    ))
+}
+
 /// F4-8: read-only throttle status for the UI ("X / Y used today").
 /// Returns `Ok(None)` when the campaign has no throttle configured;
 /// otherwise the current window's consumption + next-window time.

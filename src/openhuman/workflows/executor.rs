@@ -1853,6 +1853,28 @@ async fn execute_http_request(
         ),
     };
 
+    // F4-9: draft-and-approve intercept. See execute_channel_message
+    // for the contract; here the target is the templated path so the
+    // UI lists "POST /campaigns/v1/contacts" rather than the raw
+    // connection_id.
+    if let Some(approval_body) = maybe_intercept_for_approval(
+        config,
+        run,
+        node,
+        "http_request",
+        http_cfg.path_template.as_str(),
+        serde_json::json!({
+            "connection_id": http_cfg.connection_id,
+            "method": http_cfg.method,
+            "path_template": http_cfg.path_template,
+            "body_template": http_cfg.body_template,
+            "headers": http_cfg.headers,
+        }),
+        ctx,
+    ) {
+        return Ok(approval_body);
+    }
+
     let step_id: RunStepId = Uuid::new_v4().to_string();
     let started_at = Utc::now();
     let step = RunStep {
@@ -2232,6 +2254,28 @@ async fn execute_channel_message(
             std::mem::discriminant(other)
         ),
     };
+
+    // F4-9: when this run's parent campaign carries
+    // `ApprovalPolicy::DraftAndApprove`, the outbound message is a
+    // draft — enqueue + return Succeeded without firing. The user
+    // reviews via `/approvals`; an approve decision re-issues
+    // through this same execute_channel_message with the policy
+    // intercept bypassed.
+    if let Some(approval_body) = maybe_intercept_for_approval(
+        config,
+        run,
+        node,
+        "channel_message",
+        chan_cfg.connection_id.as_str(),
+        serde_json::json!({
+            "connection_id": chan_cfg.connection_id,
+            "channel_id": chan_cfg.channel_id,
+            "body_template": chan_cfg.body_template,
+        }),
+        ctx,
+    ) {
+        return Ok(approval_body);
+    }
 
     let step_id: RunStepId = Uuid::new_v4().to_string();
     let started_at = Utc::now();
@@ -3147,6 +3191,125 @@ pub fn clear_test_entity_store_factory() {
         *slot.lock() = None;
     }
 }
+
+// ── F4-9 draft-and-approve intercept ──────────────────────────────
+
+/// When the current run's workflow belongs to a campaign with
+/// `ApprovalPolicy::DraftAndApprove`, intercept the externally-
+/// visible action: enqueue an approval row + return the step body
+/// `{ queued_for_approval: true, approval_id, ... }` without firing.
+/// Returns `None` when there's no campaign or the policy isn't
+/// draft-and-approve — the caller proceeds with the normal
+/// execute path.
+///
+/// `action_kind` is the slug recorded on the approval row (drives
+/// the re-issue dispatch path); `target` is the recipient-ish
+/// identifier shown in the UI list view; `payload` is the full
+/// action payload re-issued verbatim on approval.
+fn maybe_intercept_for_approval(
+    config: &Config,
+    run: &Run,
+    node: &Node,
+    action_kind: &str,
+    target: &str,
+    payload: serde_json::Value,
+    _ctx: &crate::openhuman::workflows::templating::NodeContext,
+) -> Option<serde_json::Value> {
+    use crate::openhuman::campaigns::approval::ops as approval_ops;
+    use crate::openhuman::campaigns::approval::types::EnqueueApprovalRequest;
+    use crate::openhuman::campaigns::types::ApprovalPolicy;
+
+    // F4-9 re-issue: when the executor is replaying an approved
+    // draft, it sets the env-style sentinel so the second pass
+    // doesn't re-intercept and infinite-loop.
+    if std::env::var(APPROVAL_REISSUE_ENV).is_ok() {
+        return None;
+    }
+    let workflow = store::get_workflow(config, &run.workflow_id).ok().flatten()?;
+    let campaign_id = workflow.campaign_id.clone()?;
+    let campaign =
+        crate::openhuman::campaigns::store::get_campaign(config, &campaign_id).ok().flatten()?;
+    if !matches!(campaign.approval_policy, ApprovalPolicy::DraftAndApprove) {
+        return None;
+    }
+    let approval_id = match approval_ops::enqueue(
+        config,
+        EnqueueApprovalRequest {
+            campaign_id: campaign_id.clone(),
+            workflow_id: run.workflow_id.clone(),
+            run_id: run.id.clone(),
+            node_id: node.id.clone(),
+            action_kind: action_kind.to_string(),
+            target: target.to_string(),
+            payload,
+            context: None,
+        },
+    ) {
+        Ok(id) => id,
+        Err(e) => {
+            tracing::warn!(
+                target: "workflows-run",
+                run = %run.id,
+                node = %node.id,
+                "[approval-intercept] enqueue failed: {e:#}"
+            );
+            return None;
+        }
+    };
+
+    // Persist a Succeeded step row so the run history shows the
+    // drafted action just like a fired one — distinguished by the
+    // `queued_for_approval` flag on the body. Without this, the
+    // intercept would silently no-op and the UI would see the
+    // workflow as "incomplete."
+    let step_id: RunStepId = Uuid::new_v4().to_string();
+    let started_at = Utc::now();
+    let step = RunStep {
+        id: step_id.clone(),
+        run_id: run.id.clone(),
+        node_id: node.id.clone(),
+        status: RunStatus::Running,
+        started_at,
+        completed_at: None,
+        output_json: None,
+        error: None,
+        delivery_receipts: Vec::new(),
+    };
+    let _ = store::insert_run_step(config, &step);
+    publish_global(DomainEvent::WorkflowRunStepStarted {
+        run_id: run.id.clone(),
+        node_id: node.id.clone(),
+    });
+
+    let body = serde_json::json!({
+        "queued_for_approval": true,
+        "approval_id": approval_id,
+        "action_kind": action_kind,
+        "target": target,
+    });
+    let payload_str = serde_json::to_string(&body).unwrap_or_else(|_| "{}".into());
+    let _ = store::update_run_step_terminal(
+        config,
+        &step_id,
+        RunStatus::Succeeded,
+        Utc::now(),
+        Some(payload_str),
+        None,
+        &[],
+    );
+    publish_global(DomainEvent::WorkflowRunStepCompleted {
+        run_id: run.id.clone(),
+        node_id: node.id.clone(),
+        status_json: serde_json::to_value(RunStatus::Succeeded)
+            .unwrap_or(serde_json::Value::Null),
+    });
+    Some(body)
+}
+
+/// Process-env sentinel the re-issue path sets so the second-pass
+/// dispatch bypasses `maybe_intercept_for_approval` and actually
+/// fires the externally-visible action.
+const APPROVAL_REISSUE_ENV: &str = "OPENHUMAN_APPROVAL_REISSUE";
 
 // ── execute_agent_prompt ───────────────────────────────────────────────
 

@@ -56,10 +56,10 @@ fn open_creates_workflows_db_and_applies_all_migrations() {
             .unwrap();
         assert_eq!(
             versions,
-            vec![1, 2, 3, 4, 5, 6, 7, 8, 9],
+            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
             "ledger must record every migration (F2-14 added 004, F2-7b added 005, \
              Phase 2.5 T-1 added 006, Phase 2.5 T-4 added 007, \
-             Phase 4 F4-2 added 008, F4-8 added 009)"
+             Phase 4 F4-2 added 008, F4-8 added 009, F4-9 added 010)"
         );
         Ok(())
     })
@@ -80,10 +80,10 @@ fn re_open_is_idempotent_and_does_not_duplicate_ledger_rows() {
             })
             .unwrap();
         assert_eq!(
-            count, 9,
-            "nine migrations must record exactly nine rows (F2-14 added 004, F2-7b added 005, \
+            count, 10,
+            "ten migrations must record exactly ten rows (F2-14 added 004, F2-7b added 005, \
              Phase 2.5 T-1 added 006, Phase 2.5 T-4 added 007, Phase 4 F4-2 added 008, \
-             F4-8 added 009)"
+             F4-8 added 009, F4-9 added 010)"
         );
         Ok(())
     })

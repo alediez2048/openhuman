@@ -788,6 +788,47 @@ pub enum DomainEvent {
     /// `ON DELETE SET NULL` orphans the child workflows.
     CampaignDeleted { campaign_id: String },
 
+    // ── Campaign approval queue (F4-9) ────────────────────────────────
+    //
+    // Distinct from the chat-agent `ApprovalRequested` / `ApprovalDecided`
+    // pair (see top of file) — those gate single tool calls inside a
+    // chat turn. These gate outbound campaign actions and persist to
+    // the `approval_queue` table.
+    //
+    /// A draft entered the campaign approval queue. Published by
+    /// `campaigns::approval::ops::enqueue` whenever a
+    /// `DraftAndApprove` campaign intercepts an outbound action.
+    /// Push-notification subscribers ping the user via the existing
+    /// notifications surface.
+    CampaignApprovalEnqueued {
+        approval_id: String,
+        campaign_id: String,
+        workflow_id: String,
+        action_kind: String,
+        target: String,
+    },
+    /// The user (or an automation) approved or rejected a pending
+    /// draft. `status_json` is the new `ApprovalStatus` — `Approved`
+    /// triggers the re-issue path, `Rejected` is terminal.
+    CampaignApprovalDecided {
+        approval_id: String,
+        campaign_id: String,
+        status_json: serde_json::Value,
+    },
+    /// The re-issue path successfully fired the externally-visible
+    /// action for an approved draft.
+    CampaignApprovalSent {
+        approval_id: String,
+        campaign_id: String,
+    },
+    /// The re-issue path failed; the draft is in `Failed` state with
+    /// the error attached.
+    CampaignApprovalFailed {
+        approval_id: String,
+        campaign_id: String,
+        error: String,
+    },
+
     // ── Auth ────────────────────────────────────────────────────────────
     /// The local app session is no longer valid — typically detected when
     /// the backend returns 401 to an LLM inference call or a JSON-RPC
@@ -911,7 +952,11 @@ impl DomainEvent {
             | Self::CampaignResumed { .. }
             | Self::CampaignWoundDown { .. }
             | Self::CampaignArchived { .. }
-            | Self::CampaignDeleted { .. } => "campaign",
+            | Self::CampaignDeleted { .. }
+            | Self::CampaignApprovalEnqueued { .. }
+            | Self::CampaignApprovalDecided { .. }
+            | Self::CampaignApprovalSent { .. }
+            | Self::CampaignApprovalFailed { .. } => "campaign",
 
             Self::SessionExpired { .. } => "auth",
 
