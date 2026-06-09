@@ -190,4 +190,8 @@ named = [
     "campaign_propose_pause",
     "campaign_propose_resume",
     "campaign_propose_archive",
+    # F4-10: read-only entity-schema inspector — drafter calls this
+    # mid-chat to mirror real columns back to the user before
+    # emitting a CampaignProposal.
+    "entity_schema_inspect",
 ]

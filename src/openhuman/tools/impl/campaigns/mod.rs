@@ -16,6 +16,7 @@
 //! orchestrator allowlist (`agent/agents/orchestrator/agent.toml`
 //! `[tools].named`) — keep in sync.
 
+mod entity_schema_inspect;
 mod get;
 mod list;
 mod propose_archive;
@@ -26,6 +27,7 @@ mod propose_state;
 #[cfg(test)]
 mod tests;
 
+pub use entity_schema_inspect::EntitySchemaInspectTool;
 pub use get::CampaignGetTool;
 pub use list::CampaignListTool;
 pub use propose_archive::CampaignProposeArchiveTool;
@@ -37,6 +39,7 @@ pub const TOOL_CAMPAIGN_GET: &str = "campaign_get";
 pub const TOOL_CAMPAIGN_PROPOSE_PAUSE: &str = "campaign_propose_pause";
 pub const TOOL_CAMPAIGN_PROPOSE_RESUME: &str = "campaign_propose_resume";
 pub const TOOL_CAMPAIGN_PROPOSE_ARCHIVE: &str = "campaign_propose_archive";
+pub const TOOL_ENTITY_SCHEMA_INSPECT: &str = "entity_schema_inspect";
 
 /// Every campaign agent tool name registered globally. Used by the
 /// allowlist-conformance test to assert the orchestrator's
@@ -47,4 +50,5 @@ pub const ALL_TOOL_NAMES: &[&str] = &[
     TOOL_CAMPAIGN_PROPOSE_PAUSE,
     TOOL_CAMPAIGN_PROPOSE_RESUME,
     TOOL_CAMPAIGN_PROPOSE_ARCHIVE,
+    TOOL_ENTITY_SCHEMA_INSPECT,
 ];

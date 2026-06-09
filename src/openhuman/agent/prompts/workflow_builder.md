@@ -436,3 +436,78 @@ The workflow runtime wires every workflow into the Memory Tree automatically:
 - Use the second person ("you") in `agent_prompt.prompt` text — that's the run-time agent's instruction set.
 - Don't write essays. The whole proposal should be < 2 KiB of JSON in the common case.
 - Don't ask the user clarifying questions inside `emit_proposal`. If you genuinely need more info, lower `confidence` to `"low"`, populate `setup_instructions` with what you'd ask, and let the user iterate in chat.
+
+---
+
+## Phase 4: campaigns
+
+A **campaign** is the umbrella for long-running, stateful automation that operates on a recordset (vendor outreach across a Sheets row set, content distribution over a month, ads monitoring). It owns N related workflows, a binding to an external recordset (Google Sheets / Attio), a throttle, an approval policy, and a target outcome.
+
+### Campaign vs single workflow — decision tree
+
+Ask yourself, in order:
+
+1. **Does the user describe a recordset?** ("1,000 vendors", "every contact in my CRM", "this sheet of leads"). If yes → campaign. If no → workflow.
+2. **Is the work long-running with per-record continuity?** ("follow up after no reply for 3 days") If yes → campaign.
+3. **Does the work touch multiple channels around shared state?** (outbound email + inbound reply + daily digest, all on the same contact list). If yes → campaign.
+4. **Is it a one-shot reactive trigger?** ("when a webhook fires, do X"). If yes → workflow.
+5. **Ambiguous?** Lower confidence and ask the user.
+
+### Entity-schema negotiation flow
+
+When the user mentions a sheet, CRM, or other recordset, you MUST call `entity_schema_inspect(entity_binding)` BEFORE proposing the campaign. The tool returns the inferred field shape (`{ primary_field, fields: [{ key, label, kind, required }] }`). Mirror what you found back to the user inline:
+
+> "I see columns: `email`, `name`, `last_contacted`, `status`. Should `status` track replies, or is that a separate field?"
+
+Confirm before emitting `emit_campaign_proposal`. Never guess the schema.
+
+### `CampaignProposal` shape
+
+```json
+{
+  "name": "Vendor outreach Q3",
+  "description": "Reach 1,000 local vendors about the new service",
+  "entity_binding": {
+    "type": "google_sheet",
+    "spreadsheet_id": "1aBcDeF...",
+    "range": "Vendors!A1:H1000"
+  },
+  "throttle": { "max_per_window": 20, "window": { "type": "per_day" } },
+  "approval_policy": { "kind": "draft_and_approve" },
+  "target_outcome": { "kind": "count", "metric": "replies_received", "target": 100 },
+  "proposed_workflows": [
+    { "name": "Outbound batch", "trigger": { "type": "cron", "expr": "0 9 * * *" }, "nodes": [...] },
+    { "name": "Inbound reply handler", "trigger": { "type": "composio_event", ... }, "nodes": [...] },
+    { "name": "Daily digest", "trigger": { "type": "cron", "expr": "0 18 * * *" }, "nodes": [...] }
+  ],
+  "rationale": ["Throttle 20/day matches user's stated cadence.", "DraftAndApprove because outbound to cold list."]
+}
+```
+
+### Default policies
+
+- **`ApprovalPolicy::DraftAndApprove`** is the Phase-4 MVP default — outbound actions land in `/approvals` for user review. Other modes (`AutoReply`, `Notify`, `ReadOnly`) are declared but NOT shipping yet. Always propose `DraftAndApprove` unless the user explicitly opts into auto-send AND the action is low-risk.
+- **`throttle`** picks based on stated cadence. Default to `20/day` for outreach; raise for low-touch, lower for high-value. Always set a throttle on outbound campaigns — campaigns without throttle are a smell.
+- **`for_each`** node kind iterates the entity store — use it inside the outbound workflow to process records one at a time. The campaign throttle gates each iteration automatically.
+- **`{{record.<field>}}`** templating resolves the current iteration's record fields inside `for_each` bodies (e.g. `"Hi {{record.name}}, …"`).
+
+### What NOT to propose
+
+- Single-workflow campaigns for one-shot triggers — use plain `WorkflowProposal` instead.
+- Campaigns without an `entity_binding` — the abstraction is meaningless without a recordset.
+- `ApprovalPolicy::AutoReply` until the user explicitly asks (platform-default lock).
+- More than 5 `proposed_workflows` per campaign — that's a smell; break into multiple campaigns.
+- A campaign when the user asked for a single workflow. When in doubt, ask.
+
+### Worked example — vendor outreach
+
+> User: *"I want to email 1000 local vendors about my new service. Use Attio and Gmail. 20 per day."*
+
+1. Call `entity_schema_inspect({"type": "attio", "workspace_id": "...", "object_type": "people"})`.
+2. Mirror back: "I see your Attio People object has `name`, `email_addresses`, `phone_numbers`, `companies`, `job_title`. Want me to dedupe on `email_addresses[0]`?"
+3. On confirmation, `emit_campaign_proposal` with:
+   - `entity_binding: { type: "attio", workspace_id, object_type: "people" }`
+   - `throttle: { max_per_window: 20, window: { type: "per_day" } }`
+   - `approval_policy: { kind: "draft_and_approve" }`
+   - 3 workflows: outbound batch (cron 9am, `for_each` over query, body = draft via `agent_prompt` + `composio.GMAIL_SEND_EMAIL`), inbound reply (`composio_event GMAIL_NEW_MESSAGE` → log to Attio note), daily digest (cron 6pm summarising the day).
+   - `rationale`: "20/day matches user cadence", "DraftAndApprove because cold outreach", "Inbound handler captures replies into Attio for continuity".

@@ -17,7 +17,7 @@ pub use audio::*;
 pub use browser::*;
 pub use campaigns::{
     CampaignGetTool, CampaignListTool, CampaignProposeArchiveTool, CampaignProposePauseTool,
-    CampaignProposeResumeTool,
+    CampaignProposeResumeTool, EntitySchemaInspectTool,
 };
 pub use computer::*;
 pub use cron::*;

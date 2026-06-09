@@ -516,12 +516,18 @@ fn phase_constraints_block(phase: u32) -> String {
     } else {
         ""
     };
+    let campaigns_extras = if phase >= 4 {
+        "\n- Campaign-shaped intent: see the \"Phase 4: campaigns\" section in `workflow_builder.md` for the decision tree, `CampaignProposal` shape, and entity-schema negotiation flow\n- Iteration: `for_each` node iterates an `EntityStore` query; `{{record.<field>}}` resolves the current iteration's record\n- Throttle + draft-and-approve: campaign-level `Throttle` gates iteration count; `ApprovalPolicy::DraftAndApprove` (Phase 4 default) routes outbound actions through `/approvals` for user review\n- Tools available: `entity_schema_inspect` returns the recordset's field shape — call it BEFORE proposing a campaign"
+    } else {
+        ""
+    };
     format!(
-        "- Allowed node kinds: {}\n- Allowed triggers: {}\n- on_error policy: {}\n- timeout_secs clamp: [1, 3600]{}",
+        "- Allowed node kinds: {}\n- Allowed triggers: {}\n- on_error policy: {}\n- timeout_secs clamp: [1, 3600]{}{}",
         kind_list.join(", "),
         triggers,
         on_error,
         extras,
+        campaigns_extras,
     )
 }
 

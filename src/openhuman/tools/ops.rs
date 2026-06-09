@@ -203,6 +203,10 @@ pub fn all_tools_with_runtime(
         Box::new(CampaignProposePauseTool::new(config.clone())),
         Box::new(CampaignProposeResumeTool::new(config.clone())),
         Box::new(CampaignProposeArchiveTool::new(config.clone())),
+        // F4-10: read-only entity-schema inspector. Drafter calls
+        // this to mirror the recordset's field shape back to the
+        // user before emitting a CampaignProposal.
+        Box::new(EntitySchemaInspectTool::new(config.clone())),
         // Stubs for connection-resolved send tools the F-8 executor
         // names in `build_node_agent_definition`. The real bodies are
         // Phase 2 (F2-5). Stubs return a clear deferred-feature error
