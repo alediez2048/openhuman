@@ -254,7 +254,9 @@ export default function CampaignDetail() {
                   }}
                   data-testid="campaign-detail-policy-select"
                   className="bg-transparent border border-stone-200 dark:border-neutral-700 rounded px-1.5 py-0.5 text-xs focus:outline-none focus:ring-2 focus:ring-primary-500">
-                  <option value="draft_and_approve">{t('campaigns.card.policy.draft_and_approve')}</option>
+                  <option value="draft_and_approve">
+                    {t('campaigns.card.policy.draft_and_approve')}
+                  </option>
                   <option value="auto_reply">{t('campaigns.card.policy.auto_reply')}</option>
                   <option value="notify">{t('campaigns.card.policy.notify')}</option>
                   <option value="read_only">{t('campaigns.card.policy.read_only')}</option>

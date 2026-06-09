@@ -194,9 +194,7 @@ export function InlineTextarea({
       data-testid={testId}
       title="Click to edit"
       className={`${className ?? ''} cursor-text hover:bg-stone-50 dark:hover:bg-neutral-800 rounded px-1 -mx-1`}>
-      {value || (
-        <span className="text-stone-400 italic">{placeholder || 'Add description…'}</span>
-      )}
+      {value || <span className="text-stone-400 italic">{placeholder || 'Add description…'}</span>}
     </div>
   );
 }
