@@ -650,7 +650,10 @@ fn handle_approvals_approve(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let config = config_rpc::load_config_with_timeout().await?;
         let id = required_string(&params, "id")?;
-        let edited_payload = params.get("edited_payload").cloned().filter(|v| !v.is_null());
+        let edited_payload = params
+            .get("edited_payload")
+            .cloned()
+            .filter(|v| !v.is_null());
         let decided_by = params
             .get("decided_by")
             .and_then(|v| v.as_str())
@@ -680,10 +683,8 @@ fn handle_approvals_reject(params: Map<String, Value>) -> ControllerFuture {
             .and_then(|v| v.as_str())
             .map(str::to_owned);
         to_json(
-            crate::openhuman::campaigns::rpc::approvals_reject(
-                &config, id, reason, decided_by,
-            )
-            .await?,
+            crate::openhuman::campaigns::rpc::approvals_reject(&config, id, reason, decided_by)
+                .await?,
         )
     })
 }
@@ -705,12 +706,8 @@ fn handle_approvals_batch_approve(params: Map<String, Value>) -> ControllerFutur
             .and_then(|v| v.as_str())
             .map(str::to_owned);
         to_json(
-            crate::openhuman::campaigns::rpc::approvals_batch_approve(
-                &config,
-                ids,
-                decided_by,
-            )
-            .await?,
+            crate::openhuman::campaigns::rpc::approvals_batch_approve(&config, ids, decided_by)
+                .await?,
         )
     })
 }

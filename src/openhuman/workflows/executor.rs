@@ -3225,10 +3225,13 @@ fn maybe_intercept_for_approval(
     if std::env::var(APPROVAL_REISSUE_ENV).is_ok() {
         return None;
     }
-    let workflow = store::get_workflow(config, &run.workflow_id).ok().flatten()?;
+    let workflow = store::get_workflow(config, &run.workflow_id)
+        .ok()
+        .flatten()?;
     let campaign_id = workflow.campaign_id.clone()?;
-    let campaign =
-        crate::openhuman::campaigns::store::get_campaign(config, &campaign_id).ok().flatten()?;
+    let campaign = crate::openhuman::campaigns::store::get_campaign(config, &campaign_id)
+        .ok()
+        .flatten()?;
     if !matches!(campaign.approval_policy, ApprovalPolicy::DraftAndApprove) {
         return None;
     }
@@ -3300,8 +3303,7 @@ fn maybe_intercept_for_approval(
     publish_global(DomainEvent::WorkflowRunStepCompleted {
         run_id: run.id.clone(),
         node_id: node.id.clone(),
-        status_json: serde_json::to_value(RunStatus::Succeeded)
-            .unwrap_or(serde_json::Value::Null),
+        status_json: serde_json::to_value(RunStatus::Succeeded).unwrap_or(serde_json::Value::Null),
     });
     Some(body)
 }

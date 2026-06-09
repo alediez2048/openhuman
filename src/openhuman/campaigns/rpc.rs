@@ -145,10 +145,14 @@ pub async fn approvals_approve(
     decided_by: Option<String>,
 ) -> Result<RpcOutcome<crate::openhuman::campaigns::approval::ApprovalEntry>, String> {
     let decided_by = decided_by.unwrap_or_else(|| "user".to_string());
-    let entry =
-        crate::openhuman::campaigns::approval::ops::approve(config, id.clone(), edited_payload, decided_by)
-            .await
-            .map_err(|e| format!("approvals_approve_failed: {e:#}"))?;
+    let entry = crate::openhuman::campaigns::approval::ops::approve(
+        config,
+        id.clone(),
+        edited_payload,
+        decided_by,
+    )
+    .await
+    .map_err(|e| format!("approvals_approve_failed: {e:#}"))?;
     Ok(RpcOutcome::single_log(
         entry,
         format!("approvals_approve id={id}"),
@@ -178,9 +182,10 @@ pub async fn approvals_batch_approve(
     decided_by: Option<String>,
 ) -> Result<RpcOutcome<Vec<crate::openhuman::campaigns::approval::ApprovalEntry>>, String> {
     let decided_by = decided_by.unwrap_or_else(|| "user".to_string());
-    let entries = crate::openhuman::campaigns::approval::ops::batch_approve(config, ids.clone(), decided_by)
-        .await
-        .map_err(|e| format!("approvals_batch_approve_failed: {e:#}"))?;
+    let entries =
+        crate::openhuman::campaigns::approval::ops::batch_approve(config, ids.clone(), decided_by)
+            .await
+            .map_err(|e| format!("approvals_batch_approve_failed: {e:#}"))?;
     Ok(RpcOutcome::single_log(
         entries,
         format!("approvals_batch_approve count={}", ids.len()),

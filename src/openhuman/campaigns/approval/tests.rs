@@ -8,9 +8,7 @@ use tempfile::TempDir;
 use super::store;
 use super::types::{ApprovalDecision, ApprovalStatus, EnqueueApprovalRequest};
 use crate::openhuman::campaigns::store as campaign_store;
-use crate::openhuman::campaigns::types::{
-    ApprovalPolicy, Campaign, CampaignStatus, EntityRef,
-};
+use crate::openhuman::campaigns::types::{ApprovalPolicy, Campaign, CampaignStatus, EntityRef};
 use crate::openhuman::config::Config;
 use crate::openhuman::workflows::store as wf_store;
 use crate::openhuman::workflows::types::{
@@ -118,11 +116,13 @@ fn list_pending_filters_by_campaign_and_status() {
     let _id2 = enqueue_one(&config, &cid, &wid);
     // Approve the first one — it should drop from pending list.
     store::record_decision(&config, &id1, ApprovalStatus::Approved, "user", None).unwrap();
-    let pending =
-        store::list(&config, Some(&cid), Some(ApprovalStatus::Pending)).unwrap();
-    assert_eq!(pending.len(), 1, "only the un-approved row should be pending");
-    let approved =
-        store::list(&config, Some(&cid), Some(ApprovalStatus::Approved)).unwrap();
+    let pending = store::list(&config, Some(&cid), Some(ApprovalStatus::Pending)).unwrap();
+    assert_eq!(
+        pending.len(),
+        1,
+        "only the un-approved row should be pending"
+    );
+    let approved = store::list(&config, Some(&cid), Some(ApprovalStatus::Approved)).unwrap();
     assert_eq!(approved.len(), 1);
     let all = store::list(&config, Some(&cid), None).unwrap();
     assert_eq!(all.len(), 2);
@@ -168,8 +168,8 @@ fn reject_marks_terminal_without_re_issue_path() {
         store::record_decision(&config, &id, ApprovalStatus::Rejected, "user", None).unwrap();
     assert!(matches!(entry.status, ApprovalStatus::Rejected));
     // Subsequent approve attempt must fail since row isn't Pending.
-    let err = store::record_decision(&config, &id, ApprovalStatus::Approved, "user", None)
-        .unwrap_err();
+    let err =
+        store::record_decision(&config, &id, ApprovalStatus::Approved, "user", None).unwrap_err();
     assert!(err.to_string().contains("not pending"), "got: {err}");
 }
 
@@ -178,8 +178,7 @@ fn record_decision_rejects_non_terminal_status() {
     let (_dir, config) = fresh();
     let (cid, wid) = seed_campaign_and_workflow(&config);
     let id = enqueue_one(&config, &cid, &wid);
-    let err = store::record_decision(&config, &id, ApprovalStatus::Sent, "user", None)
-        .unwrap_err();
+    let err = store::record_decision(&config, &id, ApprovalStatus::Sent, "user", None).unwrap_err();
     assert!(err.to_string().contains("must be approved or rejected"));
 }
 
@@ -227,7 +226,9 @@ async fn batch_approve_processes_every_id_skipping_bad_ones() {
     let ids = vec![id1.clone(), bad_id, id2.clone(), id3.clone()];
     let out = batch_approve(&config, ids, "user".into()).await.unwrap();
     assert_eq!(out.len(), 3, "3 valid + 1 bad → 3 approved");
-    assert!(out.iter().all(|e| matches!(e.status, ApprovalStatus::Approved)));
+    assert!(out
+        .iter()
+        .all(|e| matches!(e.status, ApprovalStatus::Approved)));
 }
 
 #[test]

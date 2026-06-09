@@ -7,7 +7,9 @@
 use anyhow::Result;
 
 use super::store;
-use super::types::{ApprovalDecision, ApprovalEntry, ApprovalId, ApprovalStatus, EnqueueApprovalRequest};
+use super::types::{
+    ApprovalDecision, ApprovalEntry, ApprovalId, ApprovalStatus, EnqueueApprovalRequest,
+};
 use crate::core::event_bus::publish_global;
 use crate::core::event_bus::DomainEvent;
 use crate::openhuman::config::Config;
@@ -17,14 +19,15 @@ pub async fn list_pending(
     config: &Config,
     campaign_id: Option<String>,
 ) -> Result<Vec<ApprovalEntry>> {
-    store::list(config, campaign_id.as_deref(), Some(ApprovalStatus::Pending))
+    store::list(
+        config,
+        campaign_id.as_deref(),
+        Some(ApprovalStatus::Pending),
+    )
 }
 
 /// List entries in any status (for history view).
-pub async fn list_all(
-    config: &Config,
-    campaign_id: Option<String>,
-) -> Result<Vec<ApprovalEntry>> {
+pub async fn list_all(config: &Config, campaign_id: Option<String>) -> Result<Vec<ApprovalEntry>> {
     store::list(config, campaign_id.as_deref(), None)
 }
 
@@ -62,8 +65,7 @@ pub async fn approve(
     publish_global(DomainEvent::CampaignApprovalDecided {
         approval_id: id,
         campaign_id: entry.campaign_id.clone(),
-        status_json: serde_json::to_value(entry.status)
-            .unwrap_or(serde_json::Value::Null),
+        status_json: serde_json::to_value(entry.status).unwrap_or(serde_json::Value::Null),
     });
     Ok(entry)
 }
@@ -74,18 +76,11 @@ pub async fn reject(
     _reason: Option<String>,
     decided_by: String,
 ) -> Result<ApprovalEntry> {
-    let entry = store::record_decision(
-        config,
-        &id,
-        ApprovalStatus::Rejected,
-        &decided_by,
-        None,
-    )?;
+    let entry = store::record_decision(config, &id, ApprovalStatus::Rejected, &decided_by, None)?;
     publish_global(DomainEvent::CampaignApprovalDecided {
         approval_id: id,
         campaign_id: entry.campaign_id.clone(),
-        status_json: serde_json::to_value(entry.status)
-            .unwrap_or(serde_json::Value::Null),
+        status_json: serde_json::to_value(entry.status).unwrap_or(serde_json::Value::Null),
     });
     Ok(entry)
 }

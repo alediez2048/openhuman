@@ -20,9 +20,7 @@ pub fn enqueue(config: &Config, req: EnqueueApprovalRequest) -> Result<ApprovalI
     let payload_json =
         serde_json::to_string(&req.payload).context("approval::enqueue payload serialise")?;
     let context_json = match req.context.as_ref() {
-        Some(c) => Some(
-            serde_json::to_string(c).context("approval::enqueue context serialise")?,
-        ),
+        Some(c) => Some(serde_json::to_string(c).context("approval::enqueue context serialise")?),
         None => None,
     };
     let id_for_db = id.clone();
@@ -92,8 +90,7 @@ pub fn list(
     sql.push_str(" ORDER BY created_at DESC");
     with_connection(config, |conn| {
         let mut stmt = conn.prepare(&sql)?;
-        let mut rows = stmt
-            .query(rusqlite::params_from_iter(binds.iter()))?;
+        let mut rows = stmt.query(rusqlite::params_from_iter(binds.iter()))?;
         let mut out = Vec::new();
         while let Some(row) = rows.next()? {
             out.push(row_to_entry(row)?);
@@ -114,7 +111,10 @@ pub fn record_decision(
     decided_by: &str,
     edited_payload: Option<serde_json::Value>,
 ) -> Result<ApprovalEntry> {
-    if !matches!(new_status, ApprovalStatus::Approved | ApprovalStatus::Rejected) {
+    if !matches!(
+        new_status,
+        ApprovalStatus::Approved | ApprovalStatus::Rejected
+    ) {
         return Err(anyhow!(
             "approval::record_decision: new_status must be approved or rejected"
         ));
@@ -123,9 +123,9 @@ pub fn record_decision(
     let id_for_db = id.clone();
     let by_for_db = decided_by.to_string();
     let payload_swap = match edited_payload.as_ref() {
-        Some(p) => Some(
-            serde_json::to_string(p).context("approval::record_decision payload serialise")?,
-        ),
+        Some(p) => {
+            Some(serde_json::to_string(p).context("approval::record_decision payload serialise")?)
+        }
         None => None,
     };
     with_connection(config, |conn| {
@@ -159,12 +159,7 @@ pub fn record_decision(
             conn.execute(
                 "UPDATE approval_queue SET status = ?2, decided_at = ?3, decided_by = ?4 \
                  WHERE id = ?1",
-                params![
-                    id_for_db,
-                    new_status.as_str(),
-                    now.to_rfc3339(),
-                    by_for_db,
-                ],
+                params![id_for_db, new_status.as_str(), now.to_rfc3339(), by_for_db,],
             )?;
         }
         Ok(())
@@ -214,11 +209,16 @@ fn row_to_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<ApprovalEntry> {
         node_id: row.get(4)?,
         action_kind: row.get(5)?,
         target: row.get(6)?,
-        payload: serde_json::from_str(&payload_json)
-            .map_err(|e| rusqlite::Error::FromSqlConversionFailure(7, rusqlite::types::Type::Text, Box::new(e)))?,
+        payload: serde_json::from_str(&payload_json).map_err(|e| {
+            rusqlite::Error::FromSqlConversionFailure(7, rusqlite::types::Type::Text, Box::new(e))
+        })?,
         context: match context_json {
             Some(s) => Some(serde_json::from_str(&s).map_err(|e| {
-                rusqlite::Error::FromSqlConversionFailure(8, rusqlite::types::Type::Text, Box::new(e))
+                rusqlite::Error::FromSqlConversionFailure(
+                    8,
+                    rusqlite::types::Type::Text,
+                    Box::new(e),
+                )
             })?),
             None => None,
         },
@@ -226,7 +226,11 @@ fn row_to_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<ApprovalEntry> {
         created_at: chrono::DateTime::parse_from_rfc3339(&created_at_str)
             .map(|d| d.with_timezone(&Utc))
             .map_err(|e| {
-                rusqlite::Error::FromSqlConversionFailure(10, rusqlite::types::Type::Text, Box::new(e))
+                rusqlite::Error::FromSqlConversionFailure(
+                    10,
+                    rusqlite::types::Type::Text,
+                    Box::new(e),
+                )
             })?,
         decided_at: match decided_at_str {
             Some(s) => Some(
