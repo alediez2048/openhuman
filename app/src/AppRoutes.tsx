@@ -7,6 +7,7 @@ import PublicRoute from './components/PublicRoute';
 import HumanPage from './features/human/HumanPage';
 import { getIsMobile } from './lib/platform';
 import Accounts from './pages/Accounts';
+import CampaignDetail from './pages/Campaigns/CampaignDetail';
 import CampaignsList from './pages/Campaigns/CampaignsList';
 import Connections from './pages/Connections';
 import Home from './pages/Home';
@@ -112,6 +113,14 @@ const AppRoutes = () => {
         element={
           <ProtectedRoute requireAuth={true}>
             <CampaignsList />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/campaigns/:id"
+        element={
+          <ProtectedRoute requireAuth={true}>
+            <CampaignDetail />
           </ProtectedRoute>
         }
       />

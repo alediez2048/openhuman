@@ -611,6 +611,27 @@ const en5: TranslationMap = {
   'campaigns.card.policy.auto_reply': 'Auto-reply',
   'campaigns.card.policy.notify': 'Notify',
   'campaigns.card.policy.read_only': 'Read-only',
+  // F4-12 detail view
+  'campaigns.detail.back': 'Back to campaigns',
+  'campaigns.detail.not_found': 'Campaign not found.',
+  'campaigns.detail.no_id': 'Missing campaign id in URL.',
+  'campaigns.detail.load_error': 'Could not load this campaign.',
+  'campaigns.detail.discuss': 'Discuss in chat',
+  'campaigns.detail.overview_title': 'Overview',
+  'campaigns.detail.entity_binding': 'Source',
+  'campaigns.detail.approval_policy': 'Approval policy',
+  'campaigns.detail.throttle': 'Throttle',
+  'campaigns.detail.throttle_used': 'used this window',
+  'campaigns.detail.target_outcome': 'Target outcome',
+  'campaigns.detail.created_at': 'Created',
+  'campaigns.detail.pending_approvals': '{count} draft(s) waiting for your approval',
+  'campaigns.detail.review_approvals': 'Review',
+  'campaigns.detail.subworkflows_title': 'Sub-workflows ({count})',
+  'campaigns.detail.no_subworkflows':
+    'No workflows assigned to this campaign yet. Use the chat to add one.',
+  'campaigns.detail.subworkflow_nodes': 'nodes',
+  'campaigns.detail.subworkflow_edit_link': 'Edit in /workflows →',
+  'campaigns.detail.provenance': 'Created on {date}',
 
   // Workflows (Phase 1 / F-4).
   'nav.workflows': 'Workflows',
