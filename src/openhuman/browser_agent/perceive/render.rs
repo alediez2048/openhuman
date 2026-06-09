@@ -44,7 +44,11 @@ pub fn to_llm_text(snap: &PageSnapshot, tier: DetailTier) -> String {
         DetailTier::Verbose => 1500,
     };
     if text_budget > 0 && !snap.text_content.is_empty() {
-        let take = snap.text_content.chars().take(text_budget).collect::<String>();
+        let take = snap
+            .text_content
+            .chars()
+            .take(text_budget)
+            .collect::<String>();
         out.push_str("\n--- page text ---\n");
         out.push_str(&take);
         if snap.text_content.len() > take.len() {
@@ -86,10 +90,17 @@ fn render_one(out: &mut String, el: &ActionableElement, tier: DetailTier) {
 
     // Attribute trail — href for links, type for inputs, etc.
     let attrs_summary = match (&el.role, tier) {
-        (ElementRole::Link, _) => el.attributes.get("href").map(|h| format!(" → {}", trim(h, 60))),
+        (ElementRole::Link, _) => el
+            .attributes
+            .get("href")
+            .map(|h| format!(" → {}", trim(h, 60))),
         (ElementRole::Input, tier) => {
             let t = el.attributes.get("type").cloned().unwrap_or_default();
-            let placeholder = el.attributes.get("placeholder").cloned().unwrap_or_default();
+            let placeholder = el
+                .attributes
+                .get("placeholder")
+                .cloned()
+                .unwrap_or_default();
             let mut parts = Vec::new();
             if !t.is_empty() {
                 parts.push(format!("type={t}"));
@@ -103,9 +114,10 @@ fn render_one(out: &mut String, el: &ActionableElement, tier: DetailTier) {
                 Some(format!(" [{}]", parts.join(", ")))
             }
         }
-        (ElementRole::IframePresent { .. }, _) => {
-            el.attributes.get("src").map(|s| format!(" src={}", trim(s, 60)))
-        }
+        (ElementRole::IframePresent { .. }, _) => el
+            .attributes
+            .get("src")
+            .map(|s| format!(" src={}", trim(s, 60))),
         _ => None,
     };
     if let Some(s) = attrs_summary {

@@ -14,12 +14,7 @@ use crate::openhuman::browser_agent::cdp::session::CdpSession;
 use crate::openhuman::browser_agent::cdp::transport::{CdpTransport, MockTransport};
 
 fn session(mock: Arc<MockTransport>) -> CdpSession {
-    CdpSession::from_transport(
-        "t",
-        "u",
-        "s",
-        mock as Arc<dyn CdpTransport>,
-    )
+    CdpSession::from_transport("t", "u", "s", mock as Arc<dyn CdpTransport>)
 }
 
 // ── parse_dom_extractor_output ─────────────────────────────────
@@ -131,7 +126,10 @@ fn parse_classifies_iframe_and_falls_back_to_other_for_unknown_tags() {
         ]
     });
     let snap = parse_dom_extractor_output(&raw).unwrap();
-    assert!(matches!(snap.elements[0].role, ElementRole::IframePresent { .. }));
+    assert!(matches!(
+        snap.elements[0].role,
+        ElementRole::IframePresent { .. }
+    ));
     match &snap.elements[1].role {
         ElementRole::Other { tag } => assert_eq!(tag, "details"),
         other => panic!("expected Other, got {other:?}"),
@@ -189,7 +187,10 @@ fn render_compact_caps_at_30_elements_and_skips_text() {
     let text = to_llm_text(&snap, DetailTier::Compact);
     let line_count = text.lines().filter(|l| l.starts_with('[')).count();
     assert_eq!(line_count, 30, "compact caps at 30");
-    assert!(!text.contains("--- page text ---"), "compact skips text excerpt");
+    assert!(
+        !text.contains("--- page text ---"),
+        "compact skips text excerpt"
+    );
 }
 
 #[test]
@@ -276,6 +277,8 @@ async fn snapshot_propagates_cdp_error_when_evaluate_fails() {
         }),
     );
     let sess = session(mock.clone());
-    let err = snapshot(&sess, SnapshotOptions::default()).await.unwrap_err();
+    let err = snapshot(&sess, SnapshotOptions::default())
+        .await
+        .unwrap_err();
     assert!(format!("{err}").contains("evaluate"), "got: {err}");
 }

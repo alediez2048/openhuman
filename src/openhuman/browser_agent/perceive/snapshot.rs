@@ -79,7 +79,9 @@ pub fn estimate_tokens(text: &str) -> usize {
 
 /// Parses the JSON the DOM extractor returns into a typed
 /// `PageSnapshot`. Pub(crate) so the tests can poke at the shape.
-pub(crate) fn parse_dom_extractor_output(raw: &serde_json::Value) -> Result<PageSnapshot, CdpError> {
+pub(crate) fn parse_dom_extractor_output(
+    raw: &serde_json::Value,
+) -> Result<PageSnapshot, CdpError> {
     let url = raw
         .get("url")
         .and_then(|v| v.as_str())
@@ -129,7 +131,11 @@ pub(crate) fn parse_dom_extractor_output(raw: &serde_json::Value) -> Result<Page
 }
 
 fn parse_one_element(id: u32, raw: &serde_json::Value) -> ActionableElement {
-    let tag = raw.get("tag").and_then(|v| v.as_str()).unwrap_or("div").to_string();
+    let tag = raw
+        .get("tag")
+        .and_then(|v| v.as_str())
+        .unwrap_or("div")
+        .to_string();
     let role_hint = raw.get("role_hint").and_then(|v| v.as_str());
     let attrs_obj = raw.get("attrs").and_then(|v| v.as_object());
     let attr_type = attrs_obj
@@ -160,16 +166,36 @@ fn parse_one_element(id: u32, raw: &serde_json::Value) -> ActionableElement {
     ActionableElement {
         id,
         role,
-        label: raw.get("label").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        label: raw
+            .get("label")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
         state: ElementState {
-            disabled: raw.get("disabled").and_then(|v| v.as_bool()).unwrap_or(false),
-            checked: raw.get("checked").and_then(|v| v.as_bool()).unwrap_or(false),
-            expanded: raw.get("expanded").and_then(|v| v.as_bool()).unwrap_or(false),
-            focused: raw.get("focused").and_then(|v| v.as_bool()).unwrap_or(false),
+            disabled: raw
+                .get("disabled")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+            checked: raw
+                .get("checked")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+            expanded: raw
+                .get("expanded")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+            focused: raw
+                .get("focused")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
             hidden: raw.get("hidden").and_then(|v| v.as_bool()).unwrap_or(false),
         },
         bounds,
-        xpath: raw.get("xpath").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        xpath: raw
+            .get("xpath")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
         attributes,
     }
 }
@@ -200,6 +226,8 @@ fn classify_role(tag: &str, role_hint: Option<&str>, input_type: &str) -> Elemen
             "radio" => ElementRole::Radio,
             _ => ElementRole::Input,
         },
-        other => ElementRole::Other { tag: other.to_string() },
+        other => ElementRole::Other {
+            tag: other.to_string(),
+        },
     }
 }
