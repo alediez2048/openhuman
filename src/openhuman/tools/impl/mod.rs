@@ -1,6 +1,7 @@
 pub mod agent;
 pub mod audio;
 pub mod browser;
+pub mod browser_agent;
 pub mod campaigns;
 pub mod computer;
 pub mod cron;
@@ -15,6 +16,7 @@ pub mod workflows;
 pub use agent::*;
 pub use audio::*;
 pub use browser::*;
+pub use browser_agent::{BrowserActTool, BrowserExtractTool, BrowserObserveTool};
 pub use campaigns::{
     CampaignGetTool, CampaignListTool, CampaignProposeArchiveTool, CampaignProposePauseTool,
     CampaignProposeResumeTool, EntitySchemaInspectTool,

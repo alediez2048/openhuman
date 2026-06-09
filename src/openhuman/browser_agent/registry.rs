@@ -121,14 +121,22 @@ mod tests {
         CdpSession::from_transport("t", uid, sid, transport)
     }
 
+    // NOTE: `SessionRegistry` is a process-global singleton, so these
+    // tests share state with one another AND with the F3-3 tool tests
+    // (which also stash sessions in it). Each test must use a UNIQUE
+    // `(user_id, run_id)` tuple and MUST NOT call `drain_for_tests`,
+    // since `cargo test` runs them in parallel and a drain in one
+    // test will wipe a sibling's entry mid-flight.
+
     #[tokio::test]
     async fn open_or_attach_caches_after_first_open() {
         let reg = SessionRegistry::instance();
-        reg.drain_for_tests();
-        let user = "u_cache".to_string();
+        let user = "registry_test_u_cache".to_string();
         let run = "r1".to_string();
         let s1 = reg
-            .open_or_attach(&user, &run, || async { Ok(make_session("u_cache", "s1")) })
+            .open_or_attach(&user, &run, || async {
+                Ok(make_session("registry_test_u_cache", "s1"))
+            })
             .await
             .unwrap();
         let s2 = reg
@@ -143,18 +151,23 @@ mod tests {
     #[tokio::test]
     async fn get_returns_none_when_no_session_open() {
         let reg = SessionRegistry::instance();
-        reg.drain_for_tests();
-        assert!(reg.get(&"missing".into(), &"r".into()).is_none());
+        assert!(reg
+            .get(
+                &"registry_test_never_inserted".into(),
+                &"r_never".into()
+            )
+            .is_none());
     }
 
     #[tokio::test]
     async fn release_removes_entry_so_next_open_creates_fresh() {
         let reg = SessionRegistry::instance();
-        reg.drain_for_tests();
-        let user = "u_release".to_string();
+        let user = "registry_test_u_release".to_string();
         let run = "r1".to_string();
         let _ = reg
-            .open_or_attach(&user, &run, || async { Ok(make_session("u_release", "s1")) })
+            .open_or_attach(&user, &run, || async {
+                Ok(make_session("registry_test_u_release", "s1"))
+            })
             .await
             .unwrap();
         let removed = reg.release(&user, &run);

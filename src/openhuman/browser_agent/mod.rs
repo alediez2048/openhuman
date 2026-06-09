@@ -47,3 +47,4 @@
 
 pub mod cdp;
 pub mod perceive;
+pub mod registry;

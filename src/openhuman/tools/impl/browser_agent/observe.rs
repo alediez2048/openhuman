@@ -1,0 +1,128 @@
+//! F3-3 — `browser_observe` tool.
+//!
+//! "What's on the page right now?" — calls
+//! [`crate::openhuman::browser_agent::perceive::snapshot`] on the
+//! session resolved from the [`SessionRegistry`], renders the result
+//! at the requested detail tier, returns the rendered text as the
+//! markdown payload + a JSON sidecar with the structured snapshot.
+
+use anyhow::Result;
+use async_trait::async_trait;
+use serde_json::{json, Value};
+
+use crate::openhuman::browser_agent::perceive::{snapshot, DetailTier, SnapshotOptions};
+use crate::openhuman::browser_agent::registry::SessionRegistry;
+use crate::openhuman::tools::traits::{
+    PermissionLevel, Tool, ToolCallOptions, ToolCategory, ToolResult,
+};
+
+pub struct BrowserObserveTool;
+
+impl BrowserObserveTool {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Default for BrowserObserveTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl Tool for BrowserObserveTool {
+    fn name(&self) -> &str {
+        super::constants::TOOL_BROWSER_OBSERVE
+    }
+
+    fn description(&self) -> &str {
+        "Observe the current browser page. Returns the page URL, title, and a list of \
+         actionable elements (`[N] role \"label\"`). Address elements by `[N]` in \
+         subsequent `browser_act` / `browser_extract` calls. Set `detail` to \
+         `compact` (~500 tokens, top 30 elements only), `standard` (default, every \
+         element + short text excerpt), or `verbose` (every element + full attribute \
+         dump + larger text excerpt). Use `verbose` only when you need to disambiguate \
+         between similar elements."
+    }
+
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "user_id": {
+                    "type": "string",
+                    "description": "Workflow run's user id (injected by the executor)."
+                },
+                "run_id": {
+                    "type": "string",
+                    "description": "Workflow run id (injected by the executor)."
+                },
+                "detail": {
+                    "type": "string",
+                    "enum": ["compact", "standard", "verbose"],
+                    "default": "standard"
+                }
+            },
+            "required": ["user_id", "run_id"]
+        })
+    }
+
+    fn permission_level(&self) -> PermissionLevel {
+        PermissionLevel::ReadOnly
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::System
+    }
+
+    async fn execute(&self, args: Value) -> Result<ToolResult> {
+        self.execute_with_options(args, ToolCallOptions::default()).await
+    }
+
+    async fn execute_with_options(
+        &self,
+        args: Value,
+        _options: ToolCallOptions,
+    ) -> Result<ToolResult> {
+        let Some(user_id) = args.get("user_id").and_then(|v| v.as_str()) else {
+            return Ok(ToolResult::error("browser_observe: `user_id` required"));
+        };
+        let Some(run_id) = args.get("run_id").and_then(|v| v.as_str()) else {
+            return Ok(ToolResult::error("browser_observe: `run_id` required"));
+        };
+        let tier = parse_tier(args.get("detail"));
+
+        let Some(session) = SessionRegistry::instance()
+            .get(&user_id.to_string(), &run_id.to_string())
+        else {
+            return Ok(ToolResult::error(
+                "browser_observe: no active session for this run. \
+                 The BrowserAction node (F3-4) opens one on dispatch — \
+                 calling observe before the node ran is the usual cause.",
+            ));
+        };
+
+        let snap = match snapshot(&session, SnapshotOptions::default()).await {
+            Ok(s) => s,
+            Err(e) => return Ok(ToolResult::error(format!("browser_observe: {e}"))),
+        };
+        let rendered =
+            crate::openhuman::browser_agent::perceive::to_llm_text(&snap, tier);
+        let payload = json!({
+            "url": snap.url,
+            "title": snap.title,
+            "element_count": snap.elements.len(),
+            "token_estimate": snap.snapshot_token_estimate,
+        });
+        Ok(ToolResult::success_with_markdown(payload, rendered))
+    }
+}
+
+fn parse_tier(v: Option<&Value>) -> DetailTier {
+    match v.and_then(|x| x.as_str()).unwrap_or("standard") {
+        "compact" => DetailTier::Compact,
+        "verbose" => DetailTier::Verbose,
+        _ => DetailTier::Standard,
+    }
+}

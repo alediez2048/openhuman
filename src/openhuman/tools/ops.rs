@@ -266,6 +266,15 @@ pub fn all_tools_with_runtime(
             security.clone(),
         )),
         Box::new(GmailUnsubscribeTool),
+        // F3-3: workflow-only browser-agent surface (observe / act /
+        // extract). NOT added to the orchestrator allowlist in Phase
+        // 3.1 per the ticket — F-16's `workflow_node` archetype +
+        // F3-4's `BrowserAction` node kind pull these in per-workflow
+        // via `build_node_agent_definition` when a workflow declares
+        // browser-capable connections.
+        Box::new(BrowserObserveTool::new()),
+        Box::new(BrowserActTool::new()),
+        Box::new(BrowserExtractTool::new()),
     ];
 
     if browser_config.enabled {
