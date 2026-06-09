@@ -83,6 +83,8 @@ pub fn allowed_node_kinds(phase: u32) -> &'static [NodeKind] {
             NodeKind::Transform,
             NodeKind::AwaitHumanApproval,
             NodeKind::FanOut,
+            // F3-4: browser-driven UI automation node.
+            NodeKind::BrowserAction,
         ],
         // Phase 4+ adds `ForEach` (F4-7). Transform / AwaitHumanApproval /
         // FanOut still ride along — they were Phase-3 placeholders.
@@ -97,6 +99,7 @@ pub fn allowed_node_kinds(phase: u32) -> &'static [NodeKind] {
             NodeKind::AwaitHumanApproval,
             NodeKind::FanOut,
             NodeKind::ForEach,
+            NodeKind::BrowserAction,
         ],
     }
 }
@@ -492,6 +495,105 @@ pub fn validate(
                                  (campaign-inheritance lands with F4-10)"
                             .into(),
                     });
+                }
+            }
+            NodeConfig::BrowserAction(cfg) => {
+                if cfg.goal.trim().is_empty() {
+                    return Err(ProposalValidationError::InvalidNodeConfig {
+                        node_id: node.id.clone(),
+                        node_kind: node.kind,
+                        reason: "browser_action.goal must be non-empty".into(),
+                    });
+                }
+                if cfg.iteration_cap == 0 || cfg.iteration_cap > 50 {
+                    return Err(ProposalValidationError::InvalidNodeConfig {
+                        node_id: node.id.clone(),
+                        node_kind: node.kind,
+                        reason: format!(
+                            "browser_action.iteration_cap must be in [1, 50] (got {})",
+                            cfg.iteration_cap
+                        ),
+                    });
+                }
+                if let Some(ref url) = cfg.start_url {
+                    // We accept either a fully-resolved URL or a
+                    // `{{...}}`-templated reference. A reference is
+                    // pre-substituted at dispatch; the parser only
+                    // sees the resolved form. Empty is the un-fillable
+                    // bad case, plus an obvious literal missing-scheme.
+                    if url.trim().is_empty() {
+                        return Err(ProposalValidationError::InvalidNodeConfig {
+                            node_id: node.id.clone(),
+                            node_kind: node.kind,
+                            reason: "browser_action.start_url must be non-empty when set".into(),
+                        });
+                    }
+                    let looks_templated = url.contains("{{");
+                    if !looks_templated && url::Url::parse(url).is_err() {
+                        return Err(ProposalValidationError::InvalidNodeConfig {
+                            node_id: node.id.clone(),
+                            node_kind: node.kind,
+                            reason: format!(
+                                "browser_action.start_url is not a parseable URL (got `{url}`)"
+                            ),
+                        });
+                    }
+                }
+                for host in &cfg.allowed_hosts {
+                    let h = host.trim();
+                    if h.is_empty() {
+                        return Err(ProposalValidationError::InvalidNodeConfig {
+                            node_id: node.id.clone(),
+                            node_kind: node.kind,
+                            reason: "browser_action.allowed_hosts entries must be non-empty"
+                                .into(),
+                        });
+                    }
+                    // Hostnames don't carry schemes/slashes. A literal
+                    // `https://...` here is the typical drafter slip.
+                    if h.contains('/') || h.contains(':') {
+                        return Err(ProposalValidationError::InvalidNodeConfig {
+                            node_id: node.id.clone(),
+                            node_kind: node.kind,
+                            reason: format!(
+                                "browser_action.allowed_hosts entry `{h}` must be a bare hostname (no scheme/path)"
+                            ),
+                        });
+                    }
+                }
+                // `ReuseAuthenticated { provider }` requires a matching
+                // Webview connection in allowed_connections. Validator-
+                // only check; the live snapshot match runs at dispatch.
+                if let crate::openhuman::browser_agent::cdp::types::BrowserProfile::ReuseAuthenticated {
+                    provider,
+                } = &cfg.profile
+                {
+                    let allowed_matches = cfg.allowed_connections.iter().any(|c| {
+                        matches!(
+                            c,
+                            ConnectionRef::Webview { provider: p, .. } if p == provider
+                        )
+                    });
+                    if !allowed_matches {
+                        return Err(ProposalValidationError::InvalidNodeConfig {
+                            node_id: node.id.clone(),
+                            node_kind: node.kind,
+                            reason: format!(
+                                "browser_action.profile = reuse_authenticated{{provider={provider}}} \
+                                 requires a matching ConnectionRef::Webview in allowed_connections"
+                            ),
+                        });
+                    }
+                }
+                // allowed_connections must all be connected (mirrors
+                // AgentPromptConfig's check).
+                for r in &cfg.allowed_connections {
+                    if !connections.is_connected(r) {
+                        return Err(ProposalValidationError::UnknownConnection {
+                            r#ref: r.clone(),
+                            candidates: fuzzy_candidates(r, connections),
+                        });
+                    }
                 }
             }
         }

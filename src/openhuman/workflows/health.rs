@@ -163,6 +163,15 @@ pub fn referenced_connections(workflow: &Workflow) -> Vec<ConnectionRef> {
             // connection — its body nodes (matched on their own
             // pass) carry the connection refs.
             NodeConfig::ForEach(_) => {}
+            // F3-4: browser_action carries its own allowed_connections
+            // (typically a single `ConnectionRef::Webview` when the
+            // profile is `ReuseAuthenticated`). EphemeralIsolated
+            // profiles still walk the list — it may be empty.
+            NodeConfig::BrowserAction(cfg) => {
+                for r in &cfg.allowed_connections {
+                    push_unique(r, &mut out);
+                }
+            }
         }
     }
     out

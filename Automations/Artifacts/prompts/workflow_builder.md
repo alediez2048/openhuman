@@ -154,7 +154,37 @@ Each `kind` discriminates the matching `config` shape:
     "kind": "delay",
     "seconds": 60                                // 1..=86400 (24h cap)
 }}
+
+{ "kind": "browser_action", "config": {
+    "kind": "browser_action",
+    "goal": "Log into LinkedIn, navigate to /messages, DM each connection in the list.",
+    "start_url": "https://linkedin.com/messages",  // optional; templating supported
+    "profile": { "type": "reuse_authenticated", "provider": "linkedin" },
+    // | { "type": "ephemeral_isolated" }   (default — fresh per-run profile, no inherited cookies)
+    // | { "type": "named_persistent", "name": "linkedin-bot" }
+    "allowed_connections": [
+        { "type": "webview", "provider": "linkedin", "account_id": "<id>" }
+    ],
+    "iteration_cap": 25,                          // 1..=50 — browser tasks need more cycles than agent_prompt
+    "allowed_hosts": ["linkedin.com"],            // bare hostnames only; empty = no restriction (avoid)
+    "output_schema": null                         // optional JSON Schema; when set, agent's final text must be JSON
+}}
 ```
+
+### Phase 3 — `browser_action` node (UI automation)
+
+Use **`browser_action`** for tasks where no Composio / MCP / Channel / Generic HTTP route exists — typically actions inside a third-party web app that has no programmatic API for that surface (e.g. LinkedIn DMs, Notion comments on a specific block, Sora's video editor). The node runs a CDP-attached browser sub-agent with three tools (`browser_observe`, `browser_act`, `browser_extract`) and works against the user's already-authenticated webview session when `profile = reuse_authenticated`.
+
+**Decision tree.** When the user asks for an action, walk this order BEFORE reaching for `browser_action`:
+1. Is there a Composio tool that does this? (`composio_list_tools` to check.) → emit a `tool_call` node with `composio_execute`.
+2. Is there a channel-connection equivalent (Slack/Discord/Telegram/Email)? → emit a `channel_message` node.
+3. Is there a Generic HTTP connection or a built-in MCP server? → emit `http_request` or `tool_call` with `mcp_call_tool`.
+4. Only when none of the above apply: emit `browser_action`. It's the most expensive (live browser + LLM agent loop) and the most fragile (UI selectors change).
+
+**Safety defaults to enforce in your draft:**
+- Set `allowed_hosts` to the minimal list of bare hostnames the goal needs. An empty list grants access to the entire web — only do this if the user explicitly asks for unrestricted browsing.
+- Default `profile` to `ephemeral_isolated` UNLESS the goal genuinely requires an authenticated session — and when it does, the validator REQUIRES a matching `webview` connection in `allowed_connections`. Without that, the proposal is rejected with `InvalidNodeConfig { reason: "browser_action.profile = reuse_authenticated{...} requires a matching ConnectionRef::Webview in allowed_connections" }`.
+- `iteration_cap` defaults to 25 (validator clamps to `[1, 50]`). Don't bump higher unless the user explicitly describes a long multi-step UI flow.
 
 ### Inter-node templating (OQ-7)
 

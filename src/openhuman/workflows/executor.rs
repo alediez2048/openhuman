@@ -86,8 +86,8 @@ use crate::openhuman::workflows::memory as workflow_memory;
 use crate::openhuman::workflows::run_context;
 use crate::openhuman::workflows::store;
 use crate::openhuman::workflows::types::{
-    AgentPromptConfig, Node, NodeConfig, NodeKind, Run, RunId, RunStatus, RunStep, RunStepId,
-    TriggerSource, Workflow, WorkflowId,
+    AgentPromptConfig, BrowserActionConfig, Node, NodeConfig, NodeKind, Run, RunId, RunStatus,
+    RunStep, RunStepId, TriggerSource, Workflow, WorkflowId,
 };
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -1349,6 +1349,11 @@ pub(crate) async fn dispatch_node(
         // future type still chases itself without the indirection,
         // overflowing the stack as state-machine generation expands.
         NodeConfig::ForEach(_) => Box::pin(execute_for_each(config, run, node, ctx)).await,
+        // F3-4: browser_action drives a CDP-attached page via the
+        // F3-3 sub-agent. Session lifecycle is per-(user, run) via
+        // `SessionRegistry`; the executor opens at first dispatch and
+        // releases on terminal run status.
+        NodeConfig::BrowserAction(_) => execute_browser_action(config, run, node, ctx).await,
     }
 }
 
@@ -3560,6 +3565,443 @@ async fn execute_agent_prompt(
         .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
         .unwrap_or(serde_json::Value::Null);
     Ok(body_value)
+}
+
+/// F3-4: tools the browser-agent sub-agent gets in addition to the
+/// baseline `workflow_node` allowlist. Order is stable so the
+/// downstream allowlist test can assert verbatim.
+pub(crate) const BROWSER_AGENT_TOOL_NAMES: &[&str] =
+    &["browser_observe", "browser_act", "browser_extract"];
+
+/// F3-4: build the agent definition for a `BrowserAction` node.
+///
+/// Same shape as [`build_node_agent_definition`] (baseline +
+/// connection-resolved + read-only workflow tools) but with the three
+/// F3-3 browser tools appended. Dedup at the end so a workflow whose
+/// `allowed_connections` happens to include one of the browser tool
+/// names by coincidence (theoretical) doesn't add it twice.
+pub(crate) fn build_browser_action_agent_definition(
+    cfg: &BrowserActionConfig,
+) -> NodeAgentDefinition {
+    let mut def = build_node_agent_definition(
+        &cfg.allowed_connections,
+        cfg.iteration_cap,
+        None, // model_tier is per-config in AgentPrompt; BrowserAction sticks with the workflow_node default
+    );
+    for name in BROWSER_AGENT_TOOL_NAMES {
+        if !def.allowed_tools.iter().any(|t| t == name) {
+            def.allowed_tools.push((*name).into());
+        }
+    }
+    def
+}
+
+/// F3-4: open or attach a `CdpSession` for this workflow run.
+///
+/// Production callers route through `WsTransport` — which is **stubbed**
+/// in Phase 3.1 per [`crate::openhuman::browser_agent::cdp::transport`].
+/// Until F3-5/F3-6 wires the live WebSocket impl, calls land on the
+/// stub and bubble up `CdpError::Other("WsTransport not yet
+/// implemented")` as a clear, actionable failure (rather than a panic
+/// or opaque empty response).
+///
+/// Tests inject a closure via [`set_test_browser_session_opener`] so
+/// the dispatch path (validator → executor → session → agent loop) can
+/// be exercised end-to-end with a `MockTransport` without depending on
+/// CEF actually running.
+async fn open_browser_session_for_run(
+    cfg: &BrowserActionConfig,
+    user_id: &str,
+    run_id: &str,
+) -> Result<std::sync::Arc<crate::openhuman::browser_agent::cdp::CdpSession>> {
+    let registry = crate::openhuman::browser_agent::registry::SessionRegistry::instance();
+    let user = user_id.to_string();
+    let run = run_id.to_string();
+    let profile = cfg.profile.clone();
+    let opener_user = user.clone();
+    let opener_run = run.clone();
+    let session = registry
+        .open_or_attach(&user, &run, move || async move {
+            #[cfg(test)]
+            {
+                if let Some(opener) = current_test_browser_session_opener() {
+                    return opener(&opener_user, &opener_run, &profile);
+                }
+            }
+            // Production (Phase 3.1): WsTransport is a stub. The first
+            // `call()` would return CdpError::Other; we surface that
+            // here at session-open time so the run fails fast with a
+            // clear reason rather than midway through the agent loop.
+            anyhow::bail!(
+                "browser_action: live CDP transport not yet wired in Phase 3.1 \
+                 (WsTransport is a stub; F3-5/F3-6 enable it). \
+                 Profile requested: {:?}, user={}, run={}",
+                profile,
+                opener_user,
+                opener_run
+            )
+        })
+        .await?;
+    Ok(session)
+}
+
+/// Test-only override for [`open_browser_session_for_run`]. Returns the
+/// CdpSession the test wants to install — typically backed by
+/// `MockTransport` with pre-queued expectations.
+#[cfg(test)]
+type TestBrowserSessionOpener = std::sync::Arc<
+    dyn Fn(
+            &str,
+            &str,
+            &crate::openhuman::browser_agent::cdp::types::BrowserProfile,
+        ) -> Result<crate::openhuman::browser_agent::cdp::CdpSession>
+        + Send
+        + Sync,
+>;
+
+#[cfg(test)]
+static TEST_BROWSER_SESSION_OPENER: std::sync::OnceLock<
+    std::sync::Mutex<Option<TestBrowserSessionOpener>>,
+> = std::sync::OnceLock::new();
+
+#[cfg(test)]
+pub fn set_test_browser_session_opener(
+    f: impl Fn(
+            &str,
+            &str,
+            &crate::openhuman::browser_agent::cdp::types::BrowserProfile,
+        ) -> Result<crate::openhuman::browser_agent::cdp::CdpSession>
+        + Send
+        + Sync
+        + 'static,
+) {
+    let slot = TEST_BROWSER_SESSION_OPENER.get_or_init(|| std::sync::Mutex::new(None));
+    *slot.lock().expect("opener slot poisoned") = Some(std::sync::Arc::new(f));
+}
+
+#[cfg(test)]
+pub fn clear_test_browser_session_opener() {
+    if let Some(slot) = TEST_BROWSER_SESSION_OPENER.get() {
+        *slot.lock().expect("opener slot poisoned") = None;
+    }
+}
+
+#[cfg(test)]
+fn current_test_browser_session_opener() -> Option<TestBrowserSessionOpener> {
+    TEST_BROWSER_SESSION_OPENER
+        .get()
+        .and_then(|m| m.lock().ok().and_then(|g| g.clone()))
+}
+
+/// F3-4: execute a `BrowserAction` node.
+///
+/// Flow:
+///   1. Template the `goal` + `start_url` against the run's
+///      `NodeContext` (OQ-7 templating).
+///   2. Open / attach the per-(user, run) `CdpSession` via
+///      [`open_browser_session_for_run`]. The opener is async and may
+///      fail — Phase 3.1 production runs fail here with the stubbed-
+///      transport error documented on that fn.
+///   3. If `start_url` is set, navigate the session to it.
+///   4. Compose the agent's user-prompt: `goal` + (when set) the
+///      `allowed_hosts` allowlist + (when set) the `output_schema`.
+///   5. Run the workflow_node sub-agent (same plumbing as
+///      `execute_agent_prompt`) with the browser tools appended to the
+///      allowlist. F-16's tool-failure counter still applies via the
+///      shared `run_agent_prompt` body.
+///   6. If `output_schema` is set, parse the agent's final text as
+///      JSON. (Schema validation against the JSON Schema itself is the
+///      F3-4 follow-up — Phase 3.1 just enforces "is JSON.")
+///   7. Persist the step row + bubble the output body to the next
+///      node (same shape as `execute_agent_prompt`).
+async fn execute_browser_action(
+    config: &Config,
+    run: &Run,
+    node: &Node,
+    ctx: &crate::openhuman::workflows::templating::NodeContext,
+) -> Result<serde_json::Value> {
+    let browser_cfg = match &node.config {
+        NodeConfig::BrowserAction(cfg) => cfg,
+        other => {
+            anyhow::bail!(
+                "execute_browser_action invoked on non-BrowserAction node config: {:?}",
+                std::mem::discriminant(other)
+            );
+        }
+    };
+
+    let templated_goal =
+        crate::openhuman::workflows::templating::substitute(&browser_cfg.goal, ctx);
+    let templated_start_url = browser_cfg.start_url.as_ref().map(|u| {
+        crate::openhuman::workflows::templating::substitute(u, ctx)
+    });
+
+    let step_id: RunStepId = Uuid::new_v4().to_string();
+    let started_at = Utc::now();
+    let step = RunStep {
+        id: step_id.clone(),
+        run_id: run.id.clone(),
+        node_id: node.id.clone(),
+        status: RunStatus::Running,
+        started_at,
+        completed_at: None,
+        output_json: None,
+        error: None,
+        delivery_receipts: Vec::new(),
+    };
+    if let Err(err) = store::insert_run_step(config, &step) {
+        anyhow::bail!("insert_run_step failed: {err:#}");
+    }
+
+    publish_global(DomainEvent::WorkflowRunStepStarted {
+        run_id: run.id.clone(),
+        node_id: node.id.clone(),
+    });
+    tracing::info!(
+        target: "workflows-run",
+        "[workflows-run] browser_action step started run={} node={} goal_chars={} \
+         start_url={:?} allowed_hosts={} iteration_cap={}",
+        run.id,
+        node.id,
+        templated_goal.resolved.chars().count(),
+        templated_start_url.as_ref().map(|t| t.resolved.as_str()),
+        browser_cfg.allowed_hosts.len(),
+        browser_cfg.iteration_cap,
+    );
+
+    // 1. Open / attach session. The user_id seam — Phase 3.1 workflows
+    //    don't carry an explicit per-run user id; use the workflow's
+    //    `workflow_id` as the registry partition. F3-5/F3-6 wire the
+    //    real `user_id` when the multi-tenant runtime lands.
+    let user_id = run.workflow_id.clone();
+    let session_result = open_browser_session_for_run(browser_cfg, &user_id, &run.id).await;
+    let session = match session_result {
+        Ok(s) => s,
+        Err(err) => {
+            let msg = format!("{err:#}");
+            let _ = store::update_run_step_terminal(
+                config,
+                &step_id,
+                RunStatus::Failed,
+                Utc::now(),
+                None,
+                Some(msg.clone()),
+                &[],
+            );
+            publish_global(DomainEvent::WorkflowRunStepCompleted {
+                run_id: run.id.clone(),
+                node_id: node.id.clone(),
+                status_json: serde_json::to_value(RunStatus::Failed)
+                    .unwrap_or(serde_json::Value::Null),
+            });
+            anyhow::bail!("browser_action: session open failed: {msg}");
+        }
+    };
+
+    // 2. Optional start_url navigation.
+    if let Some(ref url) = templated_start_url {
+        if !url.resolved.trim().is_empty() {
+            if let Err(err) = session.navigate(&url.resolved).await {
+                let msg = format!("navigate({}) failed: {err}", url.resolved);
+                let _ = crate::openhuman::browser_agent::registry::SessionRegistry::instance()
+                    .release(&user_id, &run.id);
+                let _ = store::update_run_step_terminal(
+                    config,
+                    &step_id,
+                    RunStatus::Failed,
+                    Utc::now(),
+                    None,
+                    Some(msg.clone()),
+                    &[],
+                );
+                publish_global(DomainEvent::WorkflowRunStepCompleted {
+                    run_id: run.id.clone(),
+                    node_id: node.id.clone(),
+                    status_json: serde_json::to_value(RunStatus::Failed)
+                        .unwrap_or(serde_json::Value::Null),
+                });
+                anyhow::bail!("browser_action: {msg}");
+            }
+        }
+    }
+
+    // 3. Compose the agent prompt: goal + structural preamble.
+    let composed_prompt = compose_browser_action_prompt(
+        &templated_goal.resolved,
+        &browser_cfg.allowed_hosts,
+        browser_cfg.output_schema.as_ref(),
+        &user_id,
+        &run.id,
+    );
+
+    // 4. Synthesize an AgentPromptConfig so we can reuse
+    //    `run_agent_prompt`'s subscriber plumbing + memory recall path.
+    //    The prompt is the composed text; allowed_connections mirrors
+    //    BrowserActionConfig's (so health/auto-tag still applies).
+    let synth_agent_cfg = AgentPromptConfig {
+        prompt: composed_prompt,
+        allowed_connections: browser_cfg.allowed_connections.clone(),
+        iteration_cap: browser_cfg.iteration_cap,
+        model_tier: None,
+    };
+    let def = build_browser_action_agent_definition(browser_cfg);
+
+    let agent_output = run_agent_prompt(config, &run.workflow_id, &run.id, &synth_agent_cfg, &def)
+        .await;
+
+    // 5. Release the session — best-effort. The F3-4 design has the
+    //    final release on the run's terminal status, but a single-
+    //    browser_action workflow's terminal IS this node, so releasing
+    //    here is correct. Multi-node workflows with multiple
+    //    browser_action nodes will reuse the same session via the
+    //    registry's `get` path so this release would be a problem; for
+    //    Phase 3.1 we ship single-browser-node workflows only and the
+    //    release matches the lifecycle.
+    let _ =
+        crate::openhuman::browser_agent::registry::SessionRegistry::instance().release(&user_id, &run.id);
+
+    let (terminal_status, output_json, error, agent_narrative, observed_receipts) =
+        match agent_output {
+            Ok(output) => {
+                let narrative = output.text.clone();
+                let receipts = output.delivery_receipts.clone();
+                let truncated = store::truncate_output_to_64kib(output.text);
+                // 6. Schema validation: Phase 3.1 enforces "is JSON" when
+                //    the schema is set. Full JSON-Schema validation is
+                //    the F3-4 follow-up.
+                let (payload, schema_err) = if browser_cfg.output_schema.is_some() {
+                    match serde_json::from_str::<serde_json::Value>(&truncated) {
+                        Ok(parsed) => (
+                            serde_json::to_string(&serde_json::json!({ "text": truncated, "parsed": parsed }))
+                                .unwrap_or_else(|_| "{}".into()),
+                            None,
+                        ),
+                        Err(e) => (
+                            serde_json::to_string(&serde_json::json!({ "text": truncated }))
+                                .unwrap_or_else(|_| "{}".into()),
+                            Some(format!(
+                                "browser_action.output_schema is set but agent's final text isn't valid JSON: {e}"
+                            )),
+                        ),
+                    }
+                } else {
+                    (
+                        serde_json::to_string(&serde_json::json!({ "text": truncated }))
+                            .unwrap_or_else(|_| "{}".into()),
+                        None,
+                    )
+                };
+                if let Some(reason) = schema_err {
+                    (RunStatus::Failed, Some(payload), Some(reason), narrative, receipts)
+                } else if output.tool_failure_count > 0 {
+                    let summary = format!(
+                        "browser_action completed with {} tool call(s) reported as failed by the harness.",
+                        output.tool_failure_count
+                    );
+                    (RunStatus::Failed, Some(payload), Some(summary), narrative, receipts)
+                } else {
+                    (RunStatus::Succeeded, Some(payload), None, narrative, receipts)
+                }
+            }
+            Err(err) => (
+                RunStatus::Failed,
+                None,
+                Some(format!("{err:#}")),
+                String::new(),
+                Vec::new(),
+            ),
+        };
+
+    if let Err(err) = store::update_run_step_terminal(
+        config,
+        &step_id,
+        terminal_status,
+        Utc::now(),
+        output_json.clone(),
+        error.clone(),
+        &observed_receipts,
+    ) {
+        anyhow::bail!("update_run_step_terminal failed: {err:#}");
+    }
+
+    let status_json = serde_json::to_value(&terminal_status).unwrap_or(serde_json::Value::Null);
+    publish_global(DomainEvent::WorkflowRunStepCompleted {
+        run_id: run.id.clone(),
+        node_id: node.id.clone(),
+        status_json,
+    });
+    tracing::info!(
+        target: "workflows-run",
+        "[workflows-run] browser_action step terminal run={} node={} status={terminal_status:?} \
+         narrative_chars={}",
+        run.id,
+        node.id,
+        agent_narrative.chars().count(),
+    );
+
+    if matches!(terminal_status, RunStatus::Failed) {
+        if let Some(reason) = error {
+            anyhow::bail!("browser_action step failed: {reason}");
+        }
+        anyhow::bail!("browser_action step failed");
+    }
+    let body_value = output_json
+        .as_deref()
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
+        .unwrap_or(serde_json::Value::Null);
+    Ok(body_value)
+}
+
+/// F3-4: compose the user-message prompt the browser sub-agent reads.
+///
+/// Inlines the goal + a structural preamble that names the
+/// `allowed_hosts` list (when non-empty) and the `output_schema`
+/// requirement (when set). The browser_observe / browser_act /
+/// browser_extract tools handle their own per-call descriptions; this
+/// preamble is run-scoped guardrails.
+pub(crate) fn compose_browser_action_prompt(
+    goal: &str,
+    allowed_hosts: &[String],
+    output_schema: Option<&serde_json::Value>,
+    user_id: &str,
+    run_id: &str,
+) -> String {
+    let mut out = String::with_capacity(goal.len() + 512);
+    out.push_str("You are running inside a workflow's `browser_action` node. ");
+    out.push_str(
+        "Call `browser_observe` to see the current page, `browser_act` to click/type/scroll/navigate, \
+         and `browser_extract` to pull labeled values out. Always observe before acting.\n\n",
+    );
+    out.push_str(&format!(
+        "Pass `user_id: \"{user_id}\"` and `run_id: \"{run_id}\"` to every browser_* tool call \
+         (they're how the tools resolve your CDP session).\n\n"
+    ));
+    out.push_str("## Your goal\n\n");
+    out.push_str(goal.trim());
+    out.push_str("\n\n");
+    if !allowed_hosts.is_empty() {
+        out.push_str("## Allowed hosts\n\n");
+        out.push_str(
+            "You may only navigate to URLs whose host is in this list. Refuse any navigation \
+             outside it.\n\n",
+        );
+        for h in allowed_hosts {
+            out.push_str(&format!("- {h}\n"));
+        }
+        out.push('\n');
+    }
+    if let Some(schema) = output_schema {
+        out.push_str("## Required output shape\n\n");
+        out.push_str(
+            "When you're done, your final response must be a single JSON object matching this schema. \
+             No prose around it.\n\n```json\n",
+        );
+        if let Ok(s) = serde_json::to_string_pretty(schema) {
+            out.push_str(&s);
+        }
+        out.push_str("\n```\n");
+    }
+    out
 }
 
 /// One tool-call observation captured by the F-16 event-bus tap during

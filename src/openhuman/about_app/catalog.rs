@@ -1588,6 +1588,28 @@ const CAPABILITIES: &[Capability] = &[
         status: CapabilityStatus::Stable,
         privacy: LOCAL_RAW,
     },
+    // ── Phase 3 — Browser Agent (F3-1..F3-4) ────────────────────────────
+    Capability {
+        id: "automation.browser_action_node",
+        name: "Browser-Action Workflow Node",
+        domain: "automation",
+        category: CapabilityCategory::Automation,
+        description: "First-class `browser_action` node kind drives a CDP-attached browser via \
+                      a sub-agent with three tools (`browser_observe`, `browser_act`, \
+                      `browser_extract`). Used for UI automation paths where no Composio / MCP / \
+                      Channel / HTTP route exists (e.g. LinkedIn DMs, Notion comments). \
+                      Reuses an already-authenticated webview session via \
+                      `profile = reuse_authenticated`, or starts fresh per-run with \
+                      `ephemeral_isolated` (default). Validator enforces an `allowed_hosts` \
+                      bare-hostname whitelist + a profile↔connections match. Live CDP transport \
+                      lands in F3-5/F3-6; until then production runs fail at session-open with a \
+                      clear \"transport not yet wired\" error.",
+        how_to: "Describe a UI automation in chat (\"go on LinkedIn and DM my last 20 \
+                 connections to set up a coffee chat\") — the drafter emits a `browser_action` \
+                 node + a matching `webview` connection in `allowed_connections`.",
+        status: CapabilityStatus::Beta,
+        privacy: None,
+    },
     // ── Phase 4 — Campaigns (F4-18) ─────────────────────────────────────
     Capability {
         id: "automation.campaign_abstraction",

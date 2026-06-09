@@ -55,7 +55,9 @@ export type NodeKind =
   | 'delay'
   | 'transform'
   | 'await_human_approval'
-  | 'fan_out';
+  | 'fan_out'
+  | 'for_each'
+  | 'browser_action';
 
 export interface AgentPromptConfig {
   prompt: string;
@@ -64,7 +66,33 @@ export interface AgentPromptConfig {
   model_tier?: string | null;
 }
 
-export type NodeConfig = { kind: 'agent_prompt' } & AgentPromptConfig;
+/**
+ * F3-4: BrowserAction node config — drives a CDP-attached browser
+ * sub-agent (browser_observe / browser_act / browser_extract) against
+ * the user's authenticated webview when `profile.type === 'reuse_authenticated'`.
+ *
+ * The desktop shell wires the live WebSocket transport in F3-5/F3-6;
+ * until then production runs fail at session-open with a clear "live
+ * CDP transport not yet wired in Phase 3.1" error.
+ */
+export type BrowserProfile =
+  | { type: 'reuse_authenticated'; provider: string }
+  | { type: 'ephemeral_isolated' }
+  | { type: 'named_persistent'; name: string };
+
+export interface BrowserActionConfig {
+  goal: string;
+  start_url?: string | null;
+  profile?: BrowserProfile;
+  iteration_cap?: number;
+  allowed_hosts?: string[];
+  output_schema?: unknown | null;
+  allowed_connections?: ConnectionRef[];
+}
+
+export type NodeConfig =
+  | ({ kind: 'agent_prompt' } & AgentPromptConfig)
+  | ({ kind: 'browser_action' } & BrowserActionConfig);
 
 export interface CanvasPosition {
   x: number;

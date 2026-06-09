@@ -4946,3 +4946,125 @@ async fn for_each_unknown_body_node_id_fails_the_step_at_runtime() {
 
     executor::clear_test_entity_store_factory();
 }
+
+// ── F3-4 build_browser_action_agent_definition + compose prompt ────────
+
+#[test]
+fn build_browser_action_agent_definition_appends_browser_tools() {
+    let cfg = BrowserActionConfig {
+        goal: "x".into(),
+        start_url: None,
+        profile: crate::openhuman::browser_agent::cdp::types::BrowserProfile::EphemeralIsolated,
+        iteration_cap: 25,
+        allowed_hosts: vec![],
+        output_schema: None,
+        allowed_connections: vec![],
+    };
+    let def = executor::build_browser_action_agent_definition(&cfg);
+    for name in executor::BROWSER_AGENT_TOOL_NAMES {
+        assert!(
+            def.allowed_tools.iter().any(|t| t == name),
+            "browser_action agent def missing tool `{name}` — allowlist: {:?}",
+            def.allowed_tools
+        );
+    }
+    // iteration_cap propagates.
+    assert_eq!(def.iteration_cap, 25);
+}
+
+#[test]
+fn build_browser_action_agent_definition_preserves_connection_resolved_tools() {
+    // A browser_action that's allowed to also call a Channel
+    // connection (e.g. for a `Slack me the result` step inline) should
+    // still get `channel_send` from the build_node_agent_definition
+    // baseline AND the browser tools on top.
+    let cfg = BrowserActionConfig {
+        goal: "x".into(),
+        start_url: None,
+        profile: crate::openhuman::browser_agent::cdp::types::BrowserProfile::EphemeralIsolated,
+        iteration_cap: 12,
+        allowed_hosts: vec![],
+        output_schema: None,
+        allowed_connections: vec![ConnectionRef::Channel {
+            provider: "slack".into(),
+            channel_id: "C123".into(),
+        }],
+    };
+    let def = executor::build_browser_action_agent_definition(&cfg);
+    assert!(def.allowed_tools.iter().any(|t| t == "channel_send"));
+    assert!(def.allowed_tools.iter().any(|t| t == "browser_observe"));
+}
+
+#[test]
+fn build_browser_action_agent_definition_dedups_if_browser_tool_already_present() {
+    // Hypothetical: if a future ConnectionRef ever resolved to one of
+    // the browser tool names, the dedup pass must prevent doubling up.
+    // Today no resolver does that — we assert the property by checking
+    // that re-running with the same config doesn't grow the list.
+    let cfg = BrowserActionConfig {
+        goal: "x".into(),
+        start_url: None,
+        profile: crate::openhuman::browser_agent::cdp::types::BrowserProfile::EphemeralIsolated,
+        iteration_cap: 1,
+        allowed_hosts: vec![],
+        output_schema: None,
+        allowed_connections: vec![],
+    };
+    let a = executor::build_browser_action_agent_definition(&cfg);
+    let b = executor::build_browser_action_agent_definition(&cfg);
+    assert_eq!(a.allowed_tools, b.allowed_tools);
+    // Each browser tool appears exactly once.
+    for name in executor::BROWSER_AGENT_TOOL_NAMES {
+        let count = a.allowed_tools.iter().filter(|t| t.as_str() == *name).count();
+        assert_eq!(count, 1, "tool {name} appears {count} times");
+    }
+}
+
+#[test]
+fn compose_browser_action_prompt_includes_goal_and_user_run_ids() {
+    let out = executor::compose_browser_action_prompt(
+        "Click the Save button",
+        &[],
+        None,
+        "user-42",
+        "run-abc",
+    );
+    assert!(out.contains("Click the Save button"));
+    assert!(out.contains("user-42"));
+    assert!(out.contains("run-abc"));
+    // Allowed hosts section absent when empty.
+    assert!(!out.contains("## Allowed hosts"));
+    // Schema section absent when None.
+    assert!(!out.contains("## Required output shape"));
+}
+
+#[test]
+fn compose_browser_action_prompt_renders_allowed_hosts_and_schema_when_set() {
+    let schema = serde_json::json!({ "type": "object", "required": ["balance"] });
+    let out = executor::compose_browser_action_prompt(
+        "Extract the balance",
+        &["example.com".to_string(), "api.example.com".to_string()],
+        Some(&schema),
+        "u",
+        "r",
+    );
+    assert!(out.contains("## Allowed hosts"));
+    assert!(out.contains("- example.com"));
+    assert!(out.contains("- api.example.com"));
+    assert!(out.contains("## Required output shape"));
+    assert!(out.contains("\"balance\""));
+}
+
+#[test]
+fn browser_agent_tool_names_match_f3_3_constants() {
+    // Single source of truth check: the executor's allowlist
+    // additions must mirror tools/impl/browser_agent/constants.rs.
+    let exec_names: Vec<&str> = executor::BROWSER_AGENT_TOOL_NAMES.to_vec();
+    let tool_names: Vec<&str> =
+        crate::openhuman::tools::implementations::browser_agent::ALL_TOOL_NAMES.to_vec();
+    let mut exec_sorted = exec_names.clone();
+    let mut tool_sorted = tool_names.clone();
+    exec_sorted.sort();
+    tool_sorted.sort();
+    assert_eq!(exec_sorted, tool_sorted);
+}

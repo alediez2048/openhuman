@@ -1013,3 +1013,198 @@ fn tool_call_arguments_template_defaults_to_empty_object() {
         other => panic!("expected ToolCall, got {other:?}"),
     }
 }
+
+// ── F3-4 BrowserAction validator coverage ──────────────────────────────
+
+use crate::openhuman::browser_agent::cdp::types::BrowserProfile;
+
+fn browser_node(id: &str, cfg: BrowserActionConfig) -> Node {
+    Node {
+        id: id.into(),
+        kind: NodeKind::BrowserAction,
+        config: NodeConfig::BrowserAction(cfg),
+        position: None,
+        retry_policy: None,
+    }
+}
+
+fn baseline_browser_cfg() -> BrowserActionConfig {
+    BrowserActionConfig {
+        goal: "Log in to example.com, navigate to /portfolio, extract the balance.".into(),
+        start_url: Some("https://example.com/login".into()),
+        profile: BrowserProfile::EphemeralIsolated,
+        iteration_cap: 25,
+        allowed_hosts: vec!["example.com".into()],
+        output_schema: None,
+        allowed_connections: vec![],
+    }
+}
+
+#[test]
+fn browser_action_allowed_in_phase_3_and_4() {
+    assert!(allowed_node_kinds(3).contains(&NodeKind::BrowserAction));
+    assert!(allowed_node_kinds(4).contains(&NodeKind::BrowserAction));
+}
+
+#[test]
+fn browser_action_not_allowed_in_phase_2() {
+    assert!(!allowed_node_kinds(2).contains(&NodeKind::BrowserAction));
+}
+
+#[test]
+fn browser_action_baseline_valid_proposal_passes() {
+    let mut p = valid_proposal();
+    p.nodes = vec![browser_node("b1", baseline_browser_cfg())];
+    let snap = ConnectionsSnapshot::new(vec![]);
+    assert!(validate(&p, &snap, 3).is_ok());
+}
+
+#[test]
+fn browser_action_empty_goal_rejected() {
+    let mut p = valid_proposal();
+    let mut cfg = baseline_browser_cfg();
+    cfg.goal = "   ".into();
+    p.nodes = vec![browser_node("b1", cfg)];
+    let snap = ConnectionsSnapshot::new(vec![]);
+    let err = validate(&p, &snap, 3).unwrap_err();
+    match err {
+        ProposalValidationError::InvalidNodeConfig { reason, .. } => {
+            assert!(reason.contains("goal must be non-empty"), "got: {reason}");
+        }
+        other => panic!("expected InvalidNodeConfig, got {other:?}"),
+    }
+}
+
+#[test]
+fn browser_action_iteration_cap_out_of_range_rejected() {
+    let mut p = valid_proposal();
+    let mut cfg = baseline_browser_cfg();
+    cfg.iteration_cap = 999;
+    p.nodes = vec![browser_node("b1", cfg)];
+    let snap = ConnectionsSnapshot::new(vec![]);
+    let err = validate(&p, &snap, 3).unwrap_err();
+    match err {
+        ProposalValidationError::InvalidNodeConfig { reason, .. } => {
+            assert!(reason.contains("iteration_cap"), "got: {reason}");
+        }
+        other => panic!("expected InvalidNodeConfig, got {other:?}"),
+    }
+}
+
+#[test]
+fn browser_action_malformed_start_url_rejected() {
+    let mut p = valid_proposal();
+    let mut cfg = baseline_browser_cfg();
+    cfg.start_url = Some("not a url at all".into());
+    p.nodes = vec![browser_node("b1", cfg)];
+    let snap = ConnectionsSnapshot::new(vec![]);
+    let err = validate(&p, &snap, 3).unwrap_err();
+    match err {
+        ProposalValidationError::InvalidNodeConfig { reason, .. } => {
+            assert!(reason.contains("not a parseable URL"), "got: {reason}");
+        }
+        other => panic!("expected InvalidNodeConfig, got {other:?}"),
+    }
+}
+
+#[test]
+fn browser_action_templated_start_url_passes() {
+    // A `{{node.x.output.url}}` reference is pre-substituted at
+    // dispatch; the validator must let it through.
+    let mut p = valid_proposal();
+    let mut cfg = baseline_browser_cfg();
+    cfg.start_url = Some("{{node.upstream.output.url}}".into());
+    p.nodes = vec![browser_node("b1", cfg)];
+    let snap = ConnectionsSnapshot::new(vec![]);
+    assert!(validate(&p, &snap, 3).is_ok());
+}
+
+#[test]
+fn browser_action_host_with_scheme_rejected() {
+    let mut p = valid_proposal();
+    let mut cfg = baseline_browser_cfg();
+    cfg.allowed_hosts = vec!["https://example.com/".into()];
+    p.nodes = vec![browser_node("b1", cfg)];
+    let snap = ConnectionsSnapshot::new(vec![]);
+    let err = validate(&p, &snap, 3).unwrap_err();
+    match err {
+        ProposalValidationError::InvalidNodeConfig { reason, .. } => {
+            assert!(reason.contains("bare hostname"), "got: {reason}");
+        }
+        other => panic!("expected InvalidNodeConfig, got {other:?}"),
+    }
+}
+
+#[test]
+fn browser_action_reuse_authenticated_without_matching_connection_rejected() {
+    let mut p = valid_proposal();
+    let mut cfg = baseline_browser_cfg();
+    cfg.profile = BrowserProfile::ReuseAuthenticated {
+        provider: "linkedin".into(),
+    };
+    // allowed_connections does NOT contain a Webview{provider="linkedin"}.
+    p.nodes = vec![browser_node("b1", cfg)];
+    let snap = ConnectionsSnapshot::new(vec![]);
+    let err = validate(&p, &snap, 3).unwrap_err();
+    match err {
+        ProposalValidationError::InvalidNodeConfig { reason, .. } => {
+            assert!(
+                reason.contains("ConnectionRef::Webview"),
+                "got: {reason}"
+            );
+        }
+        other => panic!("expected InvalidNodeConfig, got {other:?}"),
+    }
+}
+
+#[test]
+fn browser_action_reuse_authenticated_with_matching_connection_passes() {
+    let mut p = valid_proposal();
+    let mut cfg = baseline_browser_cfg();
+    cfg.profile = BrowserProfile::ReuseAuthenticated {
+        provider: "linkedin".into(),
+    };
+    cfg.allowed_connections = vec![ConnectionRef::Webview {
+        provider: "linkedin".into(),
+        account_id: "abc".into(),
+    }];
+    p.nodes = vec![browser_node("b1", cfg)];
+    let snap = ConnectionsSnapshot::new(vec![live_view(
+        ConnectionRef::Webview {
+            provider: "linkedin".into(),
+            account_id: "abc".into(),
+        },
+        /* requires_verification = */ false,
+    )]);
+    assert!(validate(&p, &snap, 3).is_ok());
+}
+
+#[test]
+fn browser_action_roundtrips_through_serde() {
+    let cfg = baseline_browser_cfg();
+    let original = NodeConfig::BrowserAction(cfg);
+    let json = serde_json::to_string(&original).unwrap();
+    assert!(json.contains("\"kind\":\"browser_action\""));
+    let parsed: NodeConfig = serde_json::from_str(&json).unwrap();
+    assert_eq!(parsed, original);
+}
+
+#[test]
+fn browser_action_defaults_apply_on_deserialize() {
+    // Minimal payload — only `goal` set. The rest must default
+    // (profile = EphemeralIsolated, iteration_cap = 25, empty hosts).
+    let json = r#"{"kind":"browser_action","goal":"do thing"}"#;
+    let parsed: NodeConfig = serde_json::from_str(json).unwrap();
+    match parsed {
+        NodeConfig::BrowserAction(cfg) => {
+            assert_eq!(cfg.goal, "do thing");
+            assert!(cfg.start_url.is_none());
+            assert_eq!(cfg.profile, BrowserProfile::EphemeralIsolated);
+            assert_eq!(cfg.iteration_cap, 25);
+            assert!(cfg.allowed_hosts.is_empty());
+            assert!(cfg.output_schema.is_none());
+            assert!(cfg.allowed_connections.is_empty());
+        }
+        other => panic!("expected BrowserAction, got {other:?}"),
+    }
+}

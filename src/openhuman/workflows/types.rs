@@ -519,6 +519,11 @@ pub enum NodeKind {
     /// Phase 4 (F4-7) — iterate over an `EntityStore` query and run
     /// the inner `body_nodes` chain once per matching record.
     ForEach,
+    /// Phase 3 (F3-4) — drive a CDP-attached browser via the
+    /// browser_agent sub-agent (browser_observe / browser_act /
+    /// browser_extract). Used for UI automation paths where no
+    /// Composio/MCP/HTTP route exists (e.g. LinkedIn DMs).
+    BrowserAction,
 }
 
 /// Per-node configuration payload. Discriminated by `kind` at the wire
@@ -547,6 +552,8 @@ pub enum NodeConfig {
     Delay(DelayConfig),
     /// Phase 4 — F4-7.
     ForEach(ForEachConfig),
+    /// Phase 3 — F3-4.
+    BrowserAction(BrowserActionConfig),
     // `Transform` / `AwaitHumanApproval` / `FanOut` stay unreachable
     // until Phase 3+ — `NodeKind` carries them so the wire enum doesn't
     // bump, but no `NodeConfig` arm = the validator rejects them via
@@ -789,6 +796,77 @@ pub struct ForEachConfig {
     /// level throttle (F4-8) is the cross-run rate gate; this cap is
     /// strictly per-run.
     pub max_per_run: u32,
+}
+
+/// Configuration for a [`NodeKind::BrowserAction`] node (F3-4).
+///
+/// Runs a browser-agent sub-agent against a CDP-attached page until
+/// the natural-language `goal` is satisfied or `iteration_cap`
+/// iterations elapse. The sub-agent's tool surface is exactly
+/// `browser_observe` / `browser_act` / `browser_extract` (F3-3) plus
+/// whatever falls out of the workflow's connection allowlist — the
+/// browser tools are NOT in the orchestrator allowlist (Phase 3.1
+/// keeps them workflow-only).
+///
+/// Used for UI automation paths where no Composio / MCP / HTTP route
+/// exists (e.g. "go on LinkedIn and DM my last 20 connections to set
+/// up a coffee chat" — the LinkedIn connector won't let us automate
+/// DMs, but the browser agent can drive the authenticated webview).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct BrowserActionConfig {
+    /// Natural-language description of what the browser agent must
+    /// accomplish. The executor injects this as a user-message
+    /// preamble: "Your goal: <goal>." Templating is supported so
+    /// upstream nodes can parameterise the goal (e.g.
+    /// `"DM {{node.fetch.output.connection_name}} on LinkedIn"`).
+    pub goal: String,
+
+    /// Starting URL the session navigates to before the agent takes
+    /// over. When `None`, the agent starts on `about:blank` and
+    /// navigates as part of the goal. Templating supported.
+    #[serde(default)]
+    pub start_url: Option<String>,
+
+    /// Which browser profile to use. Defaults to
+    /// [`BrowserProfile::EphemeralIsolated`] for safety: a workflow
+    /// that omits the profile cannot accidentally use the user's
+    /// already-authenticated session. Workflows that need a
+    /// persistent login set [`BrowserProfile::ReuseAuthenticated`]
+    /// + name the provider in `allowed_connections`.
+    #[serde(default)]
+    pub profile: crate::openhuman::browser_agent::cdp::types::BrowserProfile,
+
+    /// Connections (provider webviews) this node is permitted to use
+    /// when `profile = ReuseAuthenticated { provider }`. The validator
+    /// rejects a `ReuseAuthenticated` profile whose provider isn't
+    /// present here. Mirrors `AgentPromptConfig::allowed_connections`
+    /// so the health/connections snapshot can fan out the same way.
+    #[serde(default)]
+    pub allowed_connections: Vec<ConnectionRef>,
+
+    /// Maximum number of agent iterations. Defaults to 25 (higher
+    /// than agent_prompt's 12 because browser tasks chain
+    /// observe→act cycles). Validator clamps to `[1, 50]`.
+    #[serde(default = "default_browser_iteration_cap")]
+    pub iteration_cap: u32,
+
+    /// Domain whitelist. `browser_act("navigate to ...")` is rejected
+    /// for hosts not in this list. An empty list means **no
+    /// restriction** (use with care). F3-6's safety preamble layers
+    /// on top of this with audit + cost caps.
+    #[serde(default)]
+    pub allowed_hosts: Vec<String>,
+
+    /// Optional JSON schema the node's final output must satisfy.
+    /// When set, the executor parses the agent's final response as
+    /// JSON and validates it against the schema. When `None`, the
+    /// agent's text summary is the node's output verbatim.
+    #[serde(default)]
+    pub output_schema: Option<serde_json::Value>,
+}
+
+fn default_browser_iteration_cap() -> u32 {
+    25
 }
 
 /// Terminal + transient states for a [`Run`] or [`RunStep`].
