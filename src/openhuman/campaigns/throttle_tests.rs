@@ -76,11 +76,23 @@ fn reserve_consumes_until_budget_exhausted_then_returns_zero() {
         window: ThrottleWindow::PerDay,
     };
     let cid: String = "camp_2".into();
-    assert_eq!(ThrottleGate::reserve(&config, &cid, Some(&throttle), 1).unwrap(), 1);
-    assert_eq!(ThrottleGate::reserve(&config, &cid, Some(&throttle), 1).unwrap(), 1);
-    assert_eq!(ThrottleGate::reserve(&config, &cid, Some(&throttle), 1).unwrap(), 1);
+    assert_eq!(
+        ThrottleGate::reserve(&config, &cid, Some(&throttle), 1).unwrap(),
+        1
+    );
+    assert_eq!(
+        ThrottleGate::reserve(&config, &cid, Some(&throttle), 1).unwrap(),
+        1
+    );
+    assert_eq!(
+        ThrottleGate::reserve(&config, &cid, Some(&throttle), 1).unwrap(),
+        1
+    );
     // Next call must report 0 — no slot.
-    assert_eq!(ThrottleGate::reserve(&config, &cid, Some(&throttle), 1).unwrap(), 0);
+    assert_eq!(
+        ThrottleGate::reserve(&config, &cid, Some(&throttle), 1).unwrap(),
+        0
+    );
 }
 
 #[test]
@@ -91,10 +103,19 @@ fn reserve_partial_grant_when_request_exceeds_remaining() {
         window: ThrottleWindow::PerDay,
     };
     let cid: String = "camp_3".into();
-    assert_eq!(ThrottleGate::reserve(&config, &cid, Some(&throttle), 3).unwrap(), 3);
+    assert_eq!(
+        ThrottleGate::reserve(&config, &cid, Some(&throttle), 3).unwrap(),
+        3
+    );
     // 2 slots remain; asking for 5 yields 2.
-    assert_eq!(ThrottleGate::reserve(&config, &cid, Some(&throttle), 5).unwrap(), 2);
-    assert_eq!(ThrottleGate::reserve(&config, &cid, Some(&throttle), 1).unwrap(), 0);
+    assert_eq!(
+        ThrottleGate::reserve(&config, &cid, Some(&throttle), 5).unwrap(),
+        2
+    );
+    assert_eq!(
+        ThrottleGate::reserve(&config, &cid, Some(&throttle), 1).unwrap(),
+        0
+    );
 }
 
 #[test]
@@ -105,11 +126,20 @@ fn release_refunds_to_the_active_window() {
         window: ThrottleWindow::PerDay,
     };
     let cid: String = "camp_4".into();
-    assert_eq!(ThrottleGate::reserve(&config, &cid, Some(&throttle), 2).unwrap(), 2);
-    assert_eq!(ThrottleGate::reserve(&config, &cid, Some(&throttle), 1).unwrap(), 0);
+    assert_eq!(
+        ThrottleGate::reserve(&config, &cid, Some(&throttle), 2).unwrap(),
+        2
+    );
+    assert_eq!(
+        ThrottleGate::reserve(&config, &cid, Some(&throttle), 1).unwrap(),
+        0
+    );
     ThrottleGate::release(&config, &cid, Some(&throttle), 1).unwrap();
     // 1 slot freed → reserve(1) succeeds again.
-    assert_eq!(ThrottleGate::reserve(&config, &cid, Some(&throttle), 1).unwrap(), 1);
+    assert_eq!(
+        ThrottleGate::reserve(&config, &cid, Some(&throttle), 1).unwrap(),
+        1
+    );
 }
 
 #[test]
@@ -120,7 +150,10 @@ fn release_clamps_at_zero_when_caller_over_releases() {
         window: ThrottleWindow::PerDay,
     };
     let cid: String = "camp_5".into();
-    assert_eq!(ThrottleGate::reserve(&config, &cid, Some(&throttle), 1).unwrap(), 1);
+    assert_eq!(
+        ThrottleGate::reserve(&config, &cid, Some(&throttle), 1).unwrap(),
+        1
+    );
     // Over-release shouldn't crash — clamp to 0.
     ThrottleGate::release(&config, &cid, Some(&throttle), 99).unwrap();
     let snap = ThrottleGate::current(&config, &cid, Some(&throttle))

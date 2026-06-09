@@ -119,7 +119,12 @@ pub async fn campaigns_throttle_status(
 ) -> Result<RpcOutcome<Option<crate::openhuman::campaigns::throttle::ThrottleSnapshot>>, String> {
     let campaign = match ops::get(config, id.clone()).await.map_err(map_err)? {
         crate::rpc::RpcOutcome { value: Some(c), .. } => c,
-        _ => return Ok(RpcOutcome::single_log(None, format!("campaigns_throttle_status not_found id={id}"))),
+        _ => {
+            return Ok(RpcOutcome::single_log(
+                None,
+                format!("campaigns_throttle_status not_found id={id}"),
+            ))
+        }
     };
     let snap = crate::openhuman::campaigns::throttle::ThrottleGate::current(
         config,

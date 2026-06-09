@@ -190,7 +190,14 @@ impl ThrottleGate {
 pub fn current_window_start(window: ThrottleWindow, now: DateTime<Utc>) -> DateTime<Utc> {
     match window {
         ThrottleWindow::PerDay => Utc
-            .with_ymd_and_hms(now.year_ymd().0, now.year_ymd().1, now.year_ymd().2, 0, 0, 0)
+            .with_ymd_and_hms(
+                now.year_ymd().0,
+                now.year_ymd().1,
+                now.year_ymd().2,
+                0,
+                0,
+                0,
+            )
             .single()
             .unwrap_or(now),
         ThrottleWindow::PerHour => now

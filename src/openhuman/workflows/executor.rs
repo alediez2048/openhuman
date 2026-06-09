@@ -2914,7 +2914,9 @@ async fn execute_for_each(
                     | crate::openhuman::campaigns::types::ThrottleWindow::PerHour => {
                         // Short windows: sleep until the next bucket.
                         let dur = snap
-                            .map(|s| (s.next_window_at - Utc::now()).max(chrono::Duration::seconds(1)))
+                            .map(|s| {
+                                (s.next_window_at - Utc::now()).max(chrono::Duration::seconds(1))
+                            })
                             .unwrap_or(chrono::Duration::seconds(1));
                         let secs = dur.num_seconds().clamp(1, 3_600) as u64;
                         if let Some(stub) = test_delay_override() {
@@ -2990,9 +2992,7 @@ async fn execute_for_each(
             // action" from "failed after"; the simpler contract is
             // "any failure refunds the slot." Net effect: the budget
             // gates *successful* outbound actions, not attempts.
-            if let (Some(cid), Some(t)) =
-                (campaign_id_for_throttle.as_ref(), throttle.as_ref())
-            {
+            if let (Some(cid), Some(t)) = (campaign_id_for_throttle.as_ref(), throttle.as_ref()) {
                 let _ = crate::openhuman::campaigns::throttle::ThrottleGate::release(
                     config,
                     cid,

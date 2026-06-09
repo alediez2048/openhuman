@@ -483,9 +483,7 @@ fn handle_throttle_status(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let config = config_rpc::load_config_with_timeout().await?;
         let id = required_string(&params, "id")?;
-        to_json(
-            crate::openhuman::campaigns::rpc::campaigns_throttle_status(&config, id).await?,
-        )
+        to_json(crate::openhuman::campaigns::rpc::campaigns_throttle_status(&config, id).await?)
     })
 }
 
