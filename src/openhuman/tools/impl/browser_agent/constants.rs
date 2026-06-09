@@ -8,8 +8,4 @@ pub const TOOL_BROWSER_OBSERVE: &str = "browser_observe";
 pub const TOOL_BROWSER_ACT: &str = "browser_act";
 pub const TOOL_BROWSER_EXTRACT: &str = "browser_extract";
 
-pub const ALL_TOOL_NAMES: &[&str] = &[
-    TOOL_BROWSER_OBSERVE,
-    TOOL_BROWSER_ACT,
-    TOOL_BROWSER_EXTRACT,
-];
+pub const ALL_TOOL_NAMES: &[&str] = &[TOOL_BROWSER_OBSERVE, TOOL_BROWSER_ACT, TOOL_BROWSER_EXTRACT];

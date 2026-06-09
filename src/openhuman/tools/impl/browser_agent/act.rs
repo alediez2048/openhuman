@@ -18,9 +18,7 @@ use serde_json::{json, Value};
 use crate::openhuman::browser_agent::cdp::types::{MouseButton, TypeOptions};
 use crate::openhuman::browser_agent::perceive::{snapshot, ActionableElement, SnapshotOptions};
 use crate::openhuman::browser_agent::registry::SessionRegistry;
-use crate::openhuman::tools::traits::{
-    PermissionLevel, Tool, ToolCategory, ToolResult,
-};
+use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolCategory, ToolResult};
 
 pub struct BrowserActTool;
 
@@ -105,8 +103,8 @@ impl Tool for BrowserActTool {
             return Ok(ToolResult::error("browser_act: `run_id` required"));
         };
         let verb = args.get("verb").and_then(|v| v.as_str()).unwrap_or("");
-        let Some(session) = SessionRegistry::instance()
-            .get(&user_id.to_string(), &run_id.to_string())
+        let Some(session) =
+            SessionRegistry::instance().get(&user_id.to_string(), &run_id.to_string())
         else {
             return Ok(ToolResult::error(
                 "browser_act: no active session for this run",
@@ -183,9 +181,7 @@ impl Tool for BrowserActTool {
             }
             "navigate" => {
                 let Some(url) = args.get("url").and_then(|v| v.as_str()) else {
-                    return Ok(ToolResult::error(
-                        "browser_act(navigate): `url` required",
-                    ));
+                    return Ok(ToolResult::error("browser_act(navigate): `url` required"));
                 };
                 if let Err(e) = session.navigate(url).await {
                     return Ok(ToolResult::error(format!("browser_act(navigate): {e}")));

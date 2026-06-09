@@ -238,8 +238,8 @@ async fn act_type_clicks_focus_then_inserts_text() {
     mock.expect_ok("Runtime.evaluate", dom_extractor_payload());
     mock.expect_ok("Input.dispatchMouseEvent", json!({})); // click press
     mock.expect_ok("Input.dispatchMouseEvent", json!({})); // click release
-    // Default TypeOptions humanized — dispatches one Input.dispatchKeyEvent
-    // per char in "hi" = 2 calls.
+                                                           // Default TypeOptions humanized — dispatches one Input.dispatchKeyEvent
+                                                           // per char in "hi" = 2 calls.
     mock.expect_ok("Input.dispatchKeyEvent", json!({}));
     mock.expect_ok("Input.dispatchKeyEvent", json!({}));
     mock.expect_ok(

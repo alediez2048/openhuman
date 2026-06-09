@@ -80,8 +80,8 @@ impl Tool for BrowserExtractTool {
         let Some(run_id) = args.get("run_id").and_then(|v| v.as_str()) else {
             return Ok(ToolResult::error("browser_extract: `run_id` required"));
         };
-        let Some(session) = SessionRegistry::instance()
-            .get(&user_id.to_string(), &run_id.to_string())
+        let Some(session) =
+            SessionRegistry::instance().get(&user_id.to_string(), &run_id.to_string())
         else {
             return Ok(ToolResult::error(
                 "browser_extract: no active session for this run",
@@ -151,7 +151,10 @@ fn render_extract_markdown(body: &Value) -> String {
             out.push_str("Extracted:\n");
             for el in elements {
                 let id = el.get("id").map(|v| v.to_string()).unwrap_or_default();
-                let label = el.get("label").and_then(|v| v.as_str()).unwrap_or("(no label)");
+                let label = el
+                    .get("label")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("(no label)");
                 let role = el.get("role").and_then(|v| v.as_str()).unwrap_or("?");
                 let value = el.get("value").and_then(|v| v.as_str());
                 let href = el.get("href").and_then(|v| v.as_str());

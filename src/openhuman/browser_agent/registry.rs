@@ -62,7 +62,12 @@ impl SessionRegistry {
         Fut: std::future::Future<Output = anyhow::Result<CdpSession>> + Send,
     {
         // Fast path: already cached.
-        if let Some(s) = self.sessions.lock().get(&(user_id.clone(), run_id.clone())).cloned() {
+        if let Some(s) = self
+            .sessions
+            .lock()
+            .get(&(user_id.clone(), run_id.clone()))
+            .cloned()
+        {
             return Ok(s);
         }
         // Slow path: open outside the lock to keep contention bounded.
@@ -83,14 +88,20 @@ impl SessionRegistry {
     /// F3-3 tools that should NOT auto-open (e.g. browser_extract
     /// when called before browser_observe).
     pub fn get(&self, user_id: &UserId, run_id: &RunId) -> Option<Arc<CdpSession>> {
-        self.sessions.lock().get(&(user_id.clone(), run_id.clone())).cloned()
+        self.sessions
+            .lock()
+            .get(&(user_id.clone(), run_id.clone()))
+            .cloned()
     }
 
     /// Release the session for this `(user_id, run_id)`. Best-effort
     /// async close runs in the background so the executor doesn't
     /// block on session teardown when the run finalises.
     pub fn release(&self, user_id: &UserId, run_id: &RunId) -> Option<Arc<CdpSession>> {
-        let removed = self.sessions.lock().remove(&(user_id.clone(), run_id.clone()));
+        let removed = self
+            .sessions
+            .lock()
+            .remove(&(user_id.clone(), run_id.clone()));
         if removed.is_some() {
             tracing::debug!(
                 target: "browser-agent-registry",
@@ -152,10 +163,7 @@ mod tests {
     async fn get_returns_none_when_no_session_open() {
         let reg = SessionRegistry::instance();
         assert!(reg
-            .get(
-                &"registry_test_never_inserted".into(),
-                &"r_never".into()
-            )
+            .get(&"registry_test_never_inserted".into(), &"r_never".into())
             .is_none());
     }
 

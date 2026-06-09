@@ -77,7 +77,8 @@ impl Tool for BrowserObserveTool {
     }
 
     async fn execute(&self, args: Value) -> Result<ToolResult> {
-        self.execute_with_options(args, ToolCallOptions::default()).await
+        self.execute_with_options(args, ToolCallOptions::default())
+            .await
     }
 
     async fn execute_with_options(
@@ -93,8 +94,8 @@ impl Tool for BrowserObserveTool {
         };
         let tier = parse_tier(args.get("detail"));
 
-        let Some(session) = SessionRegistry::instance()
-            .get(&user_id.to_string(), &run_id.to_string())
+        let Some(session) =
+            SessionRegistry::instance().get(&user_id.to_string(), &run_id.to_string())
         else {
             return Ok(ToolResult::error(
                 "browser_observe: no active session for this run. \
@@ -107,8 +108,7 @@ impl Tool for BrowserObserveTool {
             Ok(s) => s,
             Err(e) => return Ok(ToolResult::error(format!("browser_observe: {e}"))),
         };
-        let rendered =
-            crate::openhuman::browser_agent::perceive::to_llm_text(&snap, tier);
+        let rendered = crate::openhuman::browser_agent::perceive::to_llm_text(&snap, tier);
         let payload = json!({
             "url": snap.url,
             "title": snap.title,
