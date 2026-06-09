@@ -90,7 +90,9 @@ export default function CampaignDetail() {
       }
       setCampaign(c);
       setThrottleSnap(throttle);
-      setSubWorkflows(allWorkflows.filter(w => (w as Workflow & { campaign_id?: string }).campaign_id === id));
+      setSubWorkflows(
+        allWorkflows.filter(w => (w as Workflow & { campaign_id?: string }).campaign_id === id)
+      );
       setPendingApprovals(approvals);
       setLoadStatus('success');
     } catch (e) {
