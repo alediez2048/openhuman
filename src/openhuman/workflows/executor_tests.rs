@@ -5015,7 +5015,11 @@ fn build_browser_action_agent_definition_dedups_if_browser_tool_already_present(
     assert_eq!(a.allowed_tools, b.allowed_tools);
     // Each browser tool appears exactly once.
     for name in executor::BROWSER_AGENT_TOOL_NAMES {
-        let count = a.allowed_tools.iter().filter(|t| t.as_str() == *name).count();
+        let count = a
+            .allowed_tools
+            .iter()
+            .filter(|t| t.as_str() == *name)
+            .count();
         assert_eq!(count, 1, "tool {name} appears {count} times");
     }
 }

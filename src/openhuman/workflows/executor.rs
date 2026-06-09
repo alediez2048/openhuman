@@ -3732,9 +3732,10 @@ async fn execute_browser_action(
 
     let templated_goal =
         crate::openhuman::workflows::templating::substitute(&browser_cfg.goal, ctx);
-    let templated_start_url = browser_cfg.start_url.as_ref().map(|u| {
-        crate::openhuman::workflows::templating::substitute(u, ctx)
-    });
+    let templated_start_url = browser_cfg
+        .start_url
+        .as_ref()
+        .map(|u| crate::openhuman::workflows::templating::substitute(u, ctx));
 
     let step_id: RunStepId = Uuid::new_v4().to_string();
     let started_at = Utc::now();
@@ -3846,8 +3847,8 @@ async fn execute_browser_action(
     };
     let def = build_browser_action_agent_definition(browser_cfg);
 
-    let agent_output = run_agent_prompt(config, &run.workflow_id, &run.id, &synth_agent_cfg, &def)
-        .await;
+    let agent_output =
+        run_agent_prompt(config, &run.workflow_id, &run.id, &synth_agent_cfg, &def).await;
 
     // 5. Release the session — best-effort. The F3-4 design has the
     //    final release on the run's terminal status, but a single-
@@ -3857,8 +3858,8 @@ async fn execute_browser_action(
     //    registry's `get` path so this release would be a problem; for
     //    Phase 3.1 we ship single-browser-node workflows only and the
     //    release matches the lifecycle.
-    let _ =
-        crate::openhuman::browser_agent::registry::SessionRegistry::instance().release(&user_id, &run.id);
+    let _ = crate::openhuman::browser_agent::registry::SessionRegistry::instance()
+        .release(&user_id, &run.id);
 
     let (terminal_status, output_json, error, agent_narrative, observed_receipts) =
         match agent_output {
@@ -3892,15 +3893,33 @@ async fn execute_browser_action(
                     )
                 };
                 if let Some(reason) = schema_err {
-                    (RunStatus::Failed, Some(payload), Some(reason), narrative, receipts)
+                    (
+                        RunStatus::Failed,
+                        Some(payload),
+                        Some(reason),
+                        narrative,
+                        receipts,
+                    )
                 } else if output.tool_failure_count > 0 {
                     let summary = format!(
                         "browser_action completed with {} tool call(s) reported as failed by the harness.",
                         output.tool_failure_count
                     );
-                    (RunStatus::Failed, Some(payload), Some(summary), narrative, receipts)
+                    (
+                        RunStatus::Failed,
+                        Some(payload),
+                        Some(summary),
+                        narrative,
+                        receipts,
+                    )
                 } else {
-                    (RunStatus::Succeeded, Some(payload), None, narrative, receipts)
+                    (
+                        RunStatus::Succeeded,
+                        Some(payload),
+                        None,
+                        narrative,
+                        receipts,
+                    )
                 }
             }
             Err(err) => (

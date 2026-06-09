@@ -1148,10 +1148,7 @@ fn browser_action_reuse_authenticated_without_matching_connection_rejected() {
     let err = validate(&p, &snap, 3).unwrap_err();
     match err {
         ProposalValidationError::InvalidNodeConfig { reason, .. } => {
-            assert!(
-                reason.contains("ConnectionRef::Webview"),
-                "got: {reason}"
-            );
+            assert!(reason.contains("ConnectionRef::Webview"), "got: {reason}");
         }
         other => panic!("expected InvalidNodeConfig, got {other:?}"),
     }

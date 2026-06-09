@@ -545,8 +545,7 @@ pub fn validate(
                         return Err(ProposalValidationError::InvalidNodeConfig {
                             node_id: node.id.clone(),
                             node_kind: node.kind,
-                            reason: "browser_action.allowed_hosts entries must be non-empty"
-                                .into(),
+                            reason: "browser_action.allowed_hosts entries must be non-empty".into(),
                         });
                     }
                     // Hostnames don't carry schemes/slashes. A literal
