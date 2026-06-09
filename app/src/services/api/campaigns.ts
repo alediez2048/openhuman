@@ -50,6 +50,30 @@ export const campaignsApi = {
     return unwrap(raw);
   },
 
+  /**
+   * F4-13: partial update. `patch` is the
+   * `CampaignPatch` shape from Rust — each field is `Option<...>` so
+   * `undefined`/missing keys mean "leave as-is." Status transitions go
+   * through `pause` / `resume` / `archive`, NOT this method.
+   */
+  update: async (
+    id: CampaignId,
+    patch: {
+      name?: string;
+      description?: string | null;
+      entity_binding?: import('../../types/campaigns').EntityRef;
+      throttle?: import('../../types/campaigns').Throttle | null;
+      approval_policy?: import('../../types/campaigns').ApprovalPolicy;
+      target_outcome?: import('../../types/campaigns').OutcomeSpec | null;
+    }
+  ): Promise<Campaign> => {
+    const raw = await callCoreRpc<Campaign | RpcOutcomeEnvelope<Campaign>>({
+      method: 'openhuman.campaigns_update',
+      params: { request: { id, patch } },
+    });
+    return unwrap(raw);
+  },
+
   pause: async (id: CampaignId): Promise<Campaign> => {
     const raw = await callCoreRpc<Campaign | RpcOutcomeEnvelope<Campaign>>({
       method: 'openhuman.campaigns_pause',

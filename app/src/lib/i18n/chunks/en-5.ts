@@ -632,6 +632,9 @@ const en5: TranslationMap = {
   'campaigns.detail.subworkflow_nodes': 'nodes',
   'campaigns.detail.subworkflow_edit_link': 'Edit in /workflows →',
   'campaigns.detail.provenance': 'Created on {date}',
+  // F4-13 inline editors
+  'campaigns.detail.add_description': 'Click to add a description…',
+  'campaigns.detail.no_throttle_hint': 'Set a max above 0 to enable throttle',
 
   // Workflows (Phase 1 / F-4).
   'nav.workflows': 'Workflows',

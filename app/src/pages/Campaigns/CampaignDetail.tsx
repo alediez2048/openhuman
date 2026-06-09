@@ -11,6 +11,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 
+import { InlineText, InlineTextarea } from '../../components/campaigns/InlineEdit';
 import { useT } from '../../lib/i18n/I18nContext';
 import { campaignsApi } from '../../services/api/campaigns';
 import { workflowsApi } from '../../services/api/workflows';
@@ -23,9 +24,11 @@ import {
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
 import type {
   ApprovalEntry,
+  ApprovalPolicyKind,
   Campaign,
   CampaignStatus,
   ThrottleSnapshot,
+  ThrottleWindow,
 } from '../../types/campaigns';
 import type { Workflow } from '../../types/workflows';
 
@@ -48,13 +51,6 @@ function formatBinding(c: Campaign): string {
   const b = c.entity_binding;
   if (b.type === 'google_sheet') return `Google Sheets · ${b.range}`;
   return `Attio · ${b.object_type}`;
-}
-
-function formatThrottle(c: Campaign): string | null {
-  if (!c.throttle) return null;
-  const w = c.throttle.window.type;
-  const label = w === 'per_day' ? '/day' : w === 'per_hour' ? '/hour' : '/minute';
-  return `${c.throttle.max_per_window}${label}`;
 }
 
 export default function CampaignDetail() {
@@ -157,17 +153,32 @@ export default function CampaignDetail() {
           {/* Header strip */}
           <header className="mb-5">
             <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <h1
-                  className="text-2xl font-display font-bold text-stone-900 dark:text-neutral-100 truncate"
-                  data-testid="campaign-detail-name">
-                  {campaign.name}
-                </h1>
-                {campaign.description ? (
-                  <p className="mt-1 text-sm text-stone-600 dark:text-neutral-400">
-                    {campaign.description}
-                  </p>
-                ) : null}
+              <div className="min-w-0 flex-1">
+                <InlineText
+                  value={campaign.name}
+                  onSave={async next => {
+                    await campaignsApi.update(campaign.id, { name: next });
+                    await reload();
+                  }}
+                  maxLength={120}
+                  as="h1"
+                  testId="campaign-detail-name"
+                  className="text-2xl font-display font-bold text-stone-900 dark:text-neutral-100"
+                />
+                <div className="mt-1 text-sm text-stone-600 dark:text-neutral-400">
+                  <InlineTextarea
+                    value={campaign.description ?? ''}
+                    onSave={async next => {
+                      await campaignsApi.update(campaign.id, {
+                        description: next.length === 0 ? null : next,
+                      });
+                      await reload();
+                    }}
+                    placeholder={t('campaigns.detail.add_description')}
+                    maxLength={2000}
+                    testId="campaign-detail-description"
+                  />
+                </div>
               </div>
               <div className="flex items-center gap-2 shrink-0">
                 <span
@@ -234,25 +245,74 @@ export default function CampaignDetail() {
                 {t('campaigns.detail.approval_policy')}
               </dt>
               <dd className="text-stone-900 dark:text-neutral-100">
-                {t(`campaigns.card.policy.${campaign.approval_policy.kind}`)}
+                <select
+                  value={campaign.approval_policy.kind}
+                  onChange={async e => {
+                    const next = e.target.value as ApprovalPolicyKind;
+                    await campaignsApi.update(campaign.id, { approval_policy: { kind: next } });
+                    await reload();
+                  }}
+                  data-testid="campaign-detail-policy-select"
+                  className="bg-transparent border border-stone-200 dark:border-neutral-700 rounded px-1.5 py-0.5 text-xs focus:outline-none focus:ring-2 focus:ring-primary-500">
+                  <option value="draft_and_approve">{t('campaigns.card.policy.draft_and_approve')}</option>
+                  <option value="auto_reply">{t('campaigns.card.policy.auto_reply')}</option>
+                  <option value="notify">{t('campaigns.card.policy.notify')}</option>
+                  <option value="read_only">{t('campaigns.card.policy.read_only')}</option>
+                </select>
               </dd>
-              {campaign.throttle ? (
-                <>
-                  <dt className="text-stone-500 dark:text-neutral-400">
-                    {t('campaigns.detail.throttle')}
-                  </dt>
-                  <dd className="text-stone-900 dark:text-neutral-100">
-                    {formatThrottle(campaign)}
-                    {throttleDisplay ? (
-                      <span
-                        className="ml-2 text-stone-500 dark:text-neutral-400"
-                        data-testid="campaign-detail-throttle-snapshot">
-                        ({throttleDisplay} {t('campaigns.detail.throttle_used')})
-                      </span>
-                    ) : null}
-                  </dd>
-                </>
-              ) : null}
+              <dt className="text-stone-500 dark:text-neutral-400">
+                {t('campaigns.detail.throttle')}
+              </dt>
+              <dd className="text-stone-900 dark:text-neutral-100 flex items-center gap-1.5 flex-wrap">
+                <input
+                  type="number"
+                  min={0}
+                  max={10000}
+                  value={campaign.throttle?.max_per_window ?? 0}
+                  onChange={async e => {
+                    const n = Math.max(0, Math.min(10000, Number(e.target.value) || 0));
+                    const window = campaign.throttle?.window ?? { type: 'per_day' as const };
+                    await campaignsApi.update(campaign.id, {
+                      throttle: n === 0 ? null : { max_per_window: n, window },
+                    });
+                    await reload();
+                  }}
+                  data-testid="campaign-detail-throttle-max"
+                  className="w-16 bg-transparent border border-stone-200 dark:border-neutral-700 rounded px-1.5 py-0.5 text-xs focus:outline-none focus:ring-2 focus:ring-primary-500"
+                />
+                <select
+                  value={campaign.throttle?.window.type ?? 'per_day'}
+                  disabled={!campaign.throttle}
+                  onChange={async e => {
+                    if (!campaign.throttle) return;
+                    const next = e.target.value as ThrottleWindow;
+                    await campaignsApi.update(campaign.id, {
+                      throttle: {
+                        max_per_window: campaign.throttle.max_per_window,
+                        window: { type: next },
+                      },
+                    });
+                    await reload();
+                  }}
+                  data-testid="campaign-detail-throttle-window"
+                  className="bg-transparent border border-stone-200 dark:border-neutral-700 rounded px-1.5 py-0.5 text-xs disabled:opacity-40 focus:outline-none focus:ring-2 focus:ring-primary-500">
+                  <option value="per_minute">/min</option>
+                  <option value="per_hour">/hour</option>
+                  <option value="per_day">/day</option>
+                </select>
+                {throttleDisplay && campaign.throttle ? (
+                  <span
+                    className="text-stone-500 dark:text-neutral-400 text-[11px]"
+                    data-testid="campaign-detail-throttle-snapshot">
+                    ({throttleDisplay} {t('campaigns.detail.throttle_used')})
+                  </span>
+                ) : null}
+                {!campaign.throttle ? (
+                  <span className="text-stone-400 text-[11px]">
+                    {t('campaigns.detail.no_throttle_hint')}
+                  </span>
+                ) : null}
+              </dd>
               {campaign.target_outcome ? (
                 <>
                   <dt className="text-stone-500 dark:text-neutral-400">
