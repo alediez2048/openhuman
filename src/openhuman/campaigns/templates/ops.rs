@@ -87,8 +87,9 @@ pub fn apply_template(config: &Config, template_id: &str) -> Result<String> {
         let edges = if wf_tpl.edges.is_null() {
             Vec::new()
         } else {
-            serde_json::from_value(wf_tpl.edges.clone())
-                .with_context(|| format!("apply_template: parse edges for {}", wf_tpl.template_id))?
+            serde_json::from_value(wf_tpl.edges.clone()).with_context(|| {
+                format!("apply_template: parse edges for {}", wf_tpl.template_id)
+            })?
         };
         let settings: WorkflowSettings = if wf_tpl.settings.is_null() {
             WorkflowSettings::default()
@@ -124,7 +125,9 @@ pub fn apply_template(config: &Config, template_id: &str) -> Result<String> {
 fn summarise(tpl: &CampaignTemplate) -> String {
     let mut parts = Vec::with_capacity(3);
     parts.push(match &tpl.entity_binding {
-        crate::openhuman::campaigns::types::EntityRef::GoogleSheet { .. } => "Google Sheets".to_string(),
+        crate::openhuman::campaigns::types::EntityRef::GoogleSheet { .. } => {
+            "Google Sheets".to_string()
+        }
         crate::openhuman::campaigns::types::EntityRef::Attio { object_type, .. } => {
             format!("Attio · {object_type}")
         }

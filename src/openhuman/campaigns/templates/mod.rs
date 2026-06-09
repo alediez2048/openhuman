@@ -86,16 +86,18 @@ pub struct CampaignTemplateView {
 pub fn all_bundled() -> Vec<CampaignTemplate> {
     BUNDLED_JSON
         .iter()
-        .filter_map(|(label, raw)| match serde_json::from_str::<CampaignTemplate>(raw) {
-            Ok(t) => Some(t),
-            Err(err) => {
-                tracing::error!(
-                    target: "campaigns",
-                    "[campaign-templates] failed to parse `{label}`: {err}"
-                );
-                None
-            }
-        })
+        .filter_map(
+            |(label, raw)| match serde_json::from_str::<CampaignTemplate>(raw) {
+                Ok(t) => Some(t),
+                Err(err) => {
+                    tracing::error!(
+                        target: "campaigns",
+                        "[campaign-templates] failed to parse `{label}`: {err}"
+                    );
+                    None
+                }
+            },
+        )
         .collect()
 }
 

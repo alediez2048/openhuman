@@ -114,10 +114,7 @@ pub async fn campaigns_remove_workflow(
 
 pub async fn campaigns_list_starter_templates(
     config: &Config,
-) -> Result<
-    RpcOutcome<Vec<crate::openhuman::campaigns::templates::CampaignTemplateView>>,
-    String,
-> {
+) -> Result<RpcOutcome<Vec<crate::openhuman::campaigns::templates::CampaignTemplateView>>, String> {
     // Snapshot for the missing-connections overlay. Aggregator
     // failures degrade to "no connections" — the UI just shows
     // every required connection as missing, which is honest.
@@ -125,8 +122,7 @@ pub async fn campaigns_list_starter_templates(
         Ok(views) => crate::openhuman::workflows::health::ConnectionsSnapshot::new(views),
         Err(_) => crate::openhuman::workflows::health::ConnectionsSnapshot::default(),
     };
-    let views =
-        crate::openhuman::campaigns::templates::ops::list_starter_templates(&snapshot);
+    let views = crate::openhuman::campaigns::templates::ops::list_starter_templates(&snapshot);
     Ok(RpcOutcome::single_log(
         views,
         "campaigns_list_starter_templates".to_string(),

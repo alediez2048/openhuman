@@ -20,11 +20,7 @@ import {
   selectCampaignsLoadStatus,
 } from '../../store/campaignsSlice';
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
-import type {
-  Campaign,
-  CampaignStatus,
-  CampaignTemplateView,
-} from '../../types/campaigns';
+import type { Campaign, CampaignStatus, CampaignTemplateView } from '../../types/campaigns';
 
 type StatusFilter = 'all' | CampaignStatus;
 
@@ -164,9 +160,7 @@ export default function CampaignsList() {
           </div>
 
           {templates.length > 0 ? (
-            <section
-              className="mt-6"
-              data-testid="campaigns-starter-templates">
+            <section className="mt-6" data-testid="campaigns-starter-templates">
               <h2 className="text-sm font-medium text-stone-700 dark:text-neutral-300 mb-2">
                 {t('campaigns.templates_title')}
               </h2>
@@ -186,8 +180,7 @@ export default function CampaignsList() {
                         {tpl.name}
                       </h3>
                       <span className="text-[10px] text-stone-400 shrink-0">
-                        {tpl.workflow_count}{' '}
-                        {t('campaigns.detail.subworkflow_nodes')}
+                        {tpl.workflow_count} {t('campaigns.detail.subworkflow_nodes')}
                       </span>
                     </div>
                     <p className="mt-1 text-xs text-stone-500 dark:text-neutral-400 line-clamp-3">
