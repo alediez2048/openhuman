@@ -1,6 +1,6 @@
 # Workflows & Automations — Current State
 
-**Last updated:** 2026-05-26 (post-Phase 2 closure + Phase 4 Campaigns drafted)
+**Last updated:** 2026-06-09 (Phase 4 backend + UI baseline shipped to fork)
 **Branch:** `main` on `alediez2048/openhuman` (the user's fork). Upstream `tinyhumansai/openhuman` not pushed to yet — this is private dev so far. Phase 1 + 2 rollup PR is the next upstream push.
 
 A fresh session should read this file first to know where the initiative stands.
@@ -17,16 +17,22 @@ A fresh session should read this file first to know where the initiative stands.
 
 **Implementation order (revised 2026-05-26):** Phase 2 ✅ → **Phase 4 (Campaigns)** → Phase 3 (Browser Agent) → Phase 5 (Business Entities) → Phase 6 (Proactive Agent). Phase 4's slot was previously held by Canvas but Canvas was demand-gated and the demand never materialised; the 2026-05-26 grill replaced it with **Campaigns + Workflow UX** which is the user's actual ask. Canvas drafts preserved at `phase-4-canvas/` but marked superseded.
 
-**🟡 NEXT WORK: start Phase 4 (Campaigns).** 18 sub-tickets drafted at `Automations/Tickets/phase-4-campaigns/` (`F4-overview.md` + `F4-1.md` through `F4-18.md`). Locked architecture decisions from the 2026-05-26 grill:
-1. Conversation handling = (B) Draft mode first.
-2. Architecture shape = β — Campaigns as first-class entity owning workflows.
-3. Entity store = Option 3 — pluggable `EntityStore` trait, Google Sheets + Attio adapters at MVP.
-4. Creation surface = Option Y — chat-primary, Canvas explicitly deferred.
-5. Workflow detail editor = (D) Hybrid — form for trivial fields, chat for non-trivial.
-6. Connection-add UX = (i) Modal launch.
-7. Chat-panel for updates = (y) Pinned workflow context in global chat.
+**🟡 Phase 4 (Campaigns) backend + UI baseline SHIPPED to fork on 2026-06-09.** Hero stack landed in 12 ship cycles: F4-1 (types) → F4-2 (store) → F4-3a/b (ops + RPC + agent tools) → F4-4 (EntityStore trait) → F4-5 (Sheets) → F4-6 (Attio) → F4-7 (`for_each` executor) → F4-8 (throttle) → F4-9 (approval queue) → F4-10 (drafter prompt + `entity_schema_inspect`) → F4-11 (`/campaigns` list) → F4-12 (`/campaigns/:id` detail) → F4-13 (inline editors) → F4-17 (3 starter templates RU-10/11/12) → F4-18 (closure docs).
 
-Start with F4-1 (Campaign types + lifecycle); see `phase-4-campaigns/README.md` for the full architecture rationale.
+User can today: chat → drafter proposes a campaign → see it on `/campaigns` → click into detail → edit trivial fields inline → pause/resume/archive → use a starter template for one-click campaign creation → drafts land in `/approvals` under the DraftAndApprove policy.
+
+**Deferred follow-ups (not load-bearing for the hero use case):** F4-14 per-node-kind editors, F4-15 connection modal launcher, F4-16 pinned chat context, F4-18 hero E2E (depends on F4-16), entity preview RPC + activity feed on the detail view, non-English locale parity for the new i18n keys. See `phase-4-campaigns/DEVLOG.md` for the full ticket-by-ticket map + ADR drift audit + metrics.
+
+Locked architecture decisions from the 2026-05-26 grill that shipped:
+1. Conversation handling = (B) Draft mode first. ✅
+2. Architecture shape = β — Campaigns as first-class entity owning workflows. ✅
+3. Entity store = Option 3 — pluggable `EntityStore` trait, Google Sheets + Attio adapters at MVP. ✅
+4. Creation surface = Option Y — chat-primary, Canvas explicitly deferred. ✅
+5. Workflow detail editor = (D) Hybrid — form for trivial fields. ✅ Chat-for-non-trivial deferred to F4-16.
+6. Connection-add UX = (i) Modal launch. ⏳ Deferred to F4-15.
+7. Chat-panel for updates = (y) Pinned workflow context in global chat. ⏳ Deferred to F4-16.
+
+**🟡 NEXT WORK:** either close the remaining Phase 4 UI polish (F4-14/15/16/18 hero spec) OR move to Phase 3 (Browser Agent) per the original ordering.
 
 **Phase 3 (Browser Agent) ticket set DRAFTED** under `Automations/Tickets/phase-3-browser-agent/` — `F3-overview.md` + 7 sub-tickets. Executes AFTER Phase 4 per the 2026-05-26 ordering. The thesis is a CEF-native CDP-driven browser agent (Stagehand-style `act`/`extract`/`observe`) that drives the user's already-authenticated webview sessions. Additive to Composio, not a replacement.
 

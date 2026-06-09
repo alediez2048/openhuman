@@ -1588,6 +1588,120 @@ const CAPABILITIES: &[Capability] = &[
         status: CapabilityStatus::Stable,
         privacy: LOCAL_RAW,
     },
+    // ── Phase 4 — Campaigns (F4-18) ─────────────────────────────────────
+    Capability {
+        id: "automation.campaign_abstraction",
+        name: "Campaign-Shaped Automation",
+        domain: "automation",
+        category: CapabilityCategory::Automation,
+        description: "Long-running stateful automations over a recordset — vendor outreach \
+                      across a Sheets row set, content distribution over a month, ads \
+                      monitoring. Owns N related workflows, an entity binding, a throttle, \
+                      and an approval policy. Workflows become implementation detail \
+                      underneath the campaign abstraction.",
+        how_to: "Visit /campaigns or describe a campaign-shaped task in chat.",
+        status: CapabilityStatus::Beta,
+        privacy: LOCAL_RAW,
+    },
+    Capability {
+        id: "automation.entity_adapter_sheets",
+        name: "Google Sheets Recordset Adapter",
+        domain: "automation",
+        category: CapabilityCategory::Automation,
+        description: "Bind a campaign to a Google Sheets range. Headers become field keys, \
+                      rows become records; status writes go back to the sheet via the \
+                      existing Composio GOOGLESHEETS_* actions. Field types are inferred \
+                      from the first data row (email / phone / date / number / string).",
+        how_to: "When proposing a campaign in chat, mention your sheet — the drafter calls \
+                 entity_schema_inspect and mirrors the columns back before proposing.",
+        status: CapabilityStatus::Beta,
+        privacy: LOCAL_RAW,
+    },
+    Capability {
+        id: "automation.entity_adapter_attio",
+        name: "Attio Recordset Adapter",
+        domain: "automation",
+        category: CapabilityCategory::Automation,
+        description: "Bind a campaign to an Attio object (people / companies / deals). \
+                      Server-side filtering, stable record UUIDs, full schema discovery \
+                      via the Attio attributes API. Webhook-driven subscribe is wired \
+                      with HMAC verification; live path uses polling pending the F2-9 \
+                      tunnel integration.",
+        how_to: "Mention your Attio workspace + object type when describing a campaign in chat.",
+        status: CapabilityStatus::Beta,
+        privacy: LOCAL_RAW,
+    },
+    Capability {
+        id: "automation.for_each_iteration",
+        name: "for_each Iteration Over Records",
+        domain: "automation",
+        category: CapabilityCategory::Automation,
+        description: "A workflow node that iterates an EntityStore query and runs an inner \
+                      body chain once per matching record. {{record.<field>}} templating \
+                      resolves the current iteration's record fields. The campaign-level \
+                      throttle gates each iteration so the LLM never has to count.",
+        how_to: "Used inside a campaign's outbound workflow. The drafter picks for_each \
+                 automatically when proposing a campaign with a recordset.",
+        status: CapabilityStatus::Beta,
+        privacy: LOCAL_RAW,
+    },
+    Capability {
+        id: "automation.campaign_throttle",
+        name: "Campaign Throttle (N per Day / Hour / Minute)",
+        domain: "automation",
+        category: CapabilityCategory::Automation,
+        description: "Persistent rate-limit across every sub-workflow and every for_each \
+                      iteration. Buckets reservations by window boundary (midnight UTC for \
+                      PerDay, top-of-hour for PerHour) so a core restart picks up the same \
+                      budget. PerDay exhaustion surfaces as WorkflowRunSkipped \
+                      with ThrottleExhausted reason.",
+        how_to: "Throttle is set when the campaign is created. Edit on the campaign detail \
+                 view via the inline throttle controls.",
+        status: CapabilityStatus::Beta,
+        privacy: LOCAL_RAW,
+    },
+    Capability {
+        id: "automation.draft_approval_queue",
+        name: "Draft & Approve Queue",
+        domain: "automation",
+        category: CapabilityCategory::Automation,
+        description: "Outbound actions in a campaign with the DraftAndApprove policy don't \
+                      fire directly — they land in /approvals. You review each draft, edit \
+                      inline if needed, then tap Approve to send (or Reject to drop). The \
+                      Phase 4 default — agents may DRAFT but not SEND without your sign-off.",
+        how_to: "Created automatically when a campaign uses ApprovalPolicy::DraftAndApprove. \
+                 Visit the campaign detail view to see the pending count.",
+        status: CapabilityStatus::Beta,
+        privacy: LOCAL_RAW,
+    },
+    Capability {
+        id: "automation.campaign_starter_templates",
+        name: "Starter Campaign Templates",
+        domain: "automation",
+        category: CapabilityCategory::Automation,
+        description: "Three bundled campaign templates demoing the Phase 4 surface end-to-end: \
+                      RU-10 vendor outreach (Sheets · 20/day · draft & approve · 2 \
+                      sub-workflows), RU-11 content calendar (Sheets · 1/day · 1 sub-workflow), \
+                      RU-12 ads performance monitor (Sheets · no throttle · 1 sub-workflow). \
+                      One click creates the Draft campaign + linked workflows.",
+        how_to: "Campaigns > empty state > pick a template > [Use this template].",
+        status: CapabilityStatus::Beta,
+        privacy: LOCAL_RAW,
+    },
+    Capability {
+        id: "automation.hybrid_workflow_editor",
+        name: "Hybrid Form + Chat Editor",
+        domain: "automation",
+        category: CapabilityCategory::Automation,
+        description: "Trivial fields (name, description, throttle, approval policy) commit \
+                      via direct RPC with optimistic UI — no LLM round-trip. Reasoning \
+                      edits (rewrite this prompt, redesign this workflow) route through \
+                      chat. The (D)-hybrid split from the 2026-05-26 grill.",
+        how_to: "On any campaign or workflow detail view: click the trivial field to edit; \
+                 click the Discuss button to chat the reasoning edits.",
+        status: CapabilityStatus::Beta,
+        privacy: LOCAL_RAW,
+    },
 ];
 
 static VALIDATED: OnceLock<()> = OnceLock::new();
