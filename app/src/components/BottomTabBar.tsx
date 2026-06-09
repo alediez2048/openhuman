@@ -93,6 +93,25 @@ const makeTabs = (t: (key: string) => string) => [
     ),
   },
   {
+    // F4-11: Phase 4 campaigns. Placed next to workflows in the
+    // bottom-tab so users discover both surfaces; /workflows stays
+    // until the Phase 4 UI batch (F4-12+) promotes campaigns to
+    // the default landing.
+    id: 'campaigns',
+    label: t('nav.campaigns'),
+    path: '/campaigns',
+    icon: (
+      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={1.8}
+          d="M3 7h18M3 12h18M3 17h12"
+        />
+      </svg>
+    ),
+  },
+  {
     id: 'intelligence',
     label: t('nav.memory'),
     path: '/intelligence',

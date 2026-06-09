@@ -27,6 +27,7 @@ import personaReducer from './personaSlice';
 import providerSurfacesReducer from './providerSurfaceSlice';
 import socketReducer from './socketSlice';
 import themeReducer from './themeSlice';
+import campaignsReducer from './campaignsSlice';
 import threadReducer from './threadSlice';
 import { userScopedStorage } from './userScopedStorage';
 import workflowsReducer from './workflowsSlice';
@@ -176,6 +177,7 @@ export const store = configureStore({
     persona: persistedPersonaReducer,
     theme: persistedThemeReducer,
     workflows: persistedWorkflowsReducer,
+    campaigns: campaignsReducer,
   },
   middleware: getDefaultMiddleware => {
     const middleware = getDefaultMiddleware({

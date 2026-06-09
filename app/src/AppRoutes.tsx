@@ -16,6 +16,7 @@ import Onboarding from './pages/onboarding/Onboarding';
 import Rewards from './pages/Rewards';
 import Settings from './pages/Settings';
 import WebCallbackPage from './pages/WebCallbackPage';
+import CampaignsList from './pages/Campaigns/CampaignsList';
 import Welcome from './pages/Welcome';
 import WorkflowsList from './pages/Workflows/WorkflowsList';
 
@@ -99,6 +100,18 @@ const AppRoutes = () => {
         element={
           <ProtectedRoute requireAuth={true}>
             <WorkflowsList />
+          </ProtectedRoute>
+        }
+      />
+
+      {/* F4-11 — Phase 4 Campaigns list. Lives next to /workflows in
+          the bottom-tab order; /workflows stays as a debug surface
+          until the Phase 4 UI batch lands a full replacement. */}
+      <Route
+        path="/campaigns"
+        element={
+          <ProtectedRoute requireAuth={true}>
+            <CampaignsList />
           </ProtectedRoute>
         }
       />
