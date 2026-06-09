@@ -46,3 +46,4 @@
 //! workflow integration / safety) with their locked recommendations.
 
 pub mod cdp;
+pub mod perceive;
