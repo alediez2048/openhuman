@@ -46,6 +46,9 @@ pub mod ops;
 pub mod rpc;
 pub mod schemas;
 pub mod store;
+pub mod throttle;
+#[cfg(test)]
+mod throttle_tests;
 pub mod types;
 
 #[cfg(test)]

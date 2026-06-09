@@ -927,6 +927,18 @@ pub enum SkippedReason {
         end: String,
         now_hhmm: String,
     },
+    /// F4-8: the campaign's `Throttle` budget for the current window
+    /// was exhausted before this iteration could reserve a slot. For
+    /// `PerDay` exhaustion the for_each pauses until the next midnight
+    /// UTC; for shorter windows the executor sleeps in-process.
+    ThrottleExhausted {
+        campaign_id: String,
+        /// ISO-8601 start of the now-full window.
+        window_start: String,
+        /// ISO-8601 of the next window opening (= `window_start +
+        /// window_duration`). UI uses this for "resumes at HH:MM" copy.
+        next_window_at: String,
+    },
 }
 
 // ── Proposal types (chat-driven creation; consumed by F-11..F-14) ──────

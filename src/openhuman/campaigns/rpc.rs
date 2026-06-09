@@ -109,3 +109,26 @@ pub async fn campaigns_remove_workflow(
         .await
         .map_err(map_err)
 }
+
+/// F4-8: read-only throttle status for the UI ("X / Y used today").
+/// Returns `Ok(None)` when the campaign has no throttle configured;
+/// otherwise the current window's consumption + next-window time.
+pub async fn campaigns_throttle_status(
+    config: &Config,
+    id: CampaignId,
+) -> Result<RpcOutcome<Option<crate::openhuman::campaigns::throttle::ThrottleSnapshot>>, String> {
+    let campaign = match ops::get(config, id.clone()).await.map_err(map_err)? {
+        crate::rpc::RpcOutcome { value: Some(c), .. } => c,
+        _ => return Ok(RpcOutcome::single_log(None, format!("campaigns_throttle_status not_found id={id}"))),
+    };
+    let snap = crate::openhuman::campaigns::throttle::ThrottleGate::current(
+        config,
+        &id,
+        campaign.throttle.as_ref(),
+    )
+    .map_err(|e| format!("throttle_read_failed: {e:#}"))?;
+    Ok(RpcOutcome::single_log(
+        snap,
+        format!("campaigns_throttle_status id={id}"),
+    ))
+}

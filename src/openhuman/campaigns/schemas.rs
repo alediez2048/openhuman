@@ -30,6 +30,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("archive"),
         schemas("add_workflow"),
         schemas("remove_workflow"),
+        schemas("throttle_status"),
     ]
 }
 
@@ -83,6 +84,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("remove_workflow"),
             handler: handle_remove_workflow,
+        },
+        RegisteredController {
+            schema: schemas("throttle_status"),
+            handler: handle_throttle_status,
         },
     ]
 }
@@ -295,6 +300,23 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 required: true,
             }],
         },
+        "throttle_status" => ControllerSchema {
+            namespace: "campaigns",
+            function: "throttle_status",
+            description: "F4-8 read-only throttle snapshot — current window's consumed/limit/remaining + next_window_at. Returns null when the campaign has no throttle configured.",
+            inputs: vec![FieldSchema {
+                name: "id",
+                ty: TypeSchema::String,
+                comment: "Campaign id.",
+                required: true,
+            }],
+            outputs: vec![FieldSchema {
+                name: "snapshot",
+                ty: TypeSchema::Ref("ThrottleSnapshot"),
+                comment: "Current window snapshot or null when throttle is unset.",
+                required: false,
+            }],
+        },
         "remove_workflow" => ControllerSchema {
             namespace: "campaigns",
             function: "remove_workflow",
@@ -453,6 +475,16 @@ fn handle_remove_workflow(params: Map<String, Value>) -> ControllerFuture {
                 workflow_id,
             )
             .await?,
+        )
+    })
+}
+
+fn handle_throttle_status(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let id = required_string(&params, "id")?;
+        to_json(
+            crate::openhuman::campaigns::rpc::campaigns_throttle_status(&config, id).await?,
         )
     })
 }

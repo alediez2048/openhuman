@@ -2762,25 +2762,24 @@ async fn execute_for_each(
     });
 
     // Resolve entity_binding — explicit > inherit from parent campaign.
+    // Always load the parent campaign (if any) so we have its throttle
+    // for the F4-8 gate; entity_binding inheritance reads from the
+    // same campaign load.
     let workflow = store::get_workflow(config, &run.workflow_id)
         .map_err(|e| anyhow::anyhow!("for_each: load workflow failed: {e:#}"))?
         .ok_or_else(|| {
             anyhow::anyhow!("for_each: workflow {} vanished mid-run", run.workflow_id)
         })?;
+    let parent_campaign = if let Some(cid) = workflow.campaign_id.as_ref() {
+        crate::openhuman::campaigns::store::get_campaign(config, cid)
+            .map_err(|e| anyhow::anyhow!("for_each: load campaign {cid}: {e:#}"))?
+    } else {
+        None
+    };
     let binding = match cfg.entity_binding.clone() {
         Some(b) => b,
-        None => match workflow.campaign_id.as_ref() {
-            Some(campaign_id) => {
-                let campaign =
-                    crate::openhuman::campaigns::store::get_campaign(config, campaign_id)
-                        .map_err(|e| {
-                            anyhow::anyhow!("for_each: load campaign {campaign_id}: {e:#}")
-                        })?
-                        .ok_or_else(|| {
-                            anyhow::anyhow!("for_each: workflow's campaign {campaign_id} not found")
-                        })?;
-                campaign.entity_binding
-            }
+        None => match parent_campaign.as_ref() {
+            Some(campaign) => campaign.entity_binding.clone(),
             None => {
                 let err = "for_each: entity_binding is None and workflow has no parent campaign \
                            — set entity_binding explicitly or assign the workflow to a campaign";
@@ -2873,9 +2872,85 @@ async fn execute_for_each(
         crate::openhuman::workflows::types::OnErrorPolicy::Halt
     );
 
+    // F4-8: campaign throttle. `parent_campaign.throttle` is the
+    // shared budget across every sub-workflow + every iteration.
+    // Without a parent campaign (standalone for_each) there's no
+    // gate to consult — pass `None` and the gate is a no-op.
+    let campaign_id_for_throttle = parent_campaign.as_ref().map(|c| c.id.clone());
+    let throttle = parent_campaign.as_ref().and_then(|c| c.throttle.clone());
+
     let mut succeeded: usize = 0;
     let mut failed: usize = 0;
-    'outer: for record in records {
+    let mut skipped_for_throttle: usize = 0;
+    'outer: for (idx, record) in records.into_iter().enumerate() {
+        // F4-8: reserve a slot before doing any work for this
+        // iteration. `Ok(0)` means the window is exhausted. For short
+        // windows (PerMinute/PerHour) we sleep + retry; for PerDay
+        // we surface the skip via DomainEvent::WorkflowRunSkipped
+        // and break out of the loop (the next-window-at lands as
+        // pending_resume_at so a future iteration resumes).
+        if let (Some(cid), Some(t)) = (campaign_id_for_throttle.as_ref(), throttle.as_ref()) {
+            loop {
+                let granted = crate::openhuman::campaigns::throttle::ThrottleGate::reserve(
+                    config,
+                    cid,
+                    Some(t),
+                    1,
+                )
+                .unwrap_or(0);
+                if granted >= 1 {
+                    break;
+                }
+                // Exhausted — decide based on window length.
+                let snap = crate::openhuman::campaigns::throttle::ThrottleGate::current(
+                    config,
+                    cid,
+                    Some(t),
+                )
+                .ok()
+                .flatten();
+                match t.window {
+                    crate::openhuman::campaigns::types::ThrottleWindow::PerMinute
+                    | crate::openhuman::campaigns::types::ThrottleWindow::PerHour => {
+                        // Short windows: sleep until the next bucket.
+                        let dur = snap
+                            .map(|s| (s.next_window_at - Utc::now()).max(chrono::Duration::seconds(1)))
+                            .unwrap_or(chrono::Duration::seconds(1));
+                        let secs = dur.num_seconds().clamp(1, 3_600) as u64;
+                        if let Some(stub) = test_delay_override() {
+                            stub(secs).await;
+                        } else {
+                            tokio::time::sleep(std::time::Duration::from_secs(secs)).await;
+                        }
+                        // Retry the reserve.
+                    }
+                    crate::openhuman::campaigns::types::ThrottleWindow::PerDay => {
+                        // Surface as skipped, leave remaining records
+                        // for the next-window resume path.
+                        if let Some(s) = snap {
+                            publish_global(DomainEvent::WorkflowRunSkipped {
+                                workflow_id: run.workflow_id.clone(),
+                                reason_json: serde_json::to_value(
+                                    crate::openhuman::workflows::types::SkippedReason::ThrottleExhausted {
+                                        campaign_id: cid.clone(),
+                                        window_start: s.window_start.to_rfc3339(),
+                                        next_window_at: s.next_window_at.to_rfc3339(),
+                                    },
+                                )
+                                .unwrap_or(serde_json::Value::Null),
+                                attempted_trigger_source_json: serde_json::to_value(
+                                    &run.trigger_source,
+                                )
+                                .unwrap_or(serde_json::Value::Null),
+                            });
+                        }
+                        skipped_for_throttle = total.saturating_sub(idx);
+                        break 'outer;
+                    }
+                }
+            }
+        }
+
         let mut iter_ctx = ctx.clone();
         iter_ctx.set_iteration_scope(record.clone());
 
@@ -2910,6 +2985,21 @@ async fn execute_for_each(
 
         if iteration_failed {
             failed += 1;
+            // F4-8: return the reserved slot on iteration failure.
+            // We can't distinguish "failed before externally-visible
+            // action" from "failed after"; the simpler contract is
+            // "any failure refunds the slot." Net effect: the budget
+            // gates *successful* outbound actions, not attempts.
+            if let (Some(cid), Some(t)) =
+                (campaign_id_for_throttle.as_ref(), throttle.as_ref())
+            {
+                let _ = crate::openhuman::campaigns::throttle::ThrottleGate::release(
+                    config,
+                    cid,
+                    Some(t),
+                    1,
+                );
+            }
             if halt_on_error {
                 break 'outer;
             }
@@ -2934,6 +3024,7 @@ async fn execute_for_each(
         "records_processed": processed,
         "records_succeeded": succeeded,
         "records_failed": failed,
+        "records_skipped_for_throttle": skipped_for_throttle,
     });
     let error_msg = if final_ok {
         None
