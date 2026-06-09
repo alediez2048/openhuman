@@ -130,9 +130,11 @@ impl CdpTransport for MockTransport {
         params: Value,
         session_id: Option<&str>,
     ) -> Result<Value, CdpError> {
-        self.observed
-            .lock()
-            .push((method.to_string(), params.clone(), session_id.map(String::from)));
+        self.observed.lock().push((
+            method.to_string(),
+            params.clone(),
+            session_id.map(String::from),
+        ));
         let next = self.queue.lock().pop_front().ok_or_else(|| {
             CdpError::Other(format!(
                 "mock transport: no expectation queued for `{method}` (params={params})"

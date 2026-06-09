@@ -17,7 +17,10 @@ pub enum CdpError {
     /// the CEF webview died, etc.
     TargetClosed { detail: String },
     /// `Runtime.evaluate` returned an exception.
-    EvaluationError { script_excerpt: String, reason: String },
+    EvaluationError {
+        script_excerpt: String,
+        reason: String,
+    },
     /// WebSocket connection dropped while in flight.
     TransportClosed { reason: String },
     /// Cross-user attach attempt — see `WsTransport::open_session_for_user`.
@@ -37,7 +40,10 @@ impl fmt::Display for CdpError {
                 write!(f, "cdp: timeout waiting for {what} after {after_ms}ms")
             }
             CdpError::TargetClosed { detail } => write!(f, "cdp: target closed: {detail}"),
-            CdpError::EvaluationError { script_excerpt, reason } => {
+            CdpError::EvaluationError {
+                script_excerpt,
+                reason,
+            } => {
                 write!(f, "cdp: evaluate({script_excerpt}…) failed: {reason}")
             }
             CdpError::TransportClosed { reason } => write!(f, "cdp: transport closed: {reason}"),

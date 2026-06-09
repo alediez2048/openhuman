@@ -15,8 +15,8 @@ use super::errors::CdpError;
 use super::session::CdpSession;
 use super::transport::MockTransport;
 use super::types::{
-    Key, KeyModifiers, MouseButton, ScreenshotFormat, ScreenshotOptions, TypeOptions,
-    WaitOptions, WaitUntil,
+    Key, KeyModifiers, MouseButton, ScreenshotFormat, ScreenshotOptions, TypeOptions, WaitOptions,
+    WaitUntil,
 };
 
 fn fresh_session() -> (Arc<MockTransport>, CdpSession) {
@@ -47,8 +47,14 @@ async fn navigate_dispatches_page_navigate_with_url_and_session_id() {
 #[tokio::test]
 async fn navigate_surfaces_error_text_as_navigation_failed() {
     let (mock, sess) = fresh_session();
-    mock.expect_ok("Page.navigate", json!({ "errorText": "ERR_NAME_NOT_RESOLVED" }));
-    let err = sess.navigate("https://does-not-exist.invalid").await.unwrap_err();
+    mock.expect_ok(
+        "Page.navigate",
+        json!({ "errorText": "ERR_NAME_NOT_RESOLVED" }),
+    );
+    let err = sess
+        .navigate("https://does-not-exist.invalid")
+        .await
+        .unwrap_err();
     match err {
         CdpError::NavigationFailed { url, reason } => {
             assert_eq!(url, "https://does-not-exist.invalid");
@@ -135,7 +141,12 @@ async fn screenshot_carries_clip_rect_when_supplied() {
     sess.screenshot(ScreenshotOptions {
         format: ScreenshotFormat::Jpeg,
         quality: 60,
-        clip: Some(Rect { x: 10.0, y: 20.0, width: 100.0, height: 200.0 }),
+        clip: Some(Rect {
+            x: 10.0,
+            y: 20.0,
+            width: 100.0,
+            height: 200.0,
+        }),
         full_page: true,
     })
     .await
@@ -222,7 +233,9 @@ async fn press_key_enter_dispatches_rawKeyDown_then_keyUp_with_correct_codes() {
     let (mock, sess) = fresh_session();
     mock.expect_ok("Input.dispatchKeyEvent", json!({}));
     mock.expect_ok("Input.dispatchKeyEvent", json!({}));
-    sess.press_key(Key::Enter, KeyModifiers::default()).await.unwrap();
+    sess.press_key(Key::Enter, KeyModifiers::default())
+        .await
+        .unwrap();
     let calls = mock.observed();
     assert_eq!(calls.len(), 2);
     assert_eq!(calls[0].1["type"], "rawKeyDown");
@@ -271,10 +284,7 @@ async fn scroll_dispatches_mouse_wheel_with_deltas() {
 #[tokio::test]
 async fn evaluate_returns_unwrapped_value() {
     let (mock, sess) = fresh_session();
-    mock.expect_ok(
-        "Runtime.evaluate",
-        json!({ "result": { "value": 42 } }),
-    );
+    mock.expect_ok("Runtime.evaluate", json!({ "result": { "value": 42 } }));
     let v = sess.evaluate("1 + 41").await.unwrap();
     assert_eq!(v, Value::from(42));
 }

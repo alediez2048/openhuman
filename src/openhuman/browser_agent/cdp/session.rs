@@ -123,9 +123,15 @@ impl CdpSession {
         // wait once the live WsTransport lands.
         self.debug_log(
             "Page.enable+frameTree(poll)",
-            &format!("until={:?} timeout_ms={}", opts.until, opts.timeout.as_millis()),
+            &format!(
+                "until={:?} timeout_ms={}",
+                opts.until,
+                opts.timeout.as_millis()
+            ),
         );
-        self.transport.call("Page.enable", json!({}), self.sess()).await?;
+        self.transport
+            .call("Page.enable", json!({}), self.sess())
+            .await?;
         let deadline = std::time::Instant::now() + opts.timeout;
         let poll_every = Duration::from_millis(150);
         let mut last_loader: Option<String> = None;
@@ -205,12 +211,7 @@ impl CdpSession {
 
     // ── Mouse ───────────────────────────────────────────────────
 
-    pub async fn click_at(
-        &self,
-        x: f64,
-        y: f64,
-        button: MouseButton,
-    ) -> Result<(), CdpError> {
+    pub async fn click_at(&self, x: f64, y: f64, button: MouseButton) -> Result<(), CdpError> {
         self.debug_log(
             "Input.dispatchMouseEvent(click)",
             &format!("x={x:.1} y={y:.1} button={:?}", button),
@@ -265,16 +266,16 @@ impl CdpSession {
     pub async fn type_text(&self, text: &str, opts: TypeOptions) -> Result<(), CdpError> {
         self.debug_log(
             "Input.insertText|dispatchKeyEvent(per-char)",
-            &format!("len={} humanized={}", text.len(), opts.humanized_delay_ms_max > 0),
+            &format!(
+                "len={} humanized={}",
+                text.len(),
+                opts.humanized_delay_ms_max > 0
+            ),
         );
         if opts.humanized_delay_ms_max == 0 {
             // Fast path — single round-trip.
             self.transport
-                .call(
-                    "Input.insertText",
-                    json!({ "text": text }),
-                    self.sess(),
-                )
+                .call("Input.insertText", json!({ "text": text }), self.sess())
                 .await?;
             return Ok(());
         }
@@ -317,8 +318,10 @@ impl CdpSession {
     pub async fn press_key(&self, key: Key, mods: KeyModifiers) -> Result<(), CdpError> {
         self.debug_log(
             "Input.dispatchKeyEvent(rawKeyDown+keyUp)",
-            &format!("key={:?} mods=alt={}/ctrl={}/meta={}/shift={}",
-                key, mods.alt, mods.ctrl, mods.meta, mods.shift),
+            &format!(
+                "key={:?} mods=alt={}/ctrl={}/meta={}/shift={}",
+                key, mods.alt, mods.ctrl, mods.meta, mods.shift
+            ),
         );
         let (k, code, vk) = key.cdp_fields();
         let (k_owned, code_owned, vk_resolved) = match key {
@@ -445,7 +448,10 @@ impl CdpSession {
                     domain: raw.get("domain")?.as_str()?.to_string(),
                     path: raw.get("path")?.as_str()?.to_string(),
                     secure: raw.get("secure").and_then(|s| s.as_bool()).unwrap_or(false),
-                    http_only: raw.get("httpOnly").and_then(|s| s.as_bool()).unwrap_or(false),
+                    http_only: raw
+                        .get("httpOnly")
+                        .and_then(|s| s.as_bool())
+                        .unwrap_or(false),
                     expires_unix: raw.get("expires").and_then(|e| e.as_i64()),
                 })
             })
