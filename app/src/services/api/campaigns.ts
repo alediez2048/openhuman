@@ -6,7 +6,6 @@
  * use `RpcOutcome::single_log` which wraps the typed value in
  * `{ result, logs }` on the wire.
  */
-import { callCoreRpc } from '../coreRpcClient';
 import type {
   ApprovalEntry,
   Campaign,
@@ -14,6 +13,7 @@ import type {
   ListCampaignsFilter,
   ThrottleSnapshot,
 } from '../../types/campaigns';
+import { callCoreRpc } from '../coreRpcClient';
 
 interface RpcOutcomeEnvelope<T> {
   result: T;
@@ -93,10 +93,7 @@ export const campaignsApi = {
   throttleStatus: async (id: CampaignId): Promise<ThrottleSnapshot | null> => {
     const raw = await callCoreRpc<
       ThrottleSnapshot | null | RpcOutcomeEnvelope<ThrottleSnapshot | null>
-    >({
-      method: 'openhuman.campaigns_throttle_status',
-      params: { id },
-    });
+    >({ method: 'openhuman.campaigns_throttle_status', params: { id } });
     return unwrap(raw);
   },
 
@@ -117,20 +114,12 @@ export const campaignsApi = {
   ): Promise<ApprovalEntry> => {
     const raw = await callCoreRpc<ApprovalEntry | RpcOutcomeEnvelope<ApprovalEntry>>({
       method: 'openhuman.campaigns_approvals_approve',
-      params: {
-        id,
-        edited_payload: editedPayload ?? null,
-        decided_by: decidedBy ?? null,
-      },
+      params: { id, edited_payload: editedPayload ?? null, decided_by: decidedBy ?? null },
     });
     return unwrap(raw);
   },
 
-  rejectDraft: async (
-    id: string,
-    reason?: string,
-    decidedBy?: string
-  ): Promise<ApprovalEntry> => {
+  rejectDraft: async (id: string, reason?: string, decidedBy?: string): Promise<ApprovalEntry> => {
     const raw = await callCoreRpc<ApprovalEntry | RpcOutcomeEnvelope<ApprovalEntry>>({
       method: 'openhuman.campaigns_approvals_reject',
       params: { id, reason: reason ?? null, decided_by: decidedBy ?? null },

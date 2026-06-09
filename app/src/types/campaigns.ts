@@ -34,11 +34,7 @@ export interface Throttle {
   window: { type: ThrottleWindow };
 }
 
-export type ApprovalPolicyKind =
-  | 'draft_and_approve'
-  | 'auto_reply'
-  | 'notify'
-  | 'read_only';
+export type ApprovalPolicyKind = 'draft_and_approve' | 'auto_reply' | 'notify' | 'read_only';
 
 export interface ApprovalPolicy {
   kind: ApprovalPolicyKind;

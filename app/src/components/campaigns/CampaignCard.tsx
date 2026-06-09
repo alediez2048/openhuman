@@ -181,9 +181,7 @@ export default function CampaignCard({ campaign }: CampaignCardProps) {
       <div className="mt-2 flex items-center gap-2 text-[11px] text-stone-500 dark:text-neutral-400">
         <span className="px-1.5 py-0.5 rounded bg-stone-100 dark:bg-neutral-800">{binding}</span>
         {throttle ? (
-          <span className="px-1.5 py-0.5 rounded bg-stone-100 dark:bg-neutral-800">
-            {throttle}
-          </span>
+          <span className="px-1.5 py-0.5 rounded bg-stone-100 dark:bg-neutral-800">{throttle}</span>
         ) : null}
         <span className="ml-auto">
           {t(`campaigns.card.policy.${campaign.approval_policy.kind}`)}

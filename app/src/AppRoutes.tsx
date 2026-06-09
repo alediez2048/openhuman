@@ -7,6 +7,7 @@ import PublicRoute from './components/PublicRoute';
 import HumanPage from './features/human/HumanPage';
 import { getIsMobile } from './lib/platform';
 import Accounts from './pages/Accounts';
+import CampaignsList from './pages/Campaigns/CampaignsList';
 import Connections from './pages/Connections';
 import Home from './pages/Home';
 import Intelligence from './pages/Intelligence';
@@ -16,7 +17,6 @@ import Onboarding from './pages/onboarding/Onboarding';
 import Rewards from './pages/Rewards';
 import Settings from './pages/Settings';
 import WebCallbackPage from './pages/WebCallbackPage';
-import CampaignsList from './pages/Campaigns/CampaignsList';
 import Welcome from './pages/Welcome';
 import WorkflowsList from './pages/Workflows/WorkflowsList';
 

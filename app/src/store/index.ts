@@ -14,6 +14,7 @@ import {
 import { E2E_RESTART_APP_AS_RELOAD, IS_DEV } from '../utils/config';
 import accountsReducer from './accountsSlice';
 import agentProfileReducer from './agentProfileSlice';
+import campaignsReducer from './campaignsSlice';
 import channelConnectionsReducer from './channelConnectionsSlice';
 import chatRuntimeReducer from './chatRuntimeSlice';
 import companionReducer from './companionSlice';
@@ -27,7 +28,6 @@ import personaReducer from './personaSlice';
 import providerSurfacesReducer from './providerSurfaceSlice';
 import socketReducer from './socketSlice';
 import themeReducer from './themeSlice';
-import campaignsReducer from './campaignsSlice';
 import threadReducer from './threadSlice';
 import { userScopedStorage } from './userScopedStorage';
 import workflowsReducer from './workflowsSlice';
