@@ -258,8 +258,8 @@ export default function CampaignDetail() {
                     {t('campaigns.card.policy.draft_and_approve')}
                   </option>
                   <option value="auto_reply">{t('campaigns.card.policy.auto_reply')}</option>
-                  <option value="notify">{t('campaigns.card.policy.notify')}</option>
-                  <option value="read_only">{t('campaigns.card.policy.read_only')}</option>
+                  <option value="triage">{t('campaigns.card.policy.triage')}</option>
+                  <option value="tiered">{t('campaigns.card.policy.tiered')}</option>
                 </select>
               </dd>
               <dt className="text-stone-500 dark:text-neutral-400">

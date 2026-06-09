@@ -34,7 +34,7 @@ export interface Throttle {
   window: { type: ThrottleWindow };
 }
 
-export type ApprovalPolicyKind = 'draft_and_approve' | 'auto_reply' | 'notify' | 'read_only';
+export type ApprovalPolicyKind = 'draft_and_approve' | 'auto_reply' | 'triage' | 'tiered';
 
 export interface ApprovalPolicy {
   kind: ApprovalPolicyKind;
@@ -73,6 +73,22 @@ export interface ThrottleSnapshot {
   limit: number;
   remaining: number;
   next_window_at: string;
+}
+
+// ── F4-17 starter campaign templates ────────────────────────────────
+
+export interface CampaignTemplateView {
+  template_id: string;
+  name: string;
+  description: string;
+  tags: string[];
+  /** Humanised summary like "Google Sheets · 20/day · draft & approve". */
+  summary: string;
+  required_connections: unknown[];
+  missing_connections: unknown[];
+  workflow_count: number;
+  rationale_at_seed: string[];
+  raw_payload: unknown;
 }
 
 // ── F4-9 approval queue ─────────────────────────────────────────────

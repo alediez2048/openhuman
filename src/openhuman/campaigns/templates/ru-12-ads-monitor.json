@@ -1,0 +1,98 @@
+{
+  "template_id": "ru-12-ads-monitor",
+  "min_phase": 4,
+  "name": "Ads performance monitor",
+  "description": "Daily pull of ad-campaign performance from a sheet of campaign IDs. OpenHuman fetches metrics, writes them back, and emails you a digest. Read-only on the ads side, no posting.",
+  "tags": ["campaigns", "monitoring", "ads"],
+  "entity_binding": {
+    "type": "google_sheet",
+    "spreadsheet_id": "REPLACE_WITH_YOUR_SHEET_ID",
+    "range": "Campaigns!A1:F500"
+  },
+  "throttle": null,
+  "approval_policy": { "kind": "draft_and_approve" },
+  "target_outcome": null,
+  "proposed_workflows": [
+    {
+      "template_id": "ru-12-ads-monitor-pull",
+      "min_phase": 4,
+      "name": "Ads monitor — daily metrics pull + digest",
+      "description": "Daily 8am: for each campaign row, fetch yesterday's metrics, write back, then send a single digest summarising spend + CTR + conversions.",
+      "tags": ["campaign-child", "monitoring"],
+      "trigger": {
+        "type": "cron",
+        "expr": "0 8 * * *",
+        "tz": null,
+        "active_hours": null
+      },
+      "nodes": [
+        {
+          "id": "for_each",
+          "kind": "for_each",
+          "config": {
+            "kind": "for_each",
+            "entity_binding": null,
+            "query": {
+              "filters": [
+                { "field": "status", "op": { "op": "eq" }, "value": "active" }
+              ],
+              "limit": null,
+              "offset": null
+            },
+            "body_nodes": ["pull_metrics"],
+            "per_iteration_delay_secs": null,
+            "max_per_run": 100
+          },
+          "position": null
+        },
+        {
+          "id": "pull_metrics",
+          "kind": "agent_prompt",
+          "config": {
+            "kind": "agent_prompt",
+            "prompt": "For ad campaign {{record.campaign_id}} on platform {{record.platform}}, fetch yesterday's metrics (spend, impressions, clicks, conversions) via the appropriate API. Read-only — no posting/editing. Write the numbers back into the sheet row.",
+            "allowed_connections": [],
+            "iteration_cap": 6,
+            "model_tier": "reasoning"
+          },
+          "position": null
+        },
+        {
+          "id": "send_digest",
+          "kind": "agent_prompt",
+          "config": {
+            "kind": "agent_prompt",
+            "prompt": "Compose a daily ads digest from yesterday's pull. Group by platform. Highlight top 3 spenders + bottom 3 ROAS. Send via Gmail to the user.",
+            "allowed_connections": [
+              { "type": "composio", "toolkit_id": "gmail" }
+            ],
+            "iteration_cap": 4,
+            "model_tier": "reasoning"
+          },
+          "position": null
+        }
+      ],
+      "edges": [
+        { "from": "for_each", "to": "send_digest" }
+      ],
+      "settings": { "timeout_secs": 900, "on_error": "continue" },
+      "required_connections": [
+        { "type": "composio", "toolkit_id": "gmail" }
+      ],
+      "rationale_at_seed": [
+        "for_each pulls per-campaign metrics; max_per_run=100 covers typical agency-scale portfolios.",
+        "on_error=continue so one bad row (e.g. revoked API token) doesn't kill the whole pull.",
+        "Final send_digest runs once after the iteration completes; DraftAndApprove queues the email for review.",
+        "Templates Phase-5 triage mode is the better policy here; F4-17 ships with draft-and-approve as the placeholder until triage lands."
+      ]
+    }
+  ],
+  "required_connections": [
+    { "type": "composio", "toolkit_id": "gmail" }
+  ],
+  "rationale_at_seed": [
+    "Read-only monitoring campaign: no throttle (we never SEND, we just pull metrics).",
+    "Single sub-workflow covering pull + digest. The agent picks the right API per row's `platform` column.",
+    "The Phase-5 triage approval policy is the natural fit; until that lands, draft_and_approve gates the digest email."
+  ]
+}

@@ -12,6 +12,7 @@ import { useNavigate } from 'react-router-dom';
 
 import CampaignCard from '../../components/campaigns/CampaignCard';
 import { useT } from '../../lib/i18n/I18nContext';
+import { campaignsApi } from '../../services/api/campaigns';
 import {
   fetchCampaigns,
   selectCampaigns,
@@ -19,7 +20,11 @@ import {
   selectCampaignsLoadStatus,
 } from '../../store/campaignsSlice';
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
-import type { Campaign, CampaignStatus } from '../../types/campaigns';
+import type {
+  Campaign,
+  CampaignStatus,
+  CampaignTemplateView,
+} from '../../types/campaigns';
 
 type StatusFilter = 'all' | CampaignStatus;
 
@@ -56,10 +61,32 @@ export default function CampaignsList() {
 
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  const [templates, setTemplates] = useState<CampaignTemplateView[]>([]);
+  const [applyingTemplate, setApplyingTemplate] = useState<string | null>(null);
+  const [templateError, setTemplateError] = useState<string | null>(null);
 
   useEffect(() => {
     void dispatch(fetchCampaigns());
+    void campaignsApi
+      .listStarterTemplates()
+      .then(setTemplates)
+      .catch(() => setTemplates([]));
   }, [dispatch]);
+
+  const onApplyTemplate = async (templateId: string) => {
+    setApplyingTemplate(templateId);
+    setTemplateError(null);
+    try {
+      const campaignId = await campaignsApi.applyTemplate(templateId);
+      // Refresh + navigate to the new campaign's detail view.
+      void dispatch(fetchCampaigns());
+      navigate(`/campaigns/${campaignId}`);
+    } catch (e) {
+      setTemplateError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setApplyingTemplate(null);
+    }
+  };
 
   const counts = useMemo(() => {
     const c: Record<StatusFilter, number> = {
@@ -118,22 +145,81 @@ export default function CampaignsList() {
       ) : null}
 
       {!isLoading && !hasCampaigns ? (
-        <div
-          className="text-center py-10 bg-stone-50 dark:bg-neutral-800 rounded-xl"
-          data-testid="campaigns-empty-state">
-          <p className="text-sm text-stone-600 dark:text-neutral-300 mb-3">
-            {t('campaigns.empty_title')}
-          </p>
-          <p className="text-xs text-stone-500 dark:text-neutral-400 max-w-md mx-auto mb-4">
-            {t('campaigns.empty_body')}
-          </p>
-          <button
-            type="button"
-            onClick={() => navigate('/chat')}
-            className="px-3 py-1.5 text-xs font-medium text-white bg-primary-500 hover:bg-primary-600 rounded-lg shadow-soft transition-colors">
-            {t('campaigns.empty_cta')}
-          </button>
-        </div>
+        <>
+          <div
+            className="text-center py-8 bg-stone-50 dark:bg-neutral-800 rounded-xl"
+            data-testid="campaigns-empty-state">
+            <p className="text-sm text-stone-600 dark:text-neutral-300 mb-3">
+              {t('campaigns.empty_title')}
+            </p>
+            <p className="text-xs text-stone-500 dark:text-neutral-400 max-w-md mx-auto mb-4">
+              {t('campaigns.empty_body')}
+            </p>
+            <button
+              type="button"
+              onClick={() => navigate('/chat')}
+              className="px-3 py-1.5 text-xs font-medium text-white bg-primary-500 hover:bg-primary-600 rounded-lg shadow-soft transition-colors">
+              {t('campaigns.empty_cta')}
+            </button>
+          </div>
+
+          {templates.length > 0 ? (
+            <section
+              className="mt-6"
+              data-testid="campaigns-starter-templates">
+              <h2 className="text-sm font-medium text-stone-700 dark:text-neutral-300 mb-2">
+                {t('campaigns.templates_title')}
+              </h2>
+              {templateError ? (
+                <div className="mb-3 px-3 py-2 text-xs text-coral-700 bg-coral-50 border border-coral-200 rounded-lg">
+                  {templateError}
+                </div>
+              ) : null}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                {templates.map(tpl => (
+                  <article
+                    key={tpl.template_id}
+                    data-testid={`campaign-template-${tpl.template_id}`}
+                    className="bg-white dark:bg-neutral-900 border border-stone-200 dark:border-neutral-800 rounded-xl p-3.5 shadow-subtle">
+                    <div className="flex items-start justify-between gap-2">
+                      <h3 className="text-sm font-medium text-stone-900 dark:text-neutral-100 truncate">
+                        {tpl.name}
+                      </h3>
+                      <span className="text-[10px] text-stone-400 shrink-0">
+                        {tpl.workflow_count}{' '}
+                        {t('campaigns.detail.subworkflow_nodes')}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-xs text-stone-500 dark:text-neutral-400 line-clamp-3">
+                      {tpl.description}
+                    </p>
+                    <div className="mt-2 text-[11px] text-stone-500 dark:text-neutral-400">
+                      {tpl.summary}
+                    </div>
+                    {tpl.missing_connections.length > 0 ? (
+                      <div className="mt-2 text-[11px] text-amber-700 bg-amber-50 dark:bg-amber-950/30 dark:text-amber-200 rounded px-2 py-1">
+                        {t('campaigns.template_missing_connections').replace(
+                          '{count}',
+                          String(tpl.missing_connections.length)
+                        )}
+                      </div>
+                    ) : null}
+                    <button
+                      type="button"
+                      onClick={() => void onApplyTemplate(tpl.template_id)}
+                      disabled={applyingTemplate === tpl.template_id}
+                      data-testid={`campaign-template-use-${tpl.template_id}`}
+                      className="mt-3 px-2.5 py-1 text-xs font-medium text-white bg-primary-500 hover:bg-primary-600 rounded-md shadow-subtle disabled:opacity-40">
+                      {applyingTemplate === tpl.template_id
+                        ? t('common.loading')
+                        : t('campaigns.template_use_cta')}
+                    </button>
+                  </article>
+                ))}
+              </div>
+            </section>
+          ) : null}
+        </>
       ) : null}
 
       {hasCampaigns ? (

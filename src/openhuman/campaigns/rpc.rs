@@ -110,6 +110,42 @@ pub async fn campaigns_remove_workflow(
         .map_err(map_err)
 }
 
+// ── F4-17 starter campaign templates RPC ────────────────────────
+
+pub async fn campaigns_list_starter_templates(
+    config: &Config,
+) -> Result<
+    RpcOutcome<Vec<crate::openhuman::campaigns::templates::CampaignTemplateView>>,
+    String,
+> {
+    // Snapshot for the missing-connections overlay. Aggregator
+    // failures degrade to "no connections" — the UI just shows
+    // every required connection as missing, which is honest.
+    let snapshot = match crate::openhuman::connections::aggregator::list_all(config).await {
+        Ok(views) => crate::openhuman::workflows::health::ConnectionsSnapshot::new(views),
+        Err(_) => crate::openhuman::workflows::health::ConnectionsSnapshot::default(),
+    };
+    let views =
+        crate::openhuman::campaigns::templates::ops::list_starter_templates(&snapshot);
+    Ok(RpcOutcome::single_log(
+        views,
+        "campaigns_list_starter_templates".to_string(),
+    ))
+}
+
+pub async fn campaigns_apply_template(
+    config: &Config,
+    template_id: String,
+) -> Result<RpcOutcome<String>, String> {
+    let campaign_id =
+        crate::openhuman::campaigns::templates::ops::apply_template(config, &template_id)
+            .map_err(|e| format!("campaigns_apply_template_failed: {e:#}"))?;
+    Ok(RpcOutcome::single_log(
+        campaign_id.clone(),
+        format!("campaigns_apply_template id={template_id} campaign={campaign_id}"),
+    ))
+}
+
 // ── F4-9 approval queue RPC ──────────────────────────────────────
 
 pub async fn approvals_list_pending(

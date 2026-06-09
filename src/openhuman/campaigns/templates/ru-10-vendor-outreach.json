@@ -1,0 +1,129 @@
+{
+  "template_id": "ru-10-vendor-outreach",
+  "min_phase": 4,
+  "name": "Vendor outreach campaign",
+  "description": "Personalised outbound email to a recordset of vendors. Drafts via OpenHuman, you review each draft in /approvals before send, capped at 20/day. Inbound replies route back into the same campaign for triage.",
+  "tags": ["campaigns", "outbound", "approvals"],
+  "entity_binding": {
+    "type": "google_sheet",
+    "spreadsheet_id": "REPLACE_WITH_YOUR_SHEET_ID",
+    "range": "Vendors!A1:H1000"
+  },
+  "throttle": {
+    "max_per_window": 20,
+    "window": { "type": "per_day" }
+  },
+  "approval_policy": { "kind": "draft_and_approve" },
+  "target_outcome": {
+    "kind": "count",
+    "metric": "replies_received",
+    "target": 50
+  },
+  "proposed_workflows": [
+    {
+      "template_id": "ru-10-vendor-outreach-outbound",
+      "min_phase": 4,
+      "name": "Vendor outreach — outbound batch",
+      "description": "Daily 9am: for each uncontacted vendor in the sheet, draft a personalised email and queue for approval.",
+      "tags": ["campaign-child", "outbound"],
+      "trigger": {
+        "type": "cron",
+        "expr": "0 9 * * *",
+        "tz": null,
+        "active_hours": null
+      },
+      "nodes": [
+        {
+          "id": "for_each",
+          "kind": "for_each",
+          "config": {
+            "kind": "for_each",
+            "entity_binding": null,
+            "query": {
+              "filters": [
+                { "field": "status", "op": { "op": "eq" }, "value": "uncontacted" }
+              ],
+              "limit": null,
+              "offset": null
+            },
+            "body_nodes": ["draft_email"],
+            "per_iteration_delay_secs": null,
+            "max_per_run": 20
+          },
+          "position": null
+        },
+        {
+          "id": "draft_email",
+          "kind": "agent_prompt",
+          "config": {
+            "kind": "agent_prompt",
+            "prompt": "Draft a short, personalised outreach email to {{record.name}} at {{record.email}}. Reference what they do (column `company` if present) and our offer. Keep it under 120 words. Sign off as the user. Use composio.GMAIL_SEND_EMAIL with the user's connected Gmail to send — the runtime will intercept and queue for approval, do not skip the call.",
+            "allowed_connections": [
+              { "type": "composio", "toolkit_id": "gmail" }
+            ],
+            "iteration_cap": 6,
+            "model_tier": "reasoning"
+          },
+          "position": null
+        }
+      ],
+      "edges": [],
+      "settings": { "timeout_secs": 600, "on_error": "halt" },
+      "required_connections": [
+        { "type": "composio", "toolkit_id": "gmail" }
+      ],
+      "rationale_at_seed": [
+        "for_each over the Vendors sheet filtered to uncontacted rows; campaign throttle gates to 20/day.",
+        "DraftAndApprove on the campaign intercepts the gmail send — every draft lands in /approvals.",
+        "agent_prompt uses {{record.name}} + {{record.email}} templating to personalise per row."
+      ]
+    },
+    {
+      "template_id": "ru-10-vendor-outreach-replies",
+      "min_phase": 4,
+      "name": "Vendor outreach — reply handler",
+      "description": "When a vendor replies (Gmail), classify intent and either draft a follow-up (queued for approval) or mark the row as not_interested.",
+      "tags": ["campaign-child", "inbound"],
+      "trigger": {
+        "type": "composio_event",
+        "toolkit": "gmail",
+        "trigger_id": "GMAIL_NEW_GMAIL_MESSAGE"
+      },
+      "nodes": [
+        {
+          "id": "classify_and_act",
+          "kind": "agent_prompt",
+          "config": {
+            "kind": "agent_prompt",
+            "prompt": "A new Gmail message arrived: {{trigger.payload}}. If it's a reply to an outreach we sent: classify intent (interested / not_interested / out_of_office). If interested, draft a short follow-up via composio.GMAIL_SEND_EMAIL (the runtime queues it for approval). If not_interested, no action needed. If unrelated to outreach, no action.",
+            "allowed_connections": [
+              { "type": "composio", "toolkit_id": "gmail" }
+            ],
+            "iteration_cap": 4,
+            "model_tier": "reasoning"
+          },
+          "position": null
+        }
+      ],
+      "edges": [],
+      "settings": { "timeout_secs": 300, "on_error": "halt" },
+      "required_connections": [
+        { "type": "composio", "toolkit_id": "gmail" }
+      ],
+      "rationale_at_seed": [
+        "Composio Gmail trigger fires on every new message — the agent gates on whether it's a reply to outreach.",
+        "Follow-up sends route through the same DraftAndApprove intercept so the user sees the reply draft in /approvals.",
+        "No status write-back to the sheet in this MVP; F4-17 follow-up adds a closed-loop update."
+      ]
+    }
+  ],
+  "required_connections": [
+    { "type": "composio", "toolkit_id": "gmail" }
+  ],
+  "rationale_at_seed": [
+    "Vendor outreach is the canonical Phase 4 campaign — recordset + throttle + draft-and-approve all together.",
+    "Default binding is Google Sheets so the user can ship without Attio; swap to Attio in the campaign edit flow.",
+    "Throttle 20/day matches the cadence locked in the 2026-05-26 grill.",
+    "Two sub-workflows (outbound + reply handler). A daily digest is a sensible add-on but lives in the F4-17 follow-up template if user demand surfaces."
+  ]
+}

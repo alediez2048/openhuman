@@ -36,6 +36,8 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("approvals_approve"),
         schemas("approvals_reject"),
         schemas("approvals_batch_approve"),
+        schemas("list_starter_templates"),
+        schemas("apply_template"),
     ]
 }
 
@@ -113,6 +115,14 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("approvals_batch_approve"),
             handler: handle_approvals_batch_approve,
+        },
+        RegisteredController {
+            schema: schemas("list_starter_templates"),
+            handler: handle_list_starter_templates,
+        },
+        RegisteredController {
+            schema: schemas("apply_template"),
+            handler: handle_apply_template,
         },
     ]
 }
@@ -322,6 +332,35 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 name: "touched",
                 ty: TypeSchema::Bool,
                 comment: "True when the link succeeded.",
+                required: true,
+            }],
+        },
+        "list_starter_templates" => ControllerSchema {
+            namespace: "campaigns",
+            function: "list_starter_templates",
+            description: "F4-17 catalog view of the 3 bundled campaign templates (RU-10 vendor outreach / RU-11 content calendar / RU-12 ads monitor). Each row carries a missing-connections overlay so the UI card can show ready/needs-X.",
+            inputs: vec![],
+            outputs: vec![FieldSchema {
+                name: "templates",
+                ty: TypeSchema::Array(Box::new(TypeSchema::Ref("CampaignTemplateView"))),
+                comment: "Bundled templates, in registration order.",
+                required: true,
+            }],
+        },
+        "apply_template" => ControllerSchema {
+            namespace: "campaigns",
+            function: "apply_template",
+            description: "F4-17 [Use template] click path. Stamps a Draft Campaign + one disabled Workflow per `proposed_workflows[]` entry with `campaign_id` linking them. Returns the new campaign id so the UI can navigate to /campaigns/:id.",
+            inputs: vec![FieldSchema {
+                name: "template_id",
+                ty: TypeSchema::String,
+                comment: "Bundled template id (ru-10-vendor-outreach / ru-11-content-calendar / ru-12-ads-monitor).",
+                required: true,
+            }],
+            outputs: vec![FieldSchema {
+                name: "campaign_id",
+                ty: TypeSchema::String,
+                comment: "Newly-created Draft campaign id.",
                 required: true,
             }],
         },
@@ -621,6 +660,24 @@ fn handle_remove_workflow(params: Map<String, Value>) -> ControllerFuture {
                 workflow_id,
             )
             .await?,
+        )
+    })
+}
+
+fn handle_list_starter_templates(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        to_json(crate::openhuman::campaigns::rpc::campaigns_list_starter_templates(&config).await?)
+    })
+}
+
+fn handle_apply_template(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let template_id = required_string(&params, "template_id")?;
+        to_json(
+            crate::openhuman::campaigns::rpc::campaigns_apply_template(&config, template_id)
+                .await?,
         )
     })
 }

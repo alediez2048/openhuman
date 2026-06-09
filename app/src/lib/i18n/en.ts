@@ -3718,8 +3718,8 @@ const en: TranslationMap = {
   'campaigns.card.archive': 'Archive',
   'campaigns.card.policy.draft_and_approve': 'Draft & approve',
   'campaigns.card.policy.auto_reply': 'Auto-reply',
-  'campaigns.card.policy.notify': 'Notify',
-  'campaigns.card.policy.read_only': 'Read-only',
+  'campaigns.card.policy.triage': 'Triage',
+  'campaigns.card.policy.tiered': 'Tiered',
   // F4-12 detail view
   'campaigns.detail.back': 'Back to campaigns',
   'campaigns.detail.not_found': 'Campaign not found.',
@@ -3744,6 +3744,11 @@ const en: TranslationMap = {
   // F4-13 inline editors
   'campaigns.detail.add_description': 'Click to add a description…',
   'campaigns.detail.no_throttle_hint': 'Set a max above 0 to enable throttle',
+  // F4-17 starter templates
+  'campaigns.templates_title': 'Or start from a template',
+  'campaigns.template_use_cta': 'Use this template',
+  'campaigns.template_missing_connections':
+    '{count} connection(s) need to be set up before this template runs.',
 
   'workflows.starter_workflows': 'Starter workflows',
   'workflows.empty_title': 'No workflows yet',

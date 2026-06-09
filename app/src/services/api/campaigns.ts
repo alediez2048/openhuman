@@ -10,6 +10,7 @@ import type {
   ApprovalEntry,
   Campaign,
   CampaignId,
+  CampaignTemplateView,
   ListCampaignsFilter,
   ThrottleSnapshot,
 } from '../../types/campaigns';
@@ -118,6 +119,23 @@ export const campaignsApi = {
     const raw = await callCoreRpc<
       ThrottleSnapshot | null | RpcOutcomeEnvelope<ThrottleSnapshot | null>
     >({ method: 'openhuman.campaigns_throttle_status', params: { id } });
+    return unwrap(raw);
+  },
+
+  // ── F4-17 starter templates ──────────────────────────────────────
+
+  listStarterTemplates: async (): Promise<CampaignTemplateView[]> => {
+    const raw = await callCoreRpc<
+      CampaignTemplateView[] | RpcOutcomeEnvelope<CampaignTemplateView[]>
+    >({ method: 'openhuman.campaigns_list_starter_templates', params: {} });
+    return unwrap(raw);
+  },
+
+  applyTemplate: async (templateId: string): Promise<string> => {
+    const raw = await callCoreRpc<string | RpcOutcomeEnvelope<string>>({
+      method: 'openhuman.campaigns_apply_template',
+      params: { template_id: templateId },
+    });
     return unwrap(raw);
   },
 

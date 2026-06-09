@@ -1,0 +1,90 @@
+{
+  "template_id": "ru-11-content-calendar",
+  "min_phase": 4,
+  "name": "Content calendar campaign",
+  "description": "Daily post from a content backlog sheet. OpenHuman drafts each post from your brief, queues it for your approval, and posts at most one per day across LinkedIn, Twitter, etc.",
+  "tags": ["campaigns", "content", "approvals"],
+  "entity_binding": {
+    "type": "google_sheet",
+    "spreadsheet_id": "REPLACE_WITH_YOUR_SHEET_ID",
+    "range": "Content!A1:F500"
+  },
+  "throttle": {
+    "max_per_window": 1,
+    "window": { "type": "per_day" }
+  },
+  "approval_policy": { "kind": "draft_and_approve" },
+  "target_outcome": {
+    "kind": "count",
+    "metric": "posts_published",
+    "target": 30
+  },
+  "proposed_workflows": [
+    {
+      "template_id": "ru-11-content-calendar-publisher",
+      "min_phase": 4,
+      "name": "Content calendar — daily publisher",
+      "description": "Daily 10am: pick the next unpublished post from the sheet, draft the platform-specific copy, queue for approval.",
+      "tags": ["campaign-child", "content"],
+      "trigger": {
+        "type": "cron",
+        "expr": "0 10 * * *",
+        "tz": null,
+        "active_hours": null
+      },
+      "nodes": [
+        {
+          "id": "for_each",
+          "kind": "for_each",
+          "config": {
+            "kind": "for_each",
+            "entity_binding": null,
+            "query": {
+              "filters": [
+                { "field": "posted", "op": { "op": "eq" }, "value": "false" }
+              ],
+              "limit": 1,
+              "offset": null
+            },
+            "body_nodes": ["draft_post"],
+            "per_iteration_delay_secs": null,
+            "max_per_run": 1
+          },
+          "position": null
+        },
+        {
+          "id": "draft_post",
+          "kind": "agent_prompt",
+          "config": {
+            "kind": "agent_prompt",
+            "prompt": "Draft the next scheduled post. The row from the content backlog is: {{record}}. Use the `channel` column to choose voice (LinkedIn = professional, Twitter = punchy). Use `title` + `draft` as source material. Keep under platform character limits. Send via the matching connection — the runtime will queue for approval before publishing.",
+            "allowed_connections": [
+              { "type": "channel", "provider": "linkedin", "channel_id": "" }
+            ],
+            "iteration_cap": 4,
+            "model_tier": "reasoning"
+          },
+          "position": null
+        }
+      ],
+      "edges": [],
+      "settings": { "timeout_secs": 300, "on_error": "halt" },
+      "required_connections": [
+        { "type": "channel", "provider": "linkedin", "channel_id": "" }
+      ],
+      "rationale_at_seed": [
+        "Throttle 1/day caps publishing cadence even if the sheet has 100 ready rows.",
+        "for_each with max_per_run=1 + filter `posted=false` pulls exactly the next post.",
+        "DraftAndApprove gives the user final say on tone before anything ships."
+      ]
+    }
+  ],
+  "required_connections": [
+    { "type": "channel", "provider": "linkedin", "channel_id": "" }
+  ],
+  "rationale_at_seed": [
+    "Content backlog → daily-pace publishing is a classic Phase 4 pattern. Throttle ensures consistency without rep-handling.",
+    "Single sub-workflow at MVP; engagement-digest workflow is the obvious extension when the user wants metrics.",
+    "Defaults to LinkedIn for the channel; user swaps in their preferred platform via the connection picker after [Use template]."
+  ]
+}
