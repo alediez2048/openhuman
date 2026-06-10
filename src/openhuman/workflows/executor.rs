@@ -3628,18 +3628,18 @@ async fn open_browser_session_for_run(
                     return opener(&opener_user, &opener_run, &profile);
                 }
             }
-            // Production (Phase 3.1): WsTransport is a stub. The first
-            // `call()` would return CdpError::Other; we surface that
-            // here at session-open time so the run fails fast with a
-            // clear reason rather than midway through the agent loop.
-            anyhow::bail!(
-                "browser_action: live CDP transport not yet wired in Phase 3.1 \
-                 (WsTransport is a stub; F3-5/F3-6 enable it). \
-                 Profile requested: {:?}, user={}, run={}",
-                profile,
-                opener_user,
-                opener_run
+            // F3-4.5: live CDP path. `open_session_for_profile`
+            // dispatches per BrowserProfile variant and surfaces a
+            // clear `CdpError::PermissionDenied` when the profile
+            // isn't satisfiable (e.g. ReuseAuthenticated for a
+            // provider whose webview isn't open).
+            let _ = &opener_run;
+            crate::openhuman::browser_agent::cdp::open_session_for_profile(
+                &opener_user,
+                &profile,
             )
+            .await
+            .map_err(|e| anyhow::anyhow!("browser_action: open session failed: {e}"))
         })
         .await?;
     Ok(session)

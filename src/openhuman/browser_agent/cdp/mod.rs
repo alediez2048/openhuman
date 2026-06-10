@@ -26,6 +26,8 @@
 //!   distinction at the LLM-facing tool layer.
 
 pub mod errors;
+pub mod opener;
+pub mod providers;
 pub mod session;
 pub mod transport;
 pub mod types;
@@ -34,8 +36,13 @@ pub mod types;
 mod session_tests;
 
 pub use errors::CdpError;
+pub use opener::{
+    open_ephemeral_isolated, open_named_persistent, open_reuse_authenticated,
+    open_session_for_profile,
+};
+pub use providers::expected_host;
 pub use session::CdpSession;
-pub use transport::{CdpTransport, MockTransport};
+pub use transport::{CdpTransport, MockTransport, WsTransport};
 pub use types::{
     BrowserProfile, Cookie, Key, KeyModifiers, MouseButton, Rect, ScreenshotFormat,
     ScreenshotOptions, TypeOptions, WaitOptions, WaitUntil,

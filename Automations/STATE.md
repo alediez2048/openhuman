@@ -34,7 +34,7 @@ Locked architecture decisions from the 2026-05-26 grill that shipped:
 
 **🟡 NEXT WORK:** either close the remaining Phase 4 UI polish (F4-14/15/16/18 hero spec) OR move to Phase 3 (Browser Agent) per the original ordering.
 
-**Phase 3 (Browser Agent) ticket set DRAFTED** under `Automations/Tickets/phase-3-browser-agent/` — `F3-overview.md` + 7 sub-tickets. Executes AFTER Phase 4 per the 2026-05-26 ordering. The thesis is a CEF-native CDP-driven browser agent (Stagehand-style `act`/`extract`/`observe`) that drives the user's already-authenticated webview sessions. Additive to Composio, not a replacement.
+**Phase 3 (Browser Agent) IN PROGRESS** under `Automations/Tickets/phase-3-browser-agent/` — `F3-overview.md` + 7 sub-tickets + F3-4.5 inserted post-F3-4 to unblock live CEF. The thesis is a CEF-native CDP-driven browser agent (Stagehand-style `act`/`extract`/`observe`) that drives the user's already-authenticated webview sessions. Additive to Composio, not a replacement. Shipped to fork on 2026-06-10: **F3-1 ✅ F3-2 ✅ F3-3 ✅ F3-4 ✅ F3-4.5 ✅** (CDP primitives + page perception + LLM tools + BrowserAction node + live WsTransport with profile-aware session opener). Production `browser_action` runs now open real WebSocket sessions against CEF (port 19222); awaiting manual smoke test against LinkedIn for the hero use case. Remaining: F3-5 live preview, F3-6 safety preamble, F3-7 vision fallback.
 
 **Canvas (originally Phase 4) SUPERSEDED** by Phase 4 Campaigns. Drafts preserved at `Automations/Tickets/phase-4-canvas/` for reference but the Phase 4 slot now belongs to Campaigns. Canvas remains demand-gated per `prd.md §5.3`; Phase 4's hybrid detail editor (F4-12..F4-16) may make Canvas permanently unnecessary.
 
