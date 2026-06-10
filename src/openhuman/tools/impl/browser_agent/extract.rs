@@ -137,6 +137,20 @@ impl Tool for BrowserExtractTool {
             "url": snap.url,
         });
         let markdown = render_extract_markdown(&body);
+        // F3-6 chunk 2: audit-log the extract call with its result
+        // shape so the run-detail UI shows what the agent pulled out.
+        super::observe::emit_audit(
+            user_id,
+            run_id,
+            "browser_extract",
+            &args,
+            &format!(
+                "extracted {} elements + {} text matches from {}",
+                extracted.len(),
+                text_matches.len(),
+                snap.url,
+            ),
+        );
         Ok(ToolResult::success_with_markdown(body, markdown))
     }
 }

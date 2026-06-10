@@ -28,14 +28,21 @@ pub type RunId = String;
 
 /// Per-run safety metadata the tools read at dispatch time. Set by
 /// `execute_browser_action` before opening the session; cleared on
-/// release. F3-6 chunk 1 ships `dry_run`; later chunks add cost-cap
-/// counters + redaction policy hooks here.
+/// release. F3-6 chunk 1 shipped `dry_run`; chunk 2 adds
+/// `workspace_dir` so the F3-3 tools can find `workflows.db` and
+/// write audit-log rows without holding a `Config`.
 #[derive(Debug, Clone, Default)]
 pub struct RunMeta {
     /// When true, `browser_act` returns `{ status: "dry_run", … }`
     /// instead of dispatching the CDP primitive. Read-only tools
     /// (`browser_observe`, `browser_extract`) are unaffected.
     pub dry_run: bool,
+
+    /// F3-6 chunk 2: workspace directory the executor passes through
+    /// so tools can locate `workflows.db` for audit-log writes
+    /// without needing a `Config`. `None` in tests / when audit log
+    /// is intentionally disabled.
+    pub workspace_dir: Option<std::path::PathBuf>,
 }
 
 /// Process-global registry. Singleton — `instance()` returns a

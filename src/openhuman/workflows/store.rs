@@ -29,6 +29,7 @@ const MIGRATION_007: &str = include_str!("migrations/007_run_failure_reason.sql"
 const MIGRATION_008: &str = include_str!("migrations/008_campaigns.sql");
 const MIGRATION_009: &str = include_str!("migrations/009_campaign_throttle.sql");
 const MIGRATION_010: &str = include_str!("migrations/010_approval_queue.sql");
+const MIGRATION_011: &str = include_str!("migrations/011_browser_agent_audit_log.sql");
 
 /// Resolves the database path for this workspace: `${workspace_dir}/workflows.db`.
 fn db_path(config: &Config) -> PathBuf {
@@ -43,7 +44,20 @@ fn db_path(config: &Config) -> PathBuf {
 /// because SQLite disables it per-connection by default and the
 /// run-rows / step-rows depend on `ON DELETE CASCADE`.
 pub fn with_connection<T>(config: &Config, f: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
-    let path = db_path(config);
+    with_connection_at(&config.workspace_dir, f)
+}
+
+/// `with_connection` keyed on the workspace directory alone, for
+/// callers that don't hold a full `Config` (notably the F3-3 browser
+/// tools, which receive `workspace_dir` via `SessionRegistry::RunMeta`
+/// rather than threading `Config` through every tool constructor).
+/// Same contract as [`with_connection`]: opens the DB, enables FK
+/// pragma, applies all pending migrations, then invokes `f`.
+pub fn with_connection_at<T>(
+    workspace_dir: &std::path::Path,
+    f: impl FnOnce(&Connection) -> Result<T>,
+) -> Result<T> {
+    let path = workspace_dir.join("workflows.db");
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).with_context(|| {
             format!(
@@ -90,6 +104,7 @@ fn apply_migrations(conn: &Connection) -> Result<()> {
     apply_one(conn, 8, "008_campaigns", MIGRATION_008)?;
     apply_one(conn, 9, "009_campaign_throttle", MIGRATION_009)?;
     apply_one(conn, 10, "010_approval_queue", MIGRATION_010)?;
+    apply_one(conn, 11, "011_browser_agent_audit_log", MIGRATION_011)?;
 
     Ok(())
 }

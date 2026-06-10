@@ -26,6 +26,8 @@
 //! once F3-5's live preview gives them a UI surface (D/F/G depend on
 //! the preview panel for the user-facing confirmation flow).
 
+pub mod audit_log;
 pub mod preamble;
 
+pub use audit_log::{list_for_run, write_entry, AuditLogEntry};
 pub use preamble::safety_preamble;

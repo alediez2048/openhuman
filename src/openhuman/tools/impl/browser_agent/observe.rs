@@ -106,7 +106,19 @@ impl Tool for BrowserObserveTool {
 
         let snap = match snapshot(&session, SnapshotOptions::default()).await {
             Ok(s) => s,
-            Err(e) => return Ok(ToolResult::error(format!("browser_observe: {e}"))),
+            Err(e) => {
+                // F3-6 chunk 2: best-effort audit even on the error
+                // path so the run-detail UI surfaces failed observe
+                // attempts.
+                emit_audit(
+                    user_id,
+                    run_id,
+                    "browser_observe",
+                    &args,
+                    &format!("error: {e}"),
+                );
+                return Ok(ToolResult::error(format!("browser_observe: {e}")));
+            }
         };
         let rendered = crate::openhuman::browser_agent::perceive::to_llm_text(&snap, tier);
         let payload = json!({
@@ -115,8 +127,46 @@ impl Tool for BrowserObserveTool {
             "element_count": snap.elements.len(),
             "token_estimate": snap.snapshot_token_estimate,
         });
+        emit_audit(
+            user_id,
+            run_id,
+            "browser_observe",
+            &args,
+            &format!(
+                "observed {} elements at {} ({})",
+                snap.elements.len(),
+                snap.url,
+                format!("{tier:?}").to_lowercase()
+            ),
+        );
         Ok(ToolResult::success_with_markdown(payload, rendered))
     }
+}
+
+/// F3-6 chunk 2: shared audit-log writer. Reads `workspace_dir` from
+/// the per-run `RunMeta`. No-op when meta has no workspace (tests
+/// without the executor having installed one, or runs where the audit
+/// is intentionally disabled). Best-effort — failures are logged +
+/// swallowed inside `write_entry_at`.
+pub(super) fn emit_audit(
+    user_id: &str,
+    run_id: &str,
+    tool_name: &str,
+    args: &Value,
+    result_summary: &str,
+) {
+    let meta = SessionRegistry::instance().get_meta(&user_id.to_string(), &run_id.to_string());
+    let Some(workspace) = meta.workspace_dir else {
+        return;
+    };
+    let args_json = serde_json::to_string(args).unwrap_or_else(|_| "{}".into());
+    let entry = crate::openhuman::browser_agent::safety::AuditLogEntry::new(
+        run_id,
+        tool_name,
+        args_json,
+        result_summary,
+    );
+    let _ = crate::openhuman::browser_agent::safety::audit_log::write_entry_at(&workspace, entry);
 }
 
 fn parse_tier(v: Option<&Value>) -> DetailTier {

@@ -462,7 +462,10 @@ async fn act_navigate_dry_run_short_circuits_before_dispatching() {
     SessionRegistry::instance().set_meta(
         &"u_dry_nav".into(),
         &"r1".into(),
-        crate::openhuman::browser_agent::registry::RunMeta { dry_run: true },
+        crate::openhuman::browser_agent::registry::RunMeta {
+            dry_run: true,
+            workspace_dir: None,
+        },
     );
 
     let result = BrowserActTool::new()
@@ -492,7 +495,10 @@ async fn act_scroll_dry_run_short_circuits() {
     SessionRegistry::instance().set_meta(
         &"u_dry_scroll".into(),
         &"r1".into(),
-        crate::openhuman::browser_agent::registry::RunMeta { dry_run: true },
+        crate::openhuman::browser_agent::registry::RunMeta {
+            dry_run: true,
+            workspace_dir: None,
+        },
     );
 
     let result = BrowserActTool::new()
@@ -525,7 +531,10 @@ async fn act_click_dry_run_still_snapshots_but_does_not_dispatch_mouse() {
     SessionRegistry::instance().set_meta(
         &"u_dry_click".into(),
         &"r1".into(),
-        crate::openhuman::browser_agent::registry::RunMeta { dry_run: true },
+        crate::openhuman::browser_agent::registry::RunMeta {
+            dry_run: true,
+            workspace_dir: None,
+        },
     );
 
     let result = BrowserActTool::new()
@@ -548,6 +557,96 @@ async fn act_click_dry_run_still_snapshots_but_does_not_dispatch_mouse() {
     let observed = mock.observed();
     assert_eq!(observed.len(), 1);
     assert_eq!(observed[0].0, "Runtime.evaluate");
+}
+
+// ── F3-6 chunk 2: audit-log writes ─────────────────────────────────
+
+#[tokio::test]
+async fn observe_writes_audit_row_when_workspace_dir_is_set() {
+    use crate::openhuman::browser_agent::safety::audit_log;
+    use tempfile::TempDir;
+
+    let mock = Arc::new(MockTransport::new());
+    mock.expect_ok("Runtime.evaluate", dom_extractor_payload());
+    install_session("u_audit_obs", "audit-run-1", mock).await;
+
+    let ws = TempDir::new().unwrap();
+    let mut cfg = crate::openhuman::config::Config::default();
+    cfg.workspace_dir = ws.path().to_path_buf();
+    SessionRegistry::instance().set_meta(
+        &"u_audit_obs".into(),
+        &"audit-run-1".into(),
+        crate::openhuman::browser_agent::registry::RunMeta {
+            dry_run: false,
+            workspace_dir: Some(ws.path().to_path_buf()),
+        },
+    );
+
+    let result = BrowserObserveTool::new()
+        .execute(json!({ "user_id": "u_audit_obs", "run_id": "audit-run-1" }))
+        .await
+        .unwrap();
+    assert!(!result.is_error);
+
+    let entries = audit_log::list_for_run(&cfg, "audit-run-1").unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].tool_name, "browser_observe");
+    assert!(entries[0].result_summary.contains("observed 3 elements"));
+}
+
+#[tokio::test]
+async fn act_dry_run_still_writes_audit_row_with_dry_run_prefix() {
+    use crate::openhuman::browser_agent::safety::audit_log;
+    use tempfile::TempDir;
+
+    let mock = Arc::new(MockTransport::new());
+    install_session("u_audit_dryrun", "audit-run-2", mock).await;
+
+    let ws = TempDir::new().unwrap();
+    let mut cfg = crate::openhuman::config::Config::default();
+    cfg.workspace_dir = ws.path().to_path_buf();
+    SessionRegistry::instance().set_meta(
+        &"u_audit_dryrun".into(),
+        &"audit-run-2".into(),
+        crate::openhuman::browser_agent::registry::RunMeta {
+            dry_run: true,
+            workspace_dir: Some(ws.path().to_path_buf()),
+        },
+    );
+
+    let result = BrowserActTool::new()
+        .execute(json!({
+            "user_id": "u_audit_dryrun",
+            "run_id": "audit-run-2",
+            "verb": "scroll",
+            "dy": 100
+        }))
+        .await
+        .unwrap();
+    assert!(!result.is_error);
+
+    let entries = audit_log::list_for_run(&cfg, "audit-run-2").unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].tool_name, "browser_act");
+    assert!(entries[0].result_summary.starts_with("[dry_run]"));
+    assert!(entries[0].result_summary.contains("scroll dy=100"));
+}
+
+#[tokio::test]
+async fn audit_no_op_when_workspace_dir_is_none() {
+    // Default meta has no workspace_dir — emit_audit must skip silently.
+    // We re-verify by NOT installing meta and checking the run still
+    // works without panicking.
+    let mock = Arc::new(MockTransport::new());
+    mock.expect_ok("Runtime.evaluate", dom_extractor_payload());
+    install_session("u_no_audit", "no-audit-run", mock).await;
+    // NB: no set_meta — default RunMeta has workspace_dir = None.
+
+    let result = BrowserObserveTool::new()
+        .execute(json!({ "user_id": "u_no_audit", "run_id": "no-audit-run" }))
+        .await
+        .unwrap();
+    assert!(!result.is_error);
 }
 
 #[tokio::test]

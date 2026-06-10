@@ -3773,14 +3773,16 @@ async fn execute_browser_action(
     //    real `user_id` when the multi-tenant runtime lands.
     let user_id = run.workflow_id.clone();
 
-    // F3-6 chunk 1: install per-run safety metadata BEFORE opening the
-    // session so the first tool call sees the dry-run flag. Cleared
-    // by `SessionRegistry::release` on terminal status.
+    // F3-6 chunk 1/2: install per-run safety metadata BEFORE opening
+    // the session so the first tool call sees the dry-run flag AND
+    // can locate `workflows.db` for audit-log writes. Cleared by
+    // `SessionRegistry::release` on terminal status.
     crate::openhuman::browser_agent::registry::SessionRegistry::instance().set_meta(
         &user_id,
         &run.id,
         crate::openhuman::browser_agent::registry::RunMeta {
             dry_run: browser_cfg.dry_run,
+            workspace_dir: Some(config.workspace_dir.clone()),
         },
     );
 

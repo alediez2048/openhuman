@@ -133,10 +133,12 @@ impl Tool for BrowserActTool {
                         let cx = el.bounds.x + el.bounds.width / 2.0;
                         let cy = el.bounds.y + el.bounds.height / 2.0;
                         if meta.dry_run {
-                            return Ok(dry_run_result(format!(
-                                "click [{eid}] {} at ({cx:.0}, {cy:.0})",
-                                el.label
-                            )));
+                            return Ok(dry_run_result(
+                                user_id,
+                                run_id,
+                                &args,
+                                format!("click [{eid}] {} at ({cx:.0}, {cy:.0})", el.label),
+                            ));
                         }
                         if let Err(e) = session.click_at(cx, cy, MouseButton::Left).await {
                             return Ok(ToolResult::error(format!("browser_act(click): {e}")));
@@ -168,11 +170,12 @@ impl Tool for BrowserActTool {
                         let cx = el.bounds.x + el.bounds.width / 2.0;
                         let cy = el.bounds.y + el.bounds.height / 2.0;
                         if meta.dry_run {
-                            return Ok(dry_run_result(format!(
-                                "type {} chars into [{eid}] {}",
-                                text.len(),
-                                el.label
-                            )));
+                            return Ok(dry_run_result(
+                                user_id,
+                                run_id,
+                                &args,
+                                format!("type {} chars into [{eid}] {}", text.len(), el.label),
+                            ));
                         }
                         if let Err(e) = session.click_at(cx, cy, MouseButton::Left).await {
                             return Ok(ToolResult::error(format!("browser_act(type focus): {e}")));
@@ -192,7 +195,12 @@ impl Tool for BrowserActTool {
             "scroll" => {
                 let dy = args.get("dy").and_then(|v| v.as_f64()).unwrap_or(0.0);
                 if meta.dry_run {
-                    return Ok(dry_run_result(format!("scroll dy={dy}")));
+                    return Ok(dry_run_result(
+                        user_id,
+                        run_id,
+                        &args,
+                        format!("scroll dy={dy}"),
+                    ));
                 }
                 if let Err(e) = session.scroll(0.0, dy).await {
                     return Ok(ToolResult::error(format!("browser_act(scroll): {e}")));
@@ -204,7 +212,12 @@ impl Tool for BrowserActTool {
                     return Ok(ToolResult::error("browser_act(navigate): `url` required"));
                 };
                 if meta.dry_run {
-                    return Ok(dry_run_result(format!("navigate to {url}")));
+                    return Ok(dry_run_result(
+                        user_id,
+                        run_id,
+                        &args,
+                        format!("navigate to {url}"),
+                    ));
                 }
                 if let Err(e) = session.navigate(url).await {
                     return Ok(ToolResult::error(format!("browser_act(navigate): {e}")));
@@ -227,6 +240,10 @@ impl Tool for BrowserActTool {
                 "summary": outcome,
             }
         });
+        // F3-6 chunk 2: audit-log after the dispatch path resolves
+        // (so the summary is accurate). The dry-run early-returns
+        // above emit their own audit lines below.
+        super::observe::emit_audit(user_id, run_id, "browser_act", &args, &outcome);
         Ok(ToolResult::success_with_markdown(body, markdown))
     }
 }
@@ -235,12 +252,27 @@ impl Tool for BrowserActTool {
 /// The `status` field is the contract the safety preamble references —
 /// agents can pattern-match on it to short-circuit chained dry-run
 /// iterations without re-asking the page.
-fn dry_run_result(would_have: String) -> ToolResult {
+///
+/// F3-6 chunk 2: also writes an audit-log entry so the dry-run trace
+/// shows up in the run-detail UI alongside real dispatches.
+fn dry_run_result(
+    user_id: &str,
+    run_id: &str,
+    args: &Value,
+    would_have: String,
+) -> ToolResult {
     let body = json!({
         "status": "dry_run",
         "would_have": would_have,
     });
     let markdown = format!("[DRY RUN] would: {would_have}");
+    super::observe::emit_audit(
+        user_id,
+        run_id,
+        "browser_act",
+        args,
+        &format!("[dry_run] {would_have}"),
+    );
     ToolResult::success_with_markdown(body, markdown)
 }
 
