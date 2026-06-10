@@ -38,9 +38,7 @@ pub async fn open_session_for_profile(
         BrowserProfile::ReuseAuthenticated { provider } => {
             open_reuse_authenticated(user_id, provider).await
         }
-        BrowserProfile::NamedPersistent { name } => {
-            open_named_persistent(user_id, name).await
-        }
+        BrowserProfile::NamedPersistent { name } => open_named_persistent(user_id, name).await,
     }
 }
 
@@ -100,10 +98,7 @@ pub async fn open_reuse_authenticated(
 /// scope. A future ticket can either spawn separate CEF child
 /// processes per name or extend the shell to expose a profile-swap
 /// IPC — for now, fail loud.
-pub async fn open_named_persistent(
-    _user_id: &str,
-    name: &str,
-) -> Result<CdpSession, CdpError> {
+pub async fn open_named_persistent(_user_id: &str, name: &str) -> Result<CdpSession, CdpError> {
     Err(CdpError::PermissionDenied {
         detail: format!(
             "browser_action: NamedPersistent profile `{name}` not supported in \
@@ -123,9 +118,7 @@ async fn create_target(transport: &WsTransport, url: &str) -> Result<String, Cdp
     v.get("targetId")
         .and_then(|x| x.as_str())
         .map(String::from)
-        .ok_or_else(|| {
-            CdpError::Other("Target.createTarget response missing `targetId`".into())
-        })
+        .ok_or_else(|| CdpError::Other("Target.createTarget response missing `targetId`".into()))
 }
 
 async fn attach_to_target(transport: &WsTransport, target_id: &str) -> Result<String, CdpError> {
@@ -139,9 +132,7 @@ async fn attach_to_target(transport: &WsTransport, target_id: &str) -> Result<St
     v.get("sessionId")
         .and_then(|x| x.as_str())
         .map(String::from)
-        .ok_or_else(|| {
-            CdpError::Other("Target.attachToTarget response missing `sessionId`".into())
-        })
+        .ok_or_else(|| CdpError::Other("Target.attachToTarget response missing `sessionId`".into()))
 }
 
 #[derive(Debug, Clone)]

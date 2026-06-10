@@ -213,9 +213,9 @@ impl WsTransport {
     /// the URL is already known.
     pub async fn connect(ws_url: impl Into<String>) -> Result<Self, CdpError> {
         let ws_url = ws_url.into();
-        let (stream, _resp) = connect_async(&ws_url).await.map_err(|e| {
-            CdpError::Other(format!("ws connect failed ({ws_url}): {e}"))
-        })?;
+        let (stream, _resp) = connect_async(&ws_url)
+            .await
+            .map_err(|e| CdpError::Other(format!("ws connect failed ({ws_url}): {e}")))?;
         Ok(Self {
             ws_url,
             inner: tokio::sync::Mutex::new(Inner {
@@ -257,15 +257,13 @@ impl CdpTransport for WsTransport {
         if let Some(sid) = session_id {
             req["sessionId"] = serde_json::Value::String(sid.to_string());
         }
-        let body = serde_json::to_string(&req).map_err(|e| {
-            CdpError::Other(format!("encode {method} failed: {e}"))
-        })?;
+        let body = serde_json::to_string(&req)
+            .map_err(|e| CdpError::Other(format!("encode {method} failed: {e}")))?;
 
         let mut guard = self.inner.lock().await;
-        let stream = guard
-            .stream
-            .as_mut()
-            .ok_or(CdpError::TransportClosed { reason: "ws transport already closed".into() })?;
+        let stream = guard.stream.as_mut().ok_or(CdpError::TransportClosed {
+            reason: "ws transport already closed".into(),
+        })?;
 
         stream
             .send(Message::Text(body))
@@ -303,18 +301,15 @@ impl CdpTransport for WsTransport {
                 }
                 _ => continue, // ping/pong/binary/frame — skip
             };
-            let v: Value = serde_json::from_str(&text).map_err(|e| {
-                CdpError::Other(format!("decode response: {e} (body={text})"))
-            })?;
+            let v: Value = serde_json::from_str(&text)
+                .map_err(|e| CdpError::Other(format!("decode response: {e} (body={text})")))?;
             // Skip unrelated events + responses for other ids — the
             // setup-phase dispatch model from the shell-side conn.rs.
             if v.get("id").and_then(|x| x.as_i64()) != Some(id) {
                 continue;
             }
             if let Some(err) = v.get("error") {
-                return Err(CdpError::Other(format!(
-                    "cdp error on {method}: {err}"
-                )));
+                return Err(CdpError::Other(format!("cdp error on {method}: {err}")));
             }
             return Ok(v.get("result").cloned().unwrap_or(Value::Null));
         }
@@ -347,9 +342,7 @@ pub async fn resolve_browser_ws_url() -> Result<String, CdpError> {
         match client.get(&url).send().await {
             Ok(resp) => match resp.json::<Value>().await {
                 Ok(v) => {
-                    if let Some(ws) =
-                        v.get("webSocketDebuggerUrl").and_then(|x| x.as_str())
-                    {
+                    if let Some(ws) = v.get("webSocketDebuggerUrl").and_then(|x| x.as_str()) {
                         return Ok(ws.to_string());
                     }
                     last_err = Some(format!("no webSocketDebuggerUrl in {url}"));
@@ -363,9 +356,9 @@ pub async fn resolve_browser_ws_url() -> Result<String, CdpError> {
             }
         }
     }
-    Err(CdpError::Other(
-        last_err.unwrap_or_else(|| "failed to resolve CDP websocket URL".into()),
-    ))
+    Err(CdpError::Other(last_err.unwrap_or_else(|| {
+        "failed to resolve CDP websocket URL".into()
+    })))
 }
 
 #[cfg(test)]
