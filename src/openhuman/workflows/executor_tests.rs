@@ -4959,6 +4959,7 @@ fn build_browser_action_agent_definition_appends_browser_tools() {
         allowed_hosts: vec![],
         output_schema: None,
         allowed_connections: vec![],
+        dry_run: false,
     };
     let def = executor::build_browser_action_agent_definition(&cfg);
     for name in executor::BROWSER_AGENT_TOOL_NAMES {
@@ -4989,6 +4990,7 @@ fn build_browser_action_agent_definition_preserves_connection_resolved_tools() {
             provider: "slack".into(),
             channel_id: "C123".into(),
         }],
+        dry_run: false,
     };
     let def = executor::build_browser_action_agent_definition(&cfg);
     assert!(def.allowed_tools.iter().any(|t| t == "channel_send"));
@@ -5009,6 +5011,7 @@ fn build_browser_action_agent_definition_dedups_if_browser_tool_already_present(
         allowed_hosts: vec![],
         output_schema: None,
         allowed_connections: vec![],
+        dry_run: false,
     };
     let a = executor::build_browser_action_agent_definition(&cfg);
     let b = executor::build_browser_action_agent_definition(&cfg);
@@ -5071,4 +5074,18 @@ fn browser_agent_tool_names_match_f3_3_constants() {
     exec_sorted.sort();
     tool_sorted.sort();
     assert_eq!(exec_sorted, tool_sorted);
+}
+
+#[test]
+fn compose_browser_action_prompt_appends_safety_preamble() {
+    // F3-6 chunk 1: the prompt MUST surface the five safety rules so
+    // the LLM reads them along with the goal. Pattern-match on
+    // distinctive substrings — the exact preamble text lives in
+    // browser_agent/safety/preamble.rs and is unit-tested there.
+    let out =
+        executor::compose_browser_action_prompt("Click the Save button", &[], None, "u", "r");
+    assert!(out.contains("## Safety rules"));
+    assert!(out.contains("Never type credentials"));
+    assert!(out.contains("Never solve CAPTCHAs"));
+    assert!(out.contains("Stay within allowed hosts"));
 }

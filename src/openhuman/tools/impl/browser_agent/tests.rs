@@ -448,3 +448,126 @@ fn tool_names_match_constants() {
 fn all_tool_names_lists_three() {
     assert_eq!(super::ALL_TOOL_NAMES.len(), 3);
 }
+
+// ── F3-6 chunk 1: dry-run mode ─────────────────────────────────────
+
+#[tokio::test]
+async fn act_navigate_dry_run_short_circuits_before_dispatching() {
+    // No CDP expectations queued — if dry_run leaks through, the
+    // mock transport will error out on the unexpected Page.navigate
+    // call. (Page.getNavigationHistory is also unexpected since the
+    // dry-run path doesn't read after_url.)
+    let mock = Arc::new(MockTransport::new());
+    install_session("u_dry_nav", "r1", mock.clone()).await;
+    SessionRegistry::instance().set_meta(
+        &"u_dry_nav".into(),
+        &"r1".into(),
+        crate::openhuman::browser_agent::registry::RunMeta { dry_run: true },
+    );
+
+    let result = BrowserActTool::new()
+        .execute(json!({
+            "user_id": "u_dry_nav",
+            "run_id": "r1",
+            "verb": "navigate",
+            "url": "https://example.com/landed"
+        }))
+        .await
+        .unwrap();
+    assert!(!result.is_error);
+    let md = result.markdown_formatted.expect("markdown payload");
+    assert!(md.contains("[DRY RUN]"));
+    assert!(md.contains("navigate to https://example.com/landed"));
+    assert_eq!(mock.observed().len(), 0, "dry run must not dispatch CDP calls");
+}
+
+#[tokio::test]
+async fn act_scroll_dry_run_short_circuits() {
+    let mock = Arc::new(MockTransport::new());
+    install_session("u_dry_scroll", "r1", mock.clone()).await;
+    SessionRegistry::instance().set_meta(
+        &"u_dry_scroll".into(),
+        &"r1".into(),
+        crate::openhuman::browser_agent::registry::RunMeta { dry_run: true },
+    );
+
+    let result = BrowserActTool::new()
+        .execute(json!({
+            "user_id": "u_dry_scroll",
+            "run_id": "r1",
+            "verb": "scroll",
+            "dy": 500
+        }))
+        .await
+        .unwrap();
+    assert!(!result.is_error);
+    assert!(result
+        .markdown_formatted
+        .as_deref()
+        .unwrap()
+        .contains("dy=500"));
+    assert_eq!(mock.observed().len(), 0);
+}
+
+#[tokio::test]
+async fn act_click_dry_run_still_snapshots_but_does_not_dispatch_mouse() {
+    // The dry-run click path still needs the snapshot so the
+    // would_have description names the actual element. So we DO
+    // expect the Runtime.evaluate (DOM extractor) call, but NOT the
+    // subsequent Input.dispatchMouseEvent pair.
+    let mock = Arc::new(MockTransport::new());
+    mock.expect_ok("Runtime.evaluate", dom_extractor_payload());
+    install_session("u_dry_click", "r1", mock.clone()).await;
+    SessionRegistry::instance().set_meta(
+        &"u_dry_click".into(),
+        &"r1".into(),
+        crate::openhuman::browser_agent::registry::RunMeta { dry_run: true },
+    );
+
+    let result = BrowserActTool::new()
+        .execute(json!({
+            "user_id": "u_dry_click",
+            "run_id": "r1",
+            "verb": "click",
+            "element_id": 1
+        }))
+        .await
+        .unwrap();
+    assert!(!result.is_error, "got error: {}", result.text());
+    let md = result.markdown_formatted.unwrap();
+    assert!(md.contains("[DRY RUN]"));
+    assert!(md.contains("click [1]"));
+    assert!(md.contains("Save"), "dry-run description should name the element");
+    let observed = mock.observed();
+    assert_eq!(observed.len(), 1);
+    assert_eq!(observed[0].0, "Runtime.evaluate");
+}
+
+#[tokio::test]
+async fn act_without_dry_run_flag_dispatches_normally() {
+    // Sanity guard: with no meta installed (default RunMeta), the
+    // tool dispatches CDP calls as it does today. Prevents a regression
+    // where the meta read accidentally defaults to dry_run = true.
+    let mock = Arc::new(MockTransport::new());
+    mock.expect_ok("Input.dispatchMouseEvent", json!({})); // scroll wheel
+    mock.expect_ok(
+        "Page.getNavigationHistory",
+        nav_history_payload("https://example.com/page"),
+    );
+    install_session("u_no_dry", "r1", mock.clone()).await;
+    // NB: deliberately NOT calling set_meta — exercise the default.
+
+    let result = BrowserActTool::new()
+        .execute(json!({
+            "user_id": "u_no_dry",
+            "run_id": "r1",
+            "verb": "scroll",
+            "dy": 200
+        }))
+        .await
+        .unwrap();
+    assert!(!result.is_error);
+    let md = result.markdown_formatted.unwrap();
+    assert!(!md.contains("[DRY RUN]"));
+    assert_eq!(mock.observed()[0].0, "Input.dispatchMouseEvent");
+}

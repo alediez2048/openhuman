@@ -71,9 +71,9 @@ export interface AgentPromptConfig {
  * sub-agent (browser_observe / browser_act / browser_extract) against
  * the user's authenticated webview when `profile.type === 'reuse_authenticated'`.
  *
- * The desktop shell wires the live WebSocket transport in F3-5/F3-6;
- * until then production runs fail at session-open with a clear "live
- * CDP transport not yet wired in Phase 3.1" error.
+ * The live WebSocket transport landed in F3-4.5 (mirrors the shell-side
+ * CDP impl, talks to `ws://127.0.0.1:19222`). Profile-aware opener
+ * resolves `reuse_authenticated` against the currently-open CEF webviews.
  */
 export type BrowserProfile =
   | { type: 'reuse_authenticated'; provider: string }
@@ -88,6 +88,14 @@ export interface BrowserActionConfig {
   allowed_hosts?: string[];
   output_schema?: unknown | null;
   allowed_connections?: ConnectionRef[];
+  /**
+   * F3-6 chunk 1: when true, `browser_act` short-circuits each write
+   * verb with `{ status: "dry_run", would_have: <description> }` instead
+   * of dispatching the CDP primitive. `browser_observe` and
+   * `browser_extract` are unaffected. Used for first-run verification
+   * before granting the workflow live browser writes.
+   */
+  dry_run?: boolean;
 }
 
 export type NodeConfig =

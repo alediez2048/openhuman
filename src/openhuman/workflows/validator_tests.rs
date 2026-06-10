@@ -1037,6 +1037,7 @@ fn baseline_browser_cfg() -> BrowserActionConfig {
         allowed_hosts: vec!["example.com".into()],
         output_schema: None,
         allowed_connections: vec![],
+        dry_run: false,
     }
 }
 
@@ -1189,7 +1190,8 @@ fn browser_action_roundtrips_through_serde() {
 #[test]
 fn browser_action_defaults_apply_on_deserialize() {
     // Minimal payload — only `goal` set. The rest must default
-    // (profile = EphemeralIsolated, iteration_cap = 25, empty hosts).
+    // (profile = EphemeralIsolated, iteration_cap = 25, empty hosts,
+    // dry_run = false).
     let json = r#"{"kind":"browser_action","goal":"do thing"}"#;
     let parsed: NodeConfig = serde_json::from_str(json).unwrap();
     match parsed {
@@ -1201,7 +1203,20 @@ fn browser_action_defaults_apply_on_deserialize() {
             assert!(cfg.allowed_hosts.is_empty());
             assert!(cfg.output_schema.is_none());
             assert!(cfg.allowed_connections.is_empty());
+            // F3-6 chunk 1: dry-run defaults to false (real dispatch).
+            assert!(!cfg.dry_run);
         }
         other => panic!("expected BrowserAction, got {other:?}"),
     }
+}
+
+#[test]
+fn browser_action_dry_run_roundtrips_through_serde() {
+    let mut cfg = baseline_browser_cfg();
+    cfg.dry_run = true;
+    let original = NodeConfig::BrowserAction(cfg);
+    let json = serde_json::to_string(&original).unwrap();
+    assert!(json.contains("\"dry_run\":true"));
+    let parsed: NodeConfig = serde_json::from_str(&json).unwrap();
+    assert_eq!(parsed, original);
 }

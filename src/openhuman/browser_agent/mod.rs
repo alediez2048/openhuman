@@ -48,3 +48,4 @@
 pub mod cdp;
 pub mod perceive;
 pub mod registry;
+pub mod safety;

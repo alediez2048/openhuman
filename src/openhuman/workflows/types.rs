@@ -863,6 +863,18 @@ pub struct BrowserActionConfig {
     /// agent's text summary is the node's output verbatim.
     #[serde(default)]
     pub output_schema: Option<serde_json::Value>,
+
+    /// F3-6 chunk 1: when `true`, `browser_act` returns a description
+    /// of what it WOULD have done instead of dispatching the CDP
+    /// primitive. `browser_observe` and `browser_extract` are
+    /// unaffected (read-only). Used for first-run verification before
+    /// granting the workflow write access to a live browser.
+    ///
+    /// Default `false`. The F3-6 ticket calls for the drafter to
+    /// default new workflows to `dry_run = true` as training wheels;
+    /// that drafter-side default is a chunk-2 follow-up.
+    #[serde(default)]
+    pub dry_run: bool,
 }
 
 fn default_browser_iteration_cap() -> u32 {

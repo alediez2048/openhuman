@@ -110,6 +110,13 @@ impl Tool for BrowserActTool {
                 "browser_act: no active session for this run",
             ));
         };
+        // F3-6 chunk 1: read per-run safety metadata. `dry_run = true`
+        // short-circuits each write verb before the CDP primitive
+        // fires; the tool returns a description of what it WOULD have
+        // done so the agent can chain its next step against a
+        // hypothetical observed change.
+        let meta = SessionRegistry::instance()
+            .get_meta(&user_id.to_string(), &run_id.to_string());
 
         let outcome = match verb {
             "click" => {
@@ -124,9 +131,14 @@ impl Tool for BrowserActTool {
                 };
                 match find_element(&snap.elements, eid as u32) {
                     Some(el) => {
-                        // Click the rect center.
                         let cx = el.bounds.x + el.bounds.width / 2.0;
                         let cy = el.bounds.y + el.bounds.height / 2.0;
+                        if meta.dry_run {
+                            return Ok(dry_run_result(format!(
+                                "click [{eid}] {} at ({cx:.0}, {cy:.0})",
+                                el.label
+                            )));
+                        }
                         if let Err(e) = session.click_at(cx, cy, MouseButton::Left).await {
                             return Ok(ToolResult::error(format!("browser_act(click): {e}")));
                         }
@@ -154,9 +166,15 @@ impl Tool for BrowserActTool {
                 };
                 match find_element(&snap.elements, eid as u32) {
                     Some(el) => {
-                        // Click to focus, then type humanized.
                         let cx = el.bounds.x + el.bounds.width / 2.0;
                         let cy = el.bounds.y + el.bounds.height / 2.0;
+                        if meta.dry_run {
+                            return Ok(dry_run_result(format!(
+                                "type {} chars into [{eid}] {}",
+                                text.len(),
+                                el.label
+                            )));
+                        }
                         if let Err(e) = session.click_at(cx, cy, MouseButton::Left).await {
                             return Ok(ToolResult::error(format!("browser_act(type focus): {e}")));
                         }
@@ -174,6 +192,9 @@ impl Tool for BrowserActTool {
             }
             "scroll" => {
                 let dy = args.get("dy").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                if meta.dry_run {
+                    return Ok(dry_run_result(format!("scroll dy={dy}")));
+                }
                 if let Err(e) = session.scroll(0.0, dy).await {
                     return Ok(ToolResult::error(format!("browser_act(scroll): {e}")));
                 }
@@ -183,6 +204,9 @@ impl Tool for BrowserActTool {
                 let Some(url) = args.get("url").and_then(|v| v.as_str()) else {
                     return Ok(ToolResult::error("browser_act(navigate): `url` required"));
                 };
+                if meta.dry_run {
+                    return Ok(dry_run_result(format!("navigate to {url}")));
+                }
                 if let Err(e) = session.navigate(url).await {
                     return Ok(ToolResult::error(format!("browser_act(navigate): {e}")));
                 }
@@ -206,6 +230,19 @@ impl Tool for BrowserActTool {
         });
         Ok(ToolResult::success_with_markdown(body, markdown))
     }
+}
+
+/// F3-6 chunk 1: shared shape for the dry-run short-circuit return.
+/// The `status` field is the contract the safety preamble references —
+/// agents can pattern-match on it to short-circuit chained dry-run
+/// iterations without re-asking the page.
+fn dry_run_result(would_have: String) -> ToolResult {
+    let body = json!({
+        "status": "dry_run",
+        "would_have": would_have,
+    });
+    let markdown = format!("[DRY RUN] would: {would_have}");
+    ToolResult::success_with_markdown(body, markdown)
 }
 
 fn find_element(elements: &[ActionableElement], id: u32) -> Option<&ActionableElement> {

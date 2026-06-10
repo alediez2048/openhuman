@@ -26,12 +26,30 @@ use super::cdp::session::{CdpSession, UserId};
 /// crate-level dependency from `browser_agent` on `workflows`.
 pub type RunId = String;
 
+/// Per-run safety metadata the tools read at dispatch time. Set by
+/// `execute_browser_action` before opening the session; cleared on
+/// release. F3-6 chunk 1 ships `dry_run`; later chunks add cost-cap
+/// counters + redaction policy hooks here.
+#[derive(Debug, Clone, Default)]
+pub struct RunMeta {
+    /// When true, `browser_act` returns `{ status: "dry_run", … }`
+    /// instead of dispatching the CDP primitive. Read-only tools
+    /// (`browser_observe`, `browser_extract`) are unaffected.
+    pub dry_run: bool,
+}
+
 /// Process-global registry. Singleton — `instance()` returns a
 /// `&'static SessionRegistry`. Per-(user_id, run_id) entries live
 /// until [`Self::release`] is called from the executor's run
 /// finaliser (F3-4 wires this).
 pub struct SessionRegistry {
     sessions: Mutex<HashMap<(UserId, RunId), Arc<CdpSession>>>,
+    /// Parallel map keyed by the same (user_id, run_id) so the F3-3
+    /// tools can read per-run safety flags (dry-run today) without
+    /// threading them through every tool argument. Independent
+    /// lifecycle from `sessions` so a meta-only entry (e.g. dry-run
+    /// before the first browser_observe opens the session) is legal.
+    meta: Mutex<HashMap<(UserId, RunId), RunMeta>>,
 }
 
 impl SessionRegistry {
@@ -43,7 +61,31 @@ impl SessionRegistry {
         static REG: OnceLock<SessionRegistry> = OnceLock::new();
         REG.get_or_init(|| SessionRegistry {
             sessions: Mutex::new(HashMap::new()),
+            meta: Mutex::new(HashMap::new()),
         })
+    }
+
+    /// Install (or replace) the per-run safety metadata for this
+    /// `(user_id, run_id)`. Called by `execute_browser_action`
+    /// BEFORE opening the session so the first tool call sees the
+    /// correct dry-run flag.
+    pub fn set_meta(&self, user_id: &UserId, run_id: &RunId, meta: RunMeta) {
+        self.meta
+            .lock()
+            .insert((user_id.clone(), run_id.clone()), meta);
+    }
+
+    /// Read the per-run safety metadata. Returns `RunMeta::default()`
+    /// when no entry exists — keeps tool dispatch safe in tests / when
+    /// the meta wasn't installed (defaults to non-dry-run, which IS
+    /// the lower-blast-radius default for the tool's normal mode of
+    /// operation: real CDP calls).
+    pub fn get_meta(&self, user_id: &UserId, run_id: &RunId) -> RunMeta {
+        self.meta
+            .lock()
+            .get(&(user_id.clone(), run_id.clone()))
+            .cloned()
+            .unwrap_or_default()
     }
 
     /// Return the cached session for this run, or insert + return a
@@ -96,12 +138,12 @@ impl SessionRegistry {
 
     /// Release the session for this `(user_id, run_id)`. Best-effort
     /// async close runs in the background so the executor doesn't
-    /// block on session teardown when the run finalises.
+    /// block on session teardown when the run finalises. Also clears
+    /// any per-run meta installed via [`Self::set_meta`].
     pub fn release(&self, user_id: &UserId, run_id: &RunId) -> Option<Arc<CdpSession>> {
-        let removed = self
-            .sessions
-            .lock()
-            .remove(&(user_id.clone(), run_id.clone()));
+        let key = (user_id.clone(), run_id.clone());
+        let removed = self.sessions.lock().remove(&key);
+        self.meta.lock().remove(&key);
         if removed.is_some() {
             tracing::debug!(
                 target: "browser-agent-registry",
@@ -119,6 +161,7 @@ impl SessionRegistry {
     #[cfg(test)]
     pub fn drain_for_tests(&self) {
         self.sessions.lock().clear();
+        self.meta.lock().clear();
     }
 }
 

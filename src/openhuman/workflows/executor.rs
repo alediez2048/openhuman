@@ -3772,6 +3772,18 @@ async fn execute_browser_action(
     //    `workflow_id` as the registry partition. F3-5/F3-6 wire the
     //    real `user_id` when the multi-tenant runtime lands.
     let user_id = run.workflow_id.clone();
+
+    // F3-6 chunk 1: install per-run safety metadata BEFORE opening the
+    // session so the first tool call sees the dry-run flag. Cleared
+    // by `SessionRegistry::release` on terminal status.
+    crate::openhuman::browser_agent::registry::SessionRegistry::instance().set_meta(
+        &user_id,
+        &run.id,
+        crate::openhuman::browser_agent::registry::RunMeta {
+            dry_run: browser_cfg.dry_run,
+        },
+    );
+
     let session_result = open_browser_session_for_run(browser_cfg, &user_id, &run.id).await;
     let session = match session_result {
         Ok(s) => s,
@@ -4017,6 +4029,12 @@ pub(crate) fn compose_browser_action_prompt(
         }
         out.push_str("\n```\n");
     }
+    // F3-6 chunk 1: append the static safety preamble (never type
+    // credentials, never solve CAPTCHAs, etc). Lands at the END so
+    // the agent reads its goal first, then sees the constraints —
+    // mirrors the way the chat-agent's `omit_safety_preamble` flag
+    // shapes its own system prompt.
+    out.push_str(crate::openhuman::browser_agent::safety::safety_preamble());
     out
 }
 
