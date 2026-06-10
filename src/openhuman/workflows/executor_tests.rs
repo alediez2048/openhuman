@@ -5082,8 +5082,7 @@ fn compose_browser_action_prompt_appends_safety_preamble() {
     // the LLM reads them along with the goal. Pattern-match on
     // distinctive substrings — the exact preamble text lives in
     // browser_agent/safety/preamble.rs and is unit-tested there.
-    let out =
-        executor::compose_browser_action_prompt("Click the Save button", &[], None, "u", "r");
+    let out = executor::compose_browser_action_prompt("Click the Save button", &[], None, "u", "r");
     assert!(out.contains("## Safety rules"));
     assert!(out.contains("Never type credentials"));
     assert!(out.contains("Never solve CAPTCHAs"));

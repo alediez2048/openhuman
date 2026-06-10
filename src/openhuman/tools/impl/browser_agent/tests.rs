@@ -478,7 +478,11 @@ async fn act_navigate_dry_run_short_circuits_before_dispatching() {
     let md = result.markdown_formatted.expect("markdown payload");
     assert!(md.contains("[DRY RUN]"));
     assert!(md.contains("navigate to https://example.com/landed"));
-    assert_eq!(mock.observed().len(), 0, "dry run must not dispatch CDP calls");
+    assert_eq!(
+        mock.observed().len(),
+        0,
+        "dry run must not dispatch CDP calls"
+    );
 }
 
 #[tokio::test]
@@ -537,7 +541,10 @@ async fn act_click_dry_run_still_snapshots_but_does_not_dispatch_mouse() {
     let md = result.markdown_formatted.unwrap();
     assert!(md.contains("[DRY RUN]"));
     assert!(md.contains("click [1]"));
-    assert!(md.contains("Save"), "dry-run description should name the element");
+    assert!(
+        md.contains("Save"),
+        "dry-run description should name the element"
+    );
     let observed = mock.observed();
     assert_eq!(observed.len(), 1);
     assert_eq!(observed[0].0, "Runtime.evaluate");

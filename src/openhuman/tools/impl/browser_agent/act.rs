@@ -115,8 +115,7 @@ impl Tool for BrowserActTool {
         // fires; the tool returns a description of what it WOULD have
         // done so the agent can chain its next step against a
         // hypothetical observed change.
-        let meta = SessionRegistry::instance()
-            .get_meta(&user_id.to_string(), &run_id.to_string());
+        let meta = SessionRegistry::instance().get_meta(&user_id.to_string(), &run_id.to_string());
 
         let outcome = match verb {
             "click" => {
