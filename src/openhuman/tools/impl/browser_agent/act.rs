@@ -255,12 +255,7 @@ impl Tool for BrowserActTool {
 ///
 /// F3-6 chunk 2: also writes an audit-log entry so the dry-run trace
 /// shows up in the run-detail UI alongside real dispatches.
-fn dry_run_result(
-    user_id: &str,
-    run_id: &str,
-    args: &Value,
-    would_have: String,
-) -> ToolResult {
+fn dry_run_result(user_id: &str, run_id: &str, args: &Value, would_have: String) -> ToolResult {
     let body = json!({
         "status": "dry_run",
         "would_have": would_have,
