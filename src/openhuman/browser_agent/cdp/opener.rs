@@ -80,8 +80,9 @@ pub async fn open_reuse_authenticated(
     })?;
     let transport = WsTransport::connect_to_browser().await?;
     let targets = list_targets(&transport).await?;
-    let target_id = if let Some(existing) =
-        targets.into_iter().find(|t| t.kind == "page" && t.url.contains(host))
+    let target_id = if let Some(existing) = targets
+        .into_iter()
+        .find(|t| t.kind == "page" && t.url.contains(host))
     {
         tracing::debug!(
             target: "browser-agent-opener",
@@ -300,17 +301,14 @@ mod tests {
         // standing up real CEF.
         let m = mock();
         m.expect_ok("Target.getTargets", json!({ "targetInfos": [] }));
-        m.expect_ok(
-            "Target.createTarget",
-            json!({ "targetId": "t-new" }),
-        );
+        m.expect_ok("Target.createTarget", json!({ "targetId": "t-new" }));
         m.expect_ok("Target.attachToTarget", json!({ "sessionId": "s-new" }));
 
         let v = m.call("Target.getTargets", json!({}), None).await.unwrap();
         let infos = v["targetInfos"].as_array().unwrap();
-        let match_existing = infos
-            .iter()
-            .find(|t| t["type"] == "page" && t["url"].as_str().unwrap_or("").contains("linkedin.com"));
+        let match_existing = infos.iter().find(|t| {
+            t["type"] == "page" && t["url"].as_str().unwrap_or("").contains("linkedin.com")
+        });
         assert!(
             match_existing.is_none(),
             "fixture must have no linkedin page to exercise fallback"
