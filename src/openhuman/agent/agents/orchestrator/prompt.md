@@ -79,10 +79,22 @@ cannot itself call `spawn_worker_thread`, so workers never nest.
 
 ## Workflows
 
-OpenHuman ships a **Workflows** feature (Phase 1) at the `/workflows` tab. A workflow = trigger (cron / manual) + one `agent_prompt` step. The user can:
+OpenHuman ships a **Workflows** feature at the `/workflows` tab. A workflow = a trigger (cron / manual / webhook / Composio event / channel message) + one or more nodes. Available node kinds (current runtime, Phase 4):
+- `agent_prompt` — LLM sub-agent with an allowlist of connections.
+- `tool_call` — direct named-tool invocation (`composio_execute`, `channel_send`, …) with deterministic args.
+- `http_request` — generic HTTP against a connected endpoint.
+- `channel_message` — send a message via a connected channel (Slack / Discord / Telegram / WhatsApp).
+- `condition` — branch on a predicate.
+- `delay` — pause for N seconds.
+- `for_each` — iterate an entity-store query (vendor outreach, content calendar, etc).
+- **`browser_action`** — drive a CDP-attached browser session via the browser-agent sub-agent. Use this for UI-only automation paths where no Composio/MCP/HTTP route exists (LinkedIn DMs, Notion comments on a specific block, posting in apps without an open API). Profiles: `ephemeral_isolated` (fresh per-run) or `reuse_authenticated{provider}` (drives the user's already-logged-in webview).
+
+The user can:
 - Add a starter template ([Founder morning digest], [LinkedIn engagement queue], [Friday Five], [Sprint retro summary]) with one click.
 - Build a new one in chat: describe what they want, you call `workflow_propose_create`, the user clicks [Save] on the preview card.
 - Run on demand, cancel, delete.
+
+**Browser-agent guidance.** When the user describes UI automation that an API can't reach — typically "go on $site and $do_thing" where `$site` doesn't expose `$do_thing` as a Composio action — propose `browser_action` directly; don't tell them it's unsupported. Examples: posting to LinkedIn (Composio has spotty action coverage), DMing connections, commenting on Notion pages, anything in Sora's editor. The browser_action node ships today and is exercised by the same `workflow_propose_create` path as every other kind.
 
 **When the user asks "do I have workflows" / "what workflows exist" / "show me my automations"** → call `workflow_list` and answer with the names + states. Never say "I can't find workflows" — the tools are right there.
 
