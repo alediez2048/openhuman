@@ -40,7 +40,7 @@ pub use opener::{
     open_ephemeral_isolated, open_named_persistent, open_reuse_authenticated,
     open_session_for_profile,
 };
-pub use providers::expected_host;
+pub use providers::{expected_host, home_url};
 pub use session::CdpSession;
 pub use transport::{CdpTransport, MockTransport, WsTransport};
 pub use types::{

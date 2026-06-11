@@ -21,7 +21,7 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 
 use super::errors::CdpError;
-use super::providers::expected_host;
+use super::providers::{expected_host, home_url};
 use super::session::CdpSession;
 use super::transport::{CdpTransport, WsTransport};
 use super::types::BrowserProfile;
@@ -58,9 +58,16 @@ pub async fn open_ephemeral_isolated(user_id: &str) -> Result<CdpSession, CdpErr
 }
 
 /// Find the already-open authenticated page for `provider` and
-/// attach. Errors with [`CdpError::PermissionDenied`] when no
-/// matching page is open — the workflow needs the user to log in
-/// to that provider via the standard webview flow first.
+/// attach. Falls back to creating a fresh tab at the provider's home
+/// URL when no matching tab is open — CEF's persistent user-data-dir
+/// preserves the user's auth cookies across app restarts, so a newly
+/// created tab loads already authenticated. If the cookies actually
+/// expired, the page bounces to login and the agent's safety
+/// preamble catches it with `{status: "session_expired"}`.
+///
+/// Errors with [`CdpError::PermissionDenied`] only when the provider
+/// itself is unknown (no `expected_host` entry) — at that point
+/// there's no URL to navigate to.
 pub async fn open_reuse_authenticated(
     user_id: &str,
     provider: &str,
@@ -73,19 +80,41 @@ pub async fn open_reuse_authenticated(
     })?;
     let transport = WsTransport::connect_to_browser().await?;
     let targets = list_targets(&transport).await?;
-    let target = targets
-        .into_iter()
-        .find(|t| t.kind == "page" && t.url.contains(host))
-        .ok_or_else(|| CdpError::PermissionDenied {
+    let target_id = if let Some(existing) =
+        targets.into_iter().find(|t| t.kind == "page" && t.url.contains(host))
+    {
+        tracing::debug!(
+            target: "browser-agent-opener",
+            user = %user_id,
+            provider = %provider,
+            url = %existing.url,
+            "[opener] reuse_authenticated: attaching to existing tab"
+        );
+        existing.id
+    } else {
+        // No live tab — spawn one at the provider's home URL. Cookies
+        // persist in CEF's user-data-dir, so the new tab loads
+        // authenticated when the session is still valid.
+        let landing = home_url(provider).ok_or_else(|| CdpError::PermissionDenied {
             detail: format!(
-                "browser_action: no authenticated `{provider}` page is open \
-                 (expected host containing `{host}`). Open the provider \
-                 in a webview and log in first."
+                "browser_action: no authenticated `{provider}` page is open and \
+                 no home URL is registered for this provider. Add an entry to \
+                 browser_agent::cdp::providers::home_url, or open the provider \
+                 in a webview manually first."
             ),
         })?;
-    let session_id = attach_to_target(&transport, &target.id).await?;
+        tracing::info!(
+            target: "browser-agent-opener",
+            user = %user_id,
+            provider = %provider,
+            landing = %landing,
+            "[opener] reuse_authenticated: no live tab — creating one at provider home URL"
+        );
+        create_target(&transport, landing).await?
+    };
+    let session_id = attach_to_target(&transport, &target_id).await?;
     Ok(CdpSession::from_transport(
-        target.id,
+        target_id,
         user_id,
         session_id,
         Arc::new(transport) as Arc<dyn CdpTransport>,
@@ -258,5 +287,58 @@ mod tests {
             Err(other) => panic!("expected PermissionDenied, got Err({other:?})"),
             Ok(_) => panic!("expected PermissionDenied, got Ok(CdpSession)"),
         }
+    }
+
+    #[tokio::test]
+    async fn reuse_no_live_tab_falls_back_to_creating_one_at_home_url() {
+        // Documents the new fallback behaviour with MockTransport's
+        // create→attach handshake. The production helper calls
+        // `connect_to_browser` first which requires live CEF; we
+        // exercise the dispatch pattern by simulating the same
+        // sequence against the mock, mirroring the existing tests in
+        // this module that document the attach handshake without
+        // standing up real CEF.
+        let m = mock();
+        m.expect_ok("Target.getTargets", json!({ "targetInfos": [] }));
+        m.expect_ok(
+            "Target.createTarget",
+            json!({ "targetId": "t-new" }),
+        );
+        m.expect_ok("Target.attachToTarget", json!({ "sessionId": "s-new" }));
+
+        let v = m.call("Target.getTargets", json!({}), None).await.unwrap();
+        let infos = v["targetInfos"].as_array().unwrap();
+        let match_existing = infos
+            .iter()
+            .find(|t| t["type"] == "page" && t["url"].as_str().unwrap_or("").contains("linkedin.com"));
+        assert!(
+            match_existing.is_none(),
+            "fixture must have no linkedin page to exercise fallback"
+        );
+        // No matching tab → opener creates one at the home URL.
+        let v = m
+            .call(
+                "Target.createTarget",
+                json!({ "url": "https://www.linkedin.com/feed/" }),
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(v["targetId"], "t-new");
+        let v = m
+            .call(
+                "Target.attachToTarget",
+                json!({ "targetId": "t-new", "flatten": true }),
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(v["sessionId"], "s-new");
+
+        // Sanity: home URL passes the substring filter the agent loop
+        // will later use against the tab's URL.
+        assert!(super::super::providers::home_url("linkedin")
+            .unwrap()
+            .contains(super::super::providers::expected_host("linkedin").unwrap()));
     }
 }

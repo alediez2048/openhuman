@@ -9,6 +9,31 @@
 //! `ReuseAuthenticated` check enforces a matching `ConnectionRef::Webview`
 //! in `allowed_connections`) AND the runtime opener consult this table.
 
+/// Canonical home URL the opener navigates to when no matching tab is
+/// already open. CEF persists per-user cookies in its user-data-dir,
+/// so creating a fresh tab at this URL loads in the user's
+/// already-authenticated state (or bounces to login if cookies
+/// expired — caught by the agent's safety preamble as
+/// `{status: "session_expired"}`).
+///
+/// Returns `None` for unknown providers; the opener surfaces that as
+/// `PermissionDenied`.
+pub fn home_url(provider: &str) -> Option<&'static str> {
+    match provider.to_ascii_lowercase().as_str() {
+        "linkedin" => Some("https://www.linkedin.com/feed/"),
+        "notion" => Some("https://www.notion.so/"),
+        "twitter" | "x" => Some("https://x.com/home"),
+        "sora" => Some("https://sora.com/"),
+        "instagram" => Some("https://www.instagram.com/"),
+        "messenger" => Some("https://www.messenger.com/"),
+        "discord" => Some("https://discord.com/channels/@me"),
+        "slack" => Some("https://app.slack.com/client"),
+        "telegram" => Some("https://web.telegram.org/"),
+        "whatsapp" => Some("https://web.whatsapp.com/"),
+        _ => None,
+    }
+}
+
 /// Canonical host substring matched against an open page's URL when
 /// the profile is `ReuseAuthenticated { provider }`. Returns `None`
 /// for unknown providers — the opener surfaces that as
@@ -38,7 +63,7 @@ pub fn expected_host(provider: &str) -> Option<&'static str> {
 
 #[cfg(test)]
 mod tests {
-    use super::expected_host;
+    use super::{expected_host, home_url};
 
     #[test]
     fn known_providers_map_to_hosts() {
@@ -57,5 +82,34 @@ mod tests {
     fn provider_match_is_case_insensitive() {
         assert_eq!(expected_host("LinkedIn"), Some("linkedin.com"));
         assert_eq!(expected_host("NOTION"), Some("notion.so"));
+    }
+
+    #[test]
+    fn home_url_returns_authenticated_landing_pages() {
+        // The opener navigates here when no matching tab exists. Each
+        // must be a URL whose host contains the expected_host match
+        // string — otherwise the freshly-created tab fails the
+        // `url.contains(host)` filter when the agent loop later checks.
+        for provider in [
+            "linkedin",
+            "notion",
+            "x",
+            "twitter",
+            "sora",
+            "instagram",
+            "messenger",
+        ] {
+            let host = expected_host(provider).expect(provider);
+            let url = home_url(provider).expect(provider);
+            assert!(
+                url.contains(host),
+                "home_url({provider}) = {url} must contain expected_host = {host}"
+            );
+        }
+    }
+
+    #[test]
+    fn home_url_unknown_provider_returns_none() {
+        assert_eq!(home_url("nonesuch"), None);
     }
 }
