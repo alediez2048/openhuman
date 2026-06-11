@@ -35,7 +35,14 @@ use uuid::Uuid;
 /// The drafter validator (`workflow_propose_create` /
 /// `_update`) reads this constant so chat-driven proposals can now
 /// emit multi-node Phase 2 chains.
-const CURRENT_PHASE: u32 = 4;
+///
+/// Single source of truth for every site that needs the runtime's
+/// active phase number — `executor.rs`, both propose tools, etc.
+/// **Bumping here is the only place to change it.** Drift between
+/// this constant and the propose tools' local copies caused F3-4's
+/// `browser_action` node kind to be rejected by the validator on
+/// every chat-driven proposal (bug repro'd in the 2026-06-11 logs).
+pub const CURRENT_PHASE: u32 = 4;
 
 /// Wrap [`scheduler::register`] so a scheduler hiccup doesn't fail
 /// the surrounding RPC. The scheduler is a derived view of the

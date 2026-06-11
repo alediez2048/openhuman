@@ -25,9 +25,11 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 use std::sync::Arc;
 
-/// F2-16: bumped to 2 alongside `propose_create` so update drafts
-/// accept the same Phase 2 surface as create drafts.
-const CURRENT_PHASE: u32 = 2;
+/// Reads `ops::CURRENT_PHASE` so update drafts accept the same
+/// kinds as the executor. Drift here would silently downgrade
+/// edits — see `ops::CURRENT_PHASE` docstring for the F3-4 bug
+/// repro this guards against.
+use crate::openhuman::workflows::ops::CURRENT_PHASE;
 
 pub struct WorkflowProposeUpdateTool {
     config: Arc<Config>,

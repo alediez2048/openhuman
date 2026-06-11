@@ -767,3 +767,29 @@ async fn list_starter_templates_carries_trigger_summary_and_raw_payload() {
         );
     }
 }
+
+#[test]
+fn current_phase_permits_browser_action_and_for_each() {
+    // Regression: the propose_create / propose_update tools shipped
+    // with `const CURRENT_PHASE: u32 = 2;` after F4-7 + F3-4 had
+    // already bumped the executor's phase to 4. The drafter dutifully
+    // produced `browser_action` nodes, the validator (using phase=2)
+    // rejected every one as `unsupported_node_kind`, and the LLM
+    // burned a retry downgrading to a non-functional Composio
+    // workaround. Pin every site that names a phase to the shared
+    // `ops::CURRENT_PHASE` constant.
+    use crate::openhuman::workflows::validator::allowed_node_kinds;
+    let allowed = allowed_node_kinds(ops::CURRENT_PHASE);
+    assert!(
+        allowed.contains(&NodeKind::BrowserAction),
+        "ops::CURRENT_PHASE = {} must permit `browser_action` for the chat-driven \
+         drafter — every Phase-3 workflow lives or dies on this gate",
+        ops::CURRENT_PHASE
+    );
+    assert!(
+        allowed.contains(&NodeKind::ForEach),
+        "ops::CURRENT_PHASE = {} must permit `for_each` (the campaigns body-node \
+         primitive); a drift here breaks every Phase-4 outbound campaign template",
+        ops::CURRENT_PHASE
+    );
+}

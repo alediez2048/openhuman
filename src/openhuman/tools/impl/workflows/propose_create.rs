@@ -26,9 +26,12 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use serde_json::{json, Value};
 use std::sync::Arc;
 
-/// Phase the propose tool drafts against. F2-16 bumped to 2 — the
-/// drafter validator now accepts every Phase 2 trigger + node kind.
-const CURRENT_PHASE: u32 = 2;
+/// Phase the propose tool drafts against. Reads `ops::CURRENT_PHASE`
+/// so this site can't drift from the executor / validator (see the
+/// docstring on that constant — F3-4 was silently broken because the
+/// drafter targeted Phase 2 here, rejecting every browser_action
+/// proposal as `unsupported_node_kind`).
+use crate::openhuman::workflows::ops::CURRENT_PHASE;
 
 pub struct WorkflowProposeCreateTool {
     config: Arc<Config>,

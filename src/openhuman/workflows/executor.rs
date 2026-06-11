@@ -768,7 +768,12 @@ fn validate_workflow_shape(workflow: &Workflow) -> Result<(), DispatchError> {
 /// (the F2-1 design contract — "reachable without behaviour").
 /// F2-4..F2-7 replace each NotImplementedYet arm with a real body.
 /// F4-7 bumped to `4` once `ForEach` shipped its executor body.
-const CURRENT_PHASE: u32 = 4;
+///
+/// Re-exported from `workflows::ops` to ensure every site that gates
+/// behaviour on the active phase reads the same constant. See the
+/// docstring on `ops::CURRENT_PHASE` for the F3-4 bug this guards
+/// against.
+use crate::openhuman::workflows::ops::CURRENT_PHASE;
 
 /// Order nodes by a topological sort over `edges`, returning the
 /// execution order. Phase 2 chains are linear (single ancestor per
