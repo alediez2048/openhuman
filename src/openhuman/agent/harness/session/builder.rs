@@ -1737,14 +1737,8 @@ mod pin_validation_tests {
         // model `claude-opus-4-6` and sends `agentic-v1` to Anthropic →
         // 404. The predicate must say "skip".
         assert!(!should_honour_model_pin("agentic-v1", "claude-opus-4-6"));
-        assert!(!should_honour_model_pin(
-            "reasoning-v1",
-            "claude-opus-4-6"
-        ));
-        assert!(!should_honour_model_pin(
-            "coding-v1",
-            "gpt-4o-2024-11-20"
-        ));
+        assert!(!should_honour_model_pin("reasoning-v1", "claude-opus-4-6"));
+        assert!(!should_honour_model_pin("coding-v1", "gpt-4o-2024-11-20"));
     }
 
     #[test]
@@ -1765,10 +1759,7 @@ mod pin_validation_tests {
             "claude-opus-4-6",
             "claude-opus-4-7"
         ));
-        assert!(should_honour_model_pin(
-            "gpt-4o-mini",
-            "claude-opus-4-6"
-        ));
+        assert!(should_honour_model_pin("gpt-4o-mini", "claude-opus-4-6"));
     }
 
     #[test]
