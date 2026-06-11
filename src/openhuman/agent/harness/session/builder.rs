@@ -41,6 +41,35 @@ use std::sync::Arc;
 /// list — initial build, post-composio refresh, scope-filter change —
 /// so the request the provider sees is always name-unique regardless
 /// of which path produced it.
+/// Decide whether a config-level `agent_model` pin should override the
+/// provider's resolved model name.
+///
+/// **Returns `false`** (skip the pin) when the pin is an OpenHuman
+/// managed-backend tier name (`reasoning-v1`, `agentic-v1`, etc.) but
+/// the resolved provider is direct-mode (the resolved model name is
+/// already a concrete model like `claude-opus-4-6`). The managed
+/// backend translates tier names server-side; direct providers like
+/// Anthropic / OpenAI receive the model string verbatim and 404 on
+/// tier names they've never heard of.
+///
+/// **Returns `true`** in every other case: pin honored verbatim.
+///
+/// Repro: a user with `agentic_provider = "anthropic:claude-opus-4-6"`
+/// and a stale `[teams.workflow_node] agent_model = "agentic-v1"` pin
+/// (left over from when they were on Managed mode) had every
+/// browser_action / agent_prompt workflow run die with
+/// `anthropic API error (404 Not Found): {"error":..."model: agentic-v1"...}`.
+/// Logged in `~/.openhuman/logs/openhuman.2026-06-11.log` around
+/// 16:42:45 (run id `703fbb16-…`).
+pub(crate) fn should_honour_model_pin(pinned_model: &str, resolved_model: &str) -> bool {
+    let pin_is_tier =
+        crate::openhuman::inference::provider::factory::is_known_openhuman_tier(pinned_model);
+    let resolved_is_tier =
+        crate::openhuman::inference::provider::factory::is_known_openhuman_tier(resolved_model);
+    // Skip ONLY the specific tier-pin-but-direct-provider case.
+    !(pin_is_tier && !resolved_is_tier)
+}
+
 pub(crate) fn dedup_visible_tool_specs(specs: Vec<ToolSpec>) -> Vec<ToolSpec> {
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut deduped: Vec<ToolSpec> = Vec::with_capacity(specs.len());
@@ -1001,12 +1030,26 @@ impl Agent {
             .map(|def| !def.subagents.is_empty())
             .unwrap_or(true);
         if let Some(pinned_model) = config.configured_agent_model(target_agent_id, target_is_lead) {
-            log::debug!(
-                "[session-builder] agent_id={} using config-level model pin model={}",
-                target_agent_id,
-                pinned_model
-            );
-            model_name = pinned_model.to_string();
+            if should_honour_model_pin(pinned_model, &model_name) {
+                log::debug!(
+                    "[session-builder] agent_id={} using config-level model pin model={}",
+                    target_agent_id,
+                    pinned_model
+                );
+                model_name = pinned_model.to_string();
+            } else {
+                log::warn!(
+                    "[session-builder] agent_id={} config pin '{}' is an OpenHuman backend tier \
+                     name but the resolved provider model '{}' is direct-mode. Ignoring the pin \
+                     to avoid a 404 — edit `[teams.{}] agent_model` in your config to a model \
+                     the direct provider recognises, or remove the pin to use the provider's \
+                     default.",
+                    target_agent_id,
+                    pinned_model,
+                    model_name,
+                    target_agent_id,
+                );
+            }
         }
 
         // Dispatcher selection is deferred until after the tool list is
@@ -1681,6 +1724,63 @@ fn prefetch_tool_memory_rules_blocking(
             }
         })
     })
+}
+
+#[cfg(test)]
+mod pin_validation_tests {
+    use super::should_honour_model_pin;
+
+    #[test]
+    fn pin_skipped_when_tier_name_pinned_on_direct_provider() {
+        // Repro of the 2026-06-11 user bug: `[teams.workflow_node]
+        // agent_model = "agentic-v1"` overrides the Anthropic-resolved
+        // model `claude-opus-4-6` and sends `agentic-v1` to Anthropic →
+        // 404. The predicate must say "skip".
+        assert!(!should_honour_model_pin("agentic-v1", "claude-opus-4-6"));
+        assert!(!should_honour_model_pin(
+            "reasoning-v1",
+            "claude-opus-4-6"
+        ));
+        assert!(!should_honour_model_pin(
+            "coding-v1",
+            "gpt-4o-2024-11-20"
+        ));
+    }
+
+    #[test]
+    fn pin_honoured_when_both_are_tier_names() {
+        // Managed-mode user: the provider factory returned a tier name
+        // because the agent runs through the OpenHuman backend. The pin
+        // (also a tier name) is the intended per-team override and must
+        // be honored — the backend handles the translation.
+        assert!(should_honour_model_pin("agentic-v1", "reasoning-v1"));
+        assert!(should_honour_model_pin("coding-v1", "chat-v1"));
+    }
+
+    #[test]
+    fn pin_honoured_when_pin_is_a_concrete_model_name() {
+        // Direct-mode user who pinned a real model. They know what
+        // they're doing — pass it through.
+        assert!(should_honour_model_pin(
+            "claude-opus-4-6",
+            "claude-opus-4-7"
+        ));
+        assert!(should_honour_model_pin(
+            "gpt-4o-mini",
+            "claude-opus-4-6"
+        ));
+    }
+
+    #[test]
+    fn pin_honoured_when_neither_is_a_tier_name() {
+        // Both are concrete model names — the user explicitly pinned
+        // one model and the provider resolved to another. Honor the
+        // pin.
+        assert!(should_honour_model_pin(
+            "claude-opus-4-7",
+            "claude-opus-4-6"
+        ));
+    }
 }
 
 #[cfg(test)]
