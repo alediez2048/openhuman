@@ -79,6 +79,11 @@
     if (text) return text.slice(0, 200);
     var placeholder = el.getAttribute("placeholder");
     if (placeholder) return placeholder;
+    // Rich-text editors (LinkedIn composer, etc.) usually expose their
+    // placeholder via aria-placeholder rather than the HTML
+    // `placeholder` attribute (which is `<textarea>`-only).
+    var ariaPlaceholder = el.getAttribute("aria-placeholder");
+    if (ariaPlaceholder) return ariaPlaceholder;
     var value = el.value;
     if (value) return String(value).slice(0, 200);
     var title = el.getAttribute("title");
@@ -113,6 +118,17 @@
     "input:not([type=hidden])",
     "select",
     "textarea",
+    // Rich-text editors / "type your post here" composer surfaces use
+    // contenteditable instead of <textarea>. LinkedIn's post composer,
+    // Notion's blocks, Sora's prompt box, X's compose modal — all of
+    // them. Without this selector the agent observes the modal AS
+    // empty and gives up. Repro: 2026-06-11 LinkedIn smoke test
+    // (run id 6b3a83f3 — agent clicked Start a post, modal opened,
+    // next observe returned 216 elements at /feed/ with no typeable
+    // surface; agent emitted "composer did not open in the observed
+    // page state" and stopped.)
+    "[contenteditable=\"true\"]",
+    "[contenteditable=\"\"]",
     "[role]",
     "[onclick]",
     "[tabindex]:not([tabindex=\"-1\"])",
