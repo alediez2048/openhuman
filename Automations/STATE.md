@@ -34,7 +34,28 @@ Locked architecture decisions from the 2026-05-26 grill that shipped:
 
 **🟡 NEXT WORK:** either close the remaining Phase 4 UI polish (F4-14/15/16/18 hero spec) OR move to Phase 3 (Browser Agent) per the original ordering.
 
-**Phase 3 (Browser Agent) IN PROGRESS** under `Automations/Tickets/phase-3-browser-agent/` — `F3-overview.md` + 7 sub-tickets + F3-4.5 inserted post-F3-4 to unblock live CEF. The thesis is a CEF-native CDP-driven browser agent (Stagehand-style `act`/`extract`/`observe`) that drives the user's already-authenticated webview sessions. Additive to Composio, not a replacement. Shipped to fork on 2026-06-10: **F3-1 ✅ F3-2 ✅ F3-3 ✅ F3-4 ✅ F3-4.5 ✅** (CDP primitives + page perception + LLM tools + BrowserAction node + live WsTransport with profile-aware session opener). Production `browser_action` runs now open real WebSocket sessions against CEF (port 19222); awaiting manual smoke test against LinkedIn for the hero use case. Remaining: F3-5 live preview, F3-6 safety preamble, F3-7 vision fallback.
+**Phase 3.1 (Browser Agent) — backend shipped to fork on 2026-06-12.** Drafted tickets `F3-1` through `F3-7` + `F3-4.5` under `Automations/Tickets/phase-3-browser-agent/`. The thesis is a CEF-native CDP-driven browser agent (Stagehand-style `act`/`extract`/`observe`) that drives the user's already-authenticated webview sessions. Additive to Composio, not a replacement.
+
+Shipped to fork:
+- **F3-1 ✅** CDP automation primitives (Rust).
+- **F3-2 ✅** Page perception — DOM extractor with `[contenteditable]` selector + `aria-placeholder` accessibleName fallback (live-tested against LinkedIn's post composer).
+- **F3-3 ✅** `browser_observe` / `browser_act` / `browser_extract` LLM tools.
+- **F3-4 ✅** `NodeKind::BrowserAction` workflow node + validator + executor dispatch.
+- **F3-4.5 ✅** Live `WsTransport` against CEF debug port + profile-aware session opener (creates a tab from stored cookies when no live tab matches the provider).
+- **F3-5 chunks 1 + 2a ✅** Rust-side preview broadcaster + `DomainEvent::BrowserPreviewFrame` + socket bridge that publishes `browser_preview_frame` events on the web channel for the frontend to consume.
+- **F3-6 chunks 1 / 2 / 3 / 4a ✅** Safety preamble + dry-run mode + per-tool-call audit log (with retention sweep) + wall-clock cost cap (validator-clamped [30, 3600], default 600s) + text/URL redaction policy applied to audit-log args.
+
+Hero use case ("post 'Good Morning Everyone' to LinkedIn via browser automation") **is technically operable end-to-end on the fork** as of 2026-06-12 — drafter emits browser_action, validator accepts, opener attaches (auto-creates tab from cookies if needed), agent loop drives the page via observe/act/extract, audit log captures every action with redaction, wall-clock cap prevents runaway spend, dry-run mode short-circuits writes. Smoke-tested live against LinkedIn.
+
+Deferred to Phase 3.2 (`Automations/Tickets/phase-3-browser-agent/PHASE-3-2-DEFERRED.md` placeholder):
+- **F3-5 chunk 2b** — React `BrowserPreviewPanel` component + Tauri IPC subscription (Rust-side bridge in place; only the frontend consumer is missing).
+- **F3-6 chunk 4b** — screenshot pixel-level redaction (black-bar overlay on password input bounds; needs the `image` crate dep).
+- **F3-6 chunk 4c** — per-action confirmation gate (depends on F3-5 chunk 2b for the Confirm/Reject UI surface).
+- **F3-7** — vision-grounded fallback (Anthropic computer-use style, opt-in).
+- **Webview warmth** — auto-open the provider's webview on cron-triggered runs without active user presence. Currently the opener creates a fresh tab from cookies when none exists, which covers manual-run cases.
+- **Drafter dry-run-by-default** for newly-created browser_action workflows (training-wheels pattern; F3-6 chunk 2 follow-up).
+
+Notable runtime bug fixes shipped alongside Phase 3.1 (all to fork): `workflows::ops::CURRENT_PHASE` unified across executor + propose tools (was rejecting `browser_action` as `unsupported_node_kind`), orchestrator prompt updated to list every current `NodeKind` (was pre-emptively refusing browser-agent requests), `should_honour_model_pin` predicate (was sending OpenHuman tier names like `agentic-v1` to direct Anthropic providers → 404).
 
 **Canvas (originally Phase 4) SUPERSEDED** by Phase 4 Campaigns. Drafts preserved at `Automations/Tickets/phase-4-canvas/` for reference but the Phase 4 slot now belongs to Campaigns. Canvas remains demand-gated per `prd.md §5.3`; Phase 4's hybrid detail editor (F4-12..F4-16) may make Canvas permanently unnecessary.
 
