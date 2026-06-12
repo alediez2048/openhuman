@@ -56,6 +56,10 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
     // Surface parked ApprovalGate requests as chat messages so the user can
     // answer yes/no in the thread (chat-native approval, issue #1339).
     crate::openhuman::channels::providers::web::register_approval_surface_subscriber();
+    // F3-5 chunk 2a: bridge browser-agent preview frames onto the
+    // web channel so the frontend's BrowserPreviewPanel (chunk 2b)
+    // can render screenshots in real time.
+    crate::openhuman::browser_agent::preview::register_socket_bridge();
     // Spawn the per-toolkit provider periodic sync scheduler. This is
     // a thin tokio task that ticks every minute and dispatches into
     // any provider whose `sync_interval_secs` has elapsed for an

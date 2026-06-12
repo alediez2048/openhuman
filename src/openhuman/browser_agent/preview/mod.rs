@@ -31,5 +31,7 @@
 //! drop intermediate frames; the latest frame still arrives.
 
 pub mod broadcaster;
+pub mod socket_bridge;
 
 pub use broadcaster::{capture_and_broadcast, PreviewCaptureOptions};
+pub use socket_bridge::register as register_socket_bridge;
