@@ -162,6 +162,11 @@ async fn act_navigate_dispatches_page_navigate_and_returns_url() {
         "Page.getNavigationHistory",
         nav_history_payload("https://example.com/landed"),
     );
+    // F3-5 chunk 1: post-action preview frame.
+    mock.expect_ok(
+        "Page.captureScreenshot",
+        json!({ "data": "iVBORw0KGgo=" }),
+    );
     install_session("u_act_nav", "r1", mock.clone()).await;
 
     let result = BrowserActTool::new()
@@ -191,6 +196,11 @@ async fn act_click_snapshots_then_dispatches_mouse_press_release() {
         "Page.getNavigationHistory",
         nav_history_payload("https://example.com/page"),
     );
+    // F3-5 chunk 1: post-action preview frame.
+    mock.expect_ok(
+        "Page.captureScreenshot",
+        json!({ "data": "iVBORw0KGgo=" }),
+    );
     install_session("u_act_click", "r1", mock.clone()).await;
 
     let result = BrowserActTool::new()
@@ -204,13 +214,15 @@ async fn act_click_snapshots_then_dispatches_mouse_press_release() {
         .unwrap();
     assert!(!result.is_error, "got error: {}", result.text());
     let observed = mock.observed();
-    // [Runtime.evaluate, dispatchMouseEvent(press), dispatchMouseEvent(release), Page.getNavigationHistory]
-    assert_eq!(observed.len(), 4);
+    // [Runtime.evaluate, dispatchMouseEvent(press), dispatchMouseEvent(release),
+    //  Page.getNavigationHistory, Page.captureScreenshot (F3-5 chunk 1)]
+    assert_eq!(observed.len(), 5);
     assert_eq!(observed[1].1["type"], "mousePressed");
     assert_eq!(observed[2].1["type"], "mouseReleased");
     // Click coords should be the element [1] bounds center: x=100..160 -> 130, y=200..230 -> 215.
     assert_eq!(observed[1].1["x"], 130.0);
     assert_eq!(observed[1].1["y"], 215.0);
+    assert_eq!(observed[4].0, "Page.captureScreenshot");
 }
 
 #[tokio::test]
@@ -246,6 +258,11 @@ async fn act_type_clicks_focus_then_inserts_text() {
         "Page.getNavigationHistory",
         nav_history_payload("https://example.com/page"),
     );
+    // F3-5 chunk 1: post-action preview frame.
+    mock.expect_ok(
+        "Page.captureScreenshot",
+        json!({ "data": "iVBORw0KGgo=" }),
+    );
     install_session("u_act_type", "r1", mock.clone()).await;
 
     let result = BrowserActTool::new()
@@ -260,10 +277,12 @@ async fn act_type_clicks_focus_then_inserts_text() {
         .unwrap();
     assert!(!result.is_error, "got error: {}", result.text());
     let observed = mock.observed();
-    assert_eq!(observed.len(), 6);
+    // 6 baseline calls + 1 F3-5 chunk 1 captureScreenshot.
+    assert_eq!(observed.len(), 7);
     assert_eq!(observed[3].0, "Input.dispatchKeyEvent");
     assert_eq!(observed[3].1["text"], "h");
     assert_eq!(observed[4].1["text"], "i");
+    assert_eq!(observed[6].0, "Page.captureScreenshot");
 }
 
 #[tokio::test]
@@ -273,6 +292,11 @@ async fn act_scroll_dispatches_mouse_wheel() {
     mock.expect_ok(
         "Page.getNavigationHistory",
         nav_history_payload("https://example.com/page"),
+    );
+    // F3-5 chunk 1: post-action preview frame.
+    mock.expect_ok(
+        "Page.captureScreenshot",
+        json!({ "data": "iVBORw0KGgo=" }),
     );
     install_session("u_act_scroll", "r1", mock.clone()).await;
 
@@ -753,6 +777,11 @@ async fn act_without_dry_run_flag_dispatches_normally() {
     mock.expect_ok(
         "Page.getNavigationHistory",
         nav_history_payload("https://example.com/page"),
+    );
+    // F3-5 chunk 1: post-action preview frame.
+    mock.expect_ok(
+        "Page.captureScreenshot",
+        json!({ "data": "iVBORw0KGgo=" }),
     );
     install_session("u_no_dry", "r1", mock.clone()).await;
     // NB: deliberately NOT calling set_meta — exercise the default.

@@ -724,6 +724,29 @@ pub enum DomainEvent {
         node_id: String,
         status_json: serde_json::Value,
     },
+    /// F3-5: a frame from a live browser_action session — captured on
+    /// action boundaries (post-write `browser_act`) and broadcast for
+    /// the run-detail UI's live preview surface. `png_b64` is the
+    /// raw PNG screenshot bytes base64-encoded; consumers decode +
+    /// render. Backpressure handled at the broadcaster level (drop
+    /// intermediate frames, keep latest) so a slow consumer can't
+    /// build an unbounded backlog.
+    BrowserPreviewFrame {
+        run_id: String,
+        /// Base64 PNG. Phase 3.1 ships full-viewport captures
+        /// uncompressed — F3-5 chunk 2 adds resize/quality
+        /// optimization. Typical viewport PNG ≤ 200 KB.
+        png_b64: String,
+        viewport_width: u32,
+        viewport_height: u32,
+        /// Wall-clock time at capture. Sortable so consumers can
+        /// reconcile out-of-order delivery.
+        timestamp_ms: u64,
+        /// Short label describing the action that triggered the
+        /// capture (e.g. `"click [3]"`, `"navigate to https://..."`).
+        /// Empty for unsolicited captures (Phase 3.2 polling mode).
+        action_summary: String,
+    },
     /// A node attempt failed and the retry loop is scheduling
     /// another attempt. Published from `executor::dispatch_node_with_retry`
     /// (F2-8) between attempts so observability can chart retry rates.
@@ -944,7 +967,8 @@ impl DomainEvent {
             | Self::WorkflowRunStepRetried { .. }
             | Self::WorkflowRunCompleted { .. }
             | Self::WorkflowRunSkipped { .. }
-            | Self::WorkflowPurged { .. } => "workflow",
+            | Self::WorkflowPurged { .. }
+            | Self::BrowserPreviewFrame { .. } => "workflow",
 
             Self::CampaignDefined { .. }
             | Self::CampaignUpdated { .. }

@@ -251,6 +251,19 @@ impl Tool for BrowserActTool {
         // (so the summary is accurate). The dry-run early-returns
         // above emit their own audit lines below.
         super::observe::emit_audit(user_id, run_id, "browser_act", &args, &outcome);
+        // F3-5 chunk 1: capture a frame for the live-preview surface.
+        // Best-effort — screenshot failure is logged + swallowed
+        // inside `capture_and_broadcast`. Dry-run paths above don't
+        // call this since there's no observable side effect to
+        // preview.
+        crate::openhuman::browser_agent::preview::capture_and_broadcast(
+            &session,
+            run_id,
+            crate::openhuman::browser_agent::preview::PreviewCaptureOptions {
+                action_summary: outcome.clone(),
+            },
+        )
+        .await;
         Ok(ToolResult::success_with_markdown(body, markdown))
     }
 }

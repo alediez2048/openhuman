@@ -47,5 +47,6 @@
 
 pub mod cdp;
 pub mod perceive;
+pub mod preview;
 pub mod registry;
 pub mod safety;
