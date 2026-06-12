@@ -22,8 +22,8 @@ use std::sync::OnceLock;
 use async_trait::async_trait;
 use serde_json::json;
 
-use crate::core::event_bus::{subscribe_global, EventHandler, SubscriptionHandle};
 use crate::core::event_bus::DomainEvent;
+use crate::core::event_bus::{subscribe_global, EventHandler, SubscriptionHandle};
 use crate::core::socketio::WebChannelEvent;
 use crate::openhuman::channels::providers::web::publish_web_channel_event;
 
@@ -125,11 +125,7 @@ mod tests {
         // Drain the WebChannelEvent bus and look for our event.
         let mut found = None;
         for _ in 0..32 {
-            match tokio::time::timeout(
-                std::time::Duration::from_millis(50),
-                socket_rx.recv(),
-            )
-            .await
+            match tokio::time::timeout(std::time::Duration::from_millis(50), socket_rx.recv()).await
             {
                 Ok(Ok(e)) if e.event == "browser_preview_frame" => {
                     found = Some(e);
