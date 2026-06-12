@@ -43,9 +43,8 @@ static SENSITIVE_KEY_RE: Lazy<Regex> = Lazy::new(|| {
 /// since URL params have very different lexicon — `code` is sensitive
 /// in an OAuth callback but isn't in JSON keys.
 static SENSITIVE_QUERY_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)token|key|secret|auth|password|session|sid|code|access").expect(
-        "sensitive query param regex compiles",
-    )
+    Regex::new(r"(?i)token|key|secret|auth|password|session|sid|code|access")
+        .expect("sensitive query param regex compiles")
 });
 
 /// Strip query parameter values for params whose name matches the
@@ -135,9 +134,8 @@ mod tests {
 
     #[test]
     fn redact_url_strips_sensitive_query_params() {
-        let (u, n) = redact_url(
-            "https://api.example.com/callback?code=abc123&state=xyz&token=secret",
-        );
+        let (u, n) =
+            redact_url("https://api.example.com/callback?code=abc123&state=xyz&token=secret");
         assert!(u.contains("code=REDACTED"));
         assert!(u.contains("state=xyz")); // state not in sensitive pattern
         assert!(u.contains("token=REDACTED"));
