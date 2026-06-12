@@ -875,6 +875,22 @@ pub struct BrowserActionConfig {
     /// that drafter-side default is a chunk-2 follow-up.
     #[serde(default)]
     pub dry_run: bool,
+
+    /// F3-6 chunk 3: hard upper bound on a single browser_action
+    /// run's wall-clock duration, measured from session open. When
+    /// exceeded, the next tool call returns
+    /// `{status: "cost_cap_exceeded", which: "wall_clock"}` and the
+    /// node terminates. Catches runaway agent loops that the
+    /// iteration_cap doesn't bound tightly enough (e.g. each
+    /// iteration calls a slow extractor on a heavy SPA).
+    ///
+    /// Default 600 (10 min). Validator clamps to `[30, 3600]`.
+    #[serde(default = "default_browser_wall_clock_cap")]
+    pub max_session_wall_clock_secs: u32,
+}
+
+fn default_browser_wall_clock_cap() -> u32 {
+    600
 }
 
 fn default_browser_iteration_cap() -> u32 {

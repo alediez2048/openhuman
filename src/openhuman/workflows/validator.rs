@@ -515,6 +515,23 @@ pub fn validate(
                         ),
                     });
                 }
+                // F3-6 chunk 3: wall-clock cost cap. [30, 3600] keeps
+                // dispatchable runs feasible (30s lower bound stops
+                // pathological configs from making the run unusable;
+                // 1h ceiling prevents accidental "leave it running"
+                // configs from gobbling LLM tokens for hours).
+                if cfg.max_session_wall_clock_secs < 30
+                    || cfg.max_session_wall_clock_secs > 3600
+                {
+                    return Err(ProposalValidationError::InvalidNodeConfig {
+                        node_id: node.id.clone(),
+                        node_kind: node.kind,
+                        reason: format!(
+                            "browser_action.max_session_wall_clock_secs must be in [30, 3600] (got {})",
+                            cfg.max_session_wall_clock_secs
+                        ),
+                    });
+                }
                 if let Some(ref url) = cfg.start_url {
                     // We accept either a fully-resolved URL or a
                     // `{{...}}`-templated reference. A reference is

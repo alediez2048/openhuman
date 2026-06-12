@@ -28,9 +28,8 @@ pub type RunId = String;
 
 /// Per-run safety metadata the tools read at dispatch time. Set by
 /// `execute_browser_action` before opening the session; cleared on
-/// release. F3-6 chunk 1 shipped `dry_run`; chunk 2 adds
-/// `workspace_dir` so the F3-3 tools can find `workflows.db` and
-/// write audit-log rows without holding a `Config`.
+/// release. F3-6 chunk 1 shipped `dry_run`; chunk 2 added
+/// `workspace_dir`; chunk 3 adds the wall-clock cost cap.
 #[derive(Debug, Clone, Default)]
 pub struct RunMeta {
     /// When true, `browser_act` returns `{ status: "dry_run", … }`
@@ -43,6 +42,31 @@ pub struct RunMeta {
     /// without needing a `Config`. `None` in tests / when audit log
     /// is intentionally disabled.
     pub workspace_dir: Option<std::path::PathBuf>,
+
+    /// F3-6 chunk 3: wall-clock cost cap. When `Some((started_at,
+    /// max_secs))`, every tool checks `now - started_at <= max_secs`
+    /// and returns `{ status: "cost_cap_exceeded", which: "wall_clock" }`
+    /// when the budget is gone. `None` disables the cap (used in
+    /// tests + when the cap doesn't apply, e.g. dry-run-only runs).
+    pub wall_clock_cap: Option<WallClockCap>,
+}
+
+/// F3-6 chunk 3: per-run wall-clock cost cap state.
+#[derive(Debug, Clone, Copy)]
+pub struct WallClockCap {
+    /// When the workflow run began. Browser-tool dispatch reads
+    /// `Instant::now() - started_at` and compares to `max_secs`.
+    pub started_at: std::time::Instant,
+    /// Maximum allowed elapsed seconds. Pulled from
+    /// `BrowserActionConfig::max_session_wall_clock_secs`.
+    pub max_secs: u64,
+}
+
+impl WallClockCap {
+    /// Has the run exceeded its budget?
+    pub fn is_exceeded(&self) -> bool {
+        self.started_at.elapsed().as_secs() >= self.max_secs
+    }
 }
 
 /// Process-global registry. Singleton — `instance()` returns a

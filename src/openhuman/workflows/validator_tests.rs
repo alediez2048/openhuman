@@ -1038,6 +1038,7 @@ fn baseline_browser_cfg() -> BrowserActionConfig {
         output_schema: None,
         allowed_connections: vec![],
         dry_run: false,
+        max_session_wall_clock_secs: 600,
     }
 }
 
@@ -1205,6 +1206,43 @@ fn browser_action_defaults_apply_on_deserialize() {
             assert!(cfg.allowed_connections.is_empty());
             // F3-6 chunk 1: dry-run defaults to false (real dispatch).
             assert!(!cfg.dry_run);
+        }
+        other => panic!("expected BrowserAction, got {other:?}"),
+    }
+}
+
+#[test]
+fn browser_action_wall_clock_cap_clamped_to_30_3600_range() {
+    let mut p = valid_proposal();
+    let mut cfg = baseline_browser_cfg();
+    cfg.max_session_wall_clock_secs = 10; // below floor
+    p.nodes = vec![browser_node("b1", cfg)];
+    let snap = ConnectionsSnapshot::new(vec![]);
+    let err = validate(&p, &snap, 3).unwrap_err();
+    match err {
+        ProposalValidationError::InvalidNodeConfig { reason, .. } => {
+            assert!(reason.contains("max_session_wall_clock_secs"));
+            assert!(reason.contains("[30, 3600]"));
+        }
+        other => panic!("expected InvalidNodeConfig, got {other:?}"),
+    }
+
+    let mut p = valid_proposal();
+    let mut cfg = baseline_browser_cfg();
+    cfg.max_session_wall_clock_secs = 86_400; // above ceiling
+    p.nodes = vec![browser_node("b1", cfg)];
+    let err = validate(&p, &snap, 3).unwrap_err();
+    assert!(matches!(err, ProposalValidationError::InvalidNodeConfig { .. }));
+}
+
+#[test]
+fn browser_action_wall_clock_cap_defaults_to_600() {
+    // Serde default — minimal payload gets the safety-conscious 10-min cap.
+    let json = r#"{"kind":"browser_action","goal":"x"}"#;
+    let parsed: NodeConfig = serde_json::from_str(json).unwrap();
+    match parsed {
+        NodeConfig::BrowserAction(cfg) => {
+            assert_eq!(cfg.max_session_wall_clock_secs, 600);
         }
         other => panic!("expected BrowserAction, got {other:?}"),
     }

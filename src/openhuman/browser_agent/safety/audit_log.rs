@@ -140,6 +140,35 @@ pub fn count_for_run(config: &Config, run_id: &str) -> Result<usize> {
     })
 }
 
+/// F3-6 chunk 3: hard-delete every audit-log row stamped before
+/// `cutoff`. Mirrors the existing `workflows::retention::run_purge_sweep`
+/// pattern — best-effort, swallows row-level errors, returns the count
+/// purged. Called from the same hourly tokio interval that drives the
+/// workflow soft-delete sweep.
+///
+/// Default retention: 30 days, matching the workflow retention window
+/// so a hard-deleted workflow's audit trail goes with it.
+pub fn purge_older_than(config: &Config, cutoff: chrono::DateTime<Utc>) -> Result<u32> {
+    let cutoff_iso = cutoff.to_rfc3339();
+    with_connection(config, |conn| {
+        let purged: i64 = conn
+            .execute(
+                "DELETE FROM browser_agent_audit_log WHERE timestamp < ?1",
+                params![cutoff_iso],
+            )
+            .context("audit purge_older_than: DELETE failed")? as i64;
+        if purged > 0 {
+            tracing::info!(
+                target: "browser-agent-audit",
+                cutoff = %cutoff_iso,
+                purged,
+                "[audit] retention sweep removed {purged} aged rows"
+            );
+        }
+        Ok(purged as u32)
+    })
+}
+
 fn insert_entry(conn: &Connection, entry: &AuditLogEntry) -> Result<()> {
     conn.execute(
         "INSERT INTO browser_agent_audit_log \
@@ -244,6 +273,38 @@ mod tests {
         assert_eq!(count_for_run(&cfg, "run-a").unwrap(), 1);
         assert_eq!(count_for_run(&cfg, "run-b").unwrap(), 1);
         assert_eq!(count_for_run(&cfg, "run-c").unwrap(), 0);
+    }
+
+    #[test]
+    fn purge_older_than_drops_aged_rows_and_keeps_recent() {
+        // F3-6 chunk 3 regression: the audit retention sweep must
+        // delete rows stamped before the cutoff and leave newer ones
+        // untouched.
+        use chrono::{Duration, Utc};
+        let (_dir, cfg) = make_config();
+
+        // Write a row + force its timestamp 60 days into the past.
+        let aged = AuditLogEntry::new("run-aged", "browser_observe", "{}", "ok");
+        write_entry(&cfg, aged.clone()).unwrap();
+        let aged_ts = (Utc::now() - Duration::days(60)).to_rfc3339();
+        crate::openhuman::workflows::store::with_connection(&cfg, |conn| {
+            conn.execute(
+                "UPDATE browser_agent_audit_log SET timestamp = ?1 WHERE id = ?2",
+                rusqlite::params![aged_ts, aged.id],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+
+        let fresh = AuditLogEntry::new("run-fresh", "browser_observe", "{}", "ok");
+        write_entry(&cfg, fresh.clone()).unwrap();
+
+        let cutoff = Utc::now() - Duration::days(30);
+        let purged = purge_older_than(&cfg, cutoff).unwrap();
+        assert_eq!(purged, 1, "only the 60-day-old row should age out");
+
+        assert_eq!(count_for_run(&cfg, "run-aged").unwrap(), 0);
+        assert_eq!(count_for_run(&cfg, "run-fresh").unwrap(), 1);
     }
 
     #[test]

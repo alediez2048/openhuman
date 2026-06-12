@@ -431,6 +431,97 @@ async fn extract_errors_when_no_session_in_registry() {
 
 // ── tool metadata ──────────────────────────────────────────────────
 
+// ── F3-6 chunk 3: wall-clock cost cap ──────────────────────────────
+
+#[tokio::test]
+async fn observe_short_circuits_when_wall_clock_cap_exceeded() {
+    let mock = Arc::new(MockTransport::new());
+    install_session("u_cap_obs", "cap-r1", mock.clone()).await;
+    SessionRegistry::instance().set_meta(
+        &"u_cap_obs".into(),
+        &"cap-r1".into(),
+        crate::openhuman::browser_agent::registry::RunMeta {
+            dry_run: false,
+            workspace_dir: None,
+            wall_clock_cap: Some(crate::openhuman::browser_agent::registry::WallClockCap {
+                // Set started_at to 1h ago + max_secs = 1 → already exceeded.
+                started_at: std::time::Instant::now()
+                    - std::time::Duration::from_secs(3600),
+                max_secs: 1,
+            }),
+        },
+    );
+
+    let result = BrowserObserveTool::new()
+        .execute(json!({ "user_id": "u_cap_obs", "run_id": "cap-r1" }))
+        .await
+        .unwrap();
+    assert!(!result.is_error);
+    let md = result.markdown_formatted.expect("markdown");
+    assert!(md.contains("[COST CAP] wall_clock"));
+    // Cap must trip BEFORE the DOM extractor runs, so no CDP call observed.
+    assert_eq!(
+        mock.observed().len(),
+        0,
+        "cap trip must short-circuit before Runtime.evaluate"
+    );
+}
+
+#[tokio::test]
+async fn act_short_circuits_when_wall_clock_cap_exceeded() {
+    let mock = Arc::new(MockTransport::new());
+    install_session("u_cap_act", "cap-r2", mock.clone()).await;
+    SessionRegistry::instance().set_meta(
+        &"u_cap_act".into(),
+        &"cap-r2".into(),
+        crate::openhuman::browser_agent::registry::RunMeta {
+            dry_run: false,
+            workspace_dir: None,
+            wall_clock_cap: Some(crate::openhuman::browser_agent::registry::WallClockCap {
+                started_at: std::time::Instant::now()
+                    - std::time::Duration::from_secs(3600),
+                max_secs: 1,
+            }),
+        },
+    );
+
+    let result = BrowserActTool::new()
+        .execute(json!({
+            "user_id": "u_cap_act",
+            "run_id": "cap-r2",
+            "verb": "scroll",
+            "dy": 500
+        }))
+        .await
+        .unwrap();
+    assert!(!result.is_error);
+    assert!(result
+        .markdown_formatted
+        .as_deref()
+        .unwrap()
+        .contains("[COST CAP] wall_clock"));
+    assert_eq!(mock.observed().len(), 0);
+}
+
+#[tokio::test]
+async fn cap_check_returns_none_when_no_cap_installed() {
+    // Default RunMeta has wall_clock_cap = None → no short-circuit.
+    let mock = Arc::new(MockTransport::new());
+    mock.expect_ok("Runtime.evaluate", dom_extractor_payload());
+    install_session("u_no_cap", "cap-r3", mock.clone()).await;
+    // NB: no set_meta — default meta is None for everything.
+
+    let result = BrowserObserveTool::new()
+        .execute(json!({ "user_id": "u_no_cap", "run_id": "cap-r3" }))
+        .await
+        .unwrap();
+    assert!(!result.is_error);
+    let md = result.markdown_formatted.unwrap();
+    // Did NOT short-circuit — normal observe output present.
+    assert!(!md.contains("[COST CAP]"));
+    assert!(md.contains("[1] button"));
+}
+
 #[test]
 fn tool_names_match_constants() {
     assert_eq!(
@@ -464,6 +555,7 @@ async fn act_navigate_dry_run_short_circuits_before_dispatching() {
         &"r1".into(),
         crate::openhuman::browser_agent::registry::RunMeta {
             dry_run: true,
+            wall_clock_cap: None,
             workspace_dir: None,
         },
     );
@@ -497,6 +589,7 @@ async fn act_scroll_dry_run_short_circuits() {
         &"r1".into(),
         crate::openhuman::browser_agent::registry::RunMeta {
             dry_run: true,
+            wall_clock_cap: None,
             workspace_dir: None,
         },
     );
@@ -533,6 +626,7 @@ async fn act_click_dry_run_still_snapshots_but_does_not_dispatch_mouse() {
         &"r1".into(),
         crate::openhuman::browser_agent::registry::RunMeta {
             dry_run: true,
+            wall_clock_cap: None,
             workspace_dir: None,
         },
     );
@@ -578,6 +672,7 @@ async fn observe_writes_audit_row_when_workspace_dir_is_set() {
         &"audit-run-1".into(),
         crate::openhuman::browser_agent::registry::RunMeta {
             dry_run: false,
+            wall_clock_cap: None,
             workspace_dir: Some(ws.path().to_path_buf()),
         },
     );
@@ -610,6 +705,7 @@ async fn act_dry_run_still_writes_audit_row_with_dry_run_prefix() {
         &"audit-run-2".into(),
         crate::openhuman::browser_agent::registry::RunMeta {
             dry_run: true,
+            wall_clock_cap: None,
             workspace_dir: Some(ws.path().to_path_buf()),
         },
     );

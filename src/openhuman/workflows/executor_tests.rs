@@ -4960,6 +4960,7 @@ fn build_browser_action_agent_definition_appends_browser_tools() {
         output_schema: None,
         allowed_connections: vec![],
         dry_run: false,
+        max_session_wall_clock_secs: 600,
     };
     let def = executor::build_browser_action_agent_definition(&cfg);
     for name in executor::BROWSER_AGENT_TOOL_NAMES {
@@ -4991,6 +4992,7 @@ fn build_browser_action_agent_definition_preserves_connection_resolved_tools() {
             channel_id: "C123".into(),
         }],
         dry_run: false,
+        max_session_wall_clock_secs: 600,
     };
     let def = executor::build_browser_action_agent_definition(&cfg);
     assert!(def.allowed_tools.iter().any(|t| t == "channel_send"));
@@ -5012,6 +5014,7 @@ fn build_browser_action_agent_definition_dedups_if_browser_tool_already_present(
         output_schema: None,
         allowed_connections: vec![],
         dry_run: false,
+        max_session_wall_clock_secs: 600,
     };
     let a = executor::build_browser_action_agent_definition(&cfg);
     let b = executor::build_browser_action_agent_definition(&cfg);

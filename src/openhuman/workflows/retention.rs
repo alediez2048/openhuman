@@ -39,8 +39,27 @@ pub const SWEEP_INTERVAL_SECS: u64 = 60 * 60;
 
 /// Run the retention sweep with `Utc::now` as the clock. Production
 /// boot path calls this on each tokio-interval tick.
+///
+/// F3-6 chunk 3: also tick the browser-agent audit-log retention
+/// sweep on the same cadence (same 30-day window). Audit rows are
+/// independent of the workflow soft-delete state — a workflow that's
+/// still active can accumulate millions of rows over months, and the
+/// sweep keeps the table size bounded.
 pub fn run_purge_sweep(config: &Config) -> Result<u32> {
-    run_purge_sweep_with_now(config, Utc::now, DEFAULT_RETENTION_DAYS)
+    let workflows_purged = run_purge_sweep_with_now(config, Utc::now, DEFAULT_RETENTION_DAYS)?;
+    let audit_cutoff = Utc::now() - Duration::days(DEFAULT_RETENTION_DAYS);
+    let audit_purged = crate::openhuman::browser_agent::safety::audit_log::purge_older_than(
+        config,
+        audit_cutoff,
+    )
+    .unwrap_or_else(|err| {
+        tracing::warn!(
+            target: "workflows-retention",
+            "[workflows-retention] audit purge failed (swallowed): {err:#}"
+        );
+        0
+    });
+    Ok(workflows_purged + audit_purged)
 }
 
 /// Test-friendly variant: caller injects the `now` clock + retention

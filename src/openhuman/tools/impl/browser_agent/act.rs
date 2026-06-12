@@ -110,6 +110,13 @@ impl Tool for BrowserActTool {
                 "browser_act: no active session for this run",
             ));
         };
+
+        // F3-6 chunk 3: wall-clock cost cap.
+        if let Some(short_circuit) =
+            super::observe::check_wall_clock_cap(user_id, run_id, "browser_act", &args)
+        {
+            return Ok(short_circuit);
+        }
         // F3-6 chunk 1: read per-run safety metadata. `dry_run = true`
         // short-circuits each write verb before the CDP primitive
         // fires; the tool returns a description of what it WOULD have

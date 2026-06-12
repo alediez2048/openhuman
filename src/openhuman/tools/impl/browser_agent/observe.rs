@@ -104,6 +104,14 @@ impl Tool for BrowserObserveTool {
             ));
         };
 
+        // F3-6 chunk 3: wall-clock cost cap. Checked BEFORE any
+        // LLM-fanout work so a tripped cap doesn't pay for one more
+        // snapshot before halting.
+        if let Some(short_circuit) = check_wall_clock_cap(user_id, run_id, "browser_observe", &args)
+        {
+            return Ok(short_circuit);
+        }
+
         let snap = match snapshot(&session, SnapshotOptions::default()).await {
             Ok(s) => s,
             Err(e) => {
@@ -141,6 +149,46 @@ impl Tool for BrowserObserveTool {
         );
         Ok(ToolResult::success_with_markdown(payload, rendered))
     }
+}
+
+/// F3-6 chunk 3: shared wall-clock cap check. Tools call this at
+/// the top of `execute` BEFORE doing any LLM-fanout work (DOM
+/// snapshot, CDP click, regex parse). When the cap is exceeded the
+/// tool returns a structured `cost_cap_exceeded` ToolResult and the
+/// agent halts cleanly. Audit-logged with `[wall_clock_exceeded]`
+/// prefix so post-mortem inspection shows the trip point.
+///
+/// Returns `Some(error_result)` to short-circuit, `None` to continue.
+pub(super) fn check_wall_clock_cap(
+    user_id: &str,
+    run_id: &str,
+    tool_name: &str,
+    args: &Value,
+) -> Option<ToolResult> {
+    let meta = SessionRegistry::instance().get_meta(&user_id.to_string(), &run_id.to_string());
+    let cap = meta.wall_clock_cap?;
+    if !cap.is_exceeded() {
+        return None;
+    }
+    let elapsed = cap.started_at.elapsed().as_secs();
+    let body = json!({
+        "status": "cost_cap_exceeded",
+        "which": "wall_clock",
+        "elapsed_secs": elapsed,
+        "max_secs": cap.max_secs,
+    });
+    let markdown = format!(
+        "[COST CAP] wall_clock exceeded: {elapsed}s elapsed vs {}s allowed; stopping.",
+        cap.max_secs
+    );
+    emit_audit(
+        user_id,
+        run_id,
+        tool_name,
+        args,
+        &format!("[wall_clock_exceeded] {elapsed}s/{}s", cap.max_secs),
+    );
+    Some(ToolResult::success_with_markdown(body, markdown))
 }
 
 /// F3-6 chunk 2: shared audit-log writer. Reads `workspace_dir` from

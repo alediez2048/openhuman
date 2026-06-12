@@ -87,6 +87,14 @@ impl Tool for BrowserExtractTool {
                 "browser_extract: no active session for this run",
             ));
         };
+
+        // F3-6 chunk 3: wall-clock cost cap.
+        if let Some(short_circuit) =
+            super::observe::check_wall_clock_cap(user_id, run_id, "browser_extract", &args)
+        {
+            return Ok(short_circuit);
+        }
+
         let snap = match snapshot(&session, SnapshotOptions::default()).await {
             Ok(s) => s,
             Err(e) => return Ok(ToolResult::error(format!("browser_extract: {e}"))),

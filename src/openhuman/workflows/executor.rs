@@ -3788,6 +3788,12 @@ async fn execute_browser_action(
         crate::openhuman::browser_agent::registry::RunMeta {
             dry_run: browser_cfg.dry_run,
             workspace_dir: Some(config.workspace_dir.clone()),
+            wall_clock_cap: Some(
+                crate::openhuman::browser_agent::registry::WallClockCap {
+                    started_at: std::time::Instant::now(),
+                    max_secs: browser_cfg.max_session_wall_clock_secs as u64,
+                },
+            ),
         },
     );
 

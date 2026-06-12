@@ -96,6 +96,15 @@ export interface BrowserActionConfig {
    * before granting the workflow live browser writes.
    */
   dry_run?: boolean;
+  /**
+   * F3-6 chunk 3: hard upper bound on a single browser_action run's
+   * wall-clock duration. When exceeded, the next tool call returns
+   * `{ status: "cost_cap_exceeded", which: "wall_clock" }` and the node
+   * terminates. Validator clamps to [30, 3600]; default 600 (10 min).
+   * Catches runaway agent loops that iteration_cap alone doesn't bound
+   * (e.g. each iteration triggers a slow DOM snapshot on a heavy SPA).
+   */
+  max_session_wall_clock_secs?: number;
 }
 
 export type NodeConfig =
