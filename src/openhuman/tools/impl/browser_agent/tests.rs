@@ -163,10 +163,7 @@ async fn act_navigate_dispatches_page_navigate_and_returns_url() {
         nav_history_payload("https://example.com/landed"),
     );
     // F3-5 chunk 1: post-action preview frame.
-    mock.expect_ok(
-        "Page.captureScreenshot",
-        json!({ "data": "iVBORw0KGgo=" }),
-    );
+    mock.expect_ok("Page.captureScreenshot", json!({ "data": "iVBORw0KGgo=" }));
     install_session("u_act_nav", "r1", mock.clone()).await;
 
     let result = BrowserActTool::new()
@@ -197,10 +194,7 @@ async fn act_click_snapshots_then_dispatches_mouse_press_release() {
         nav_history_payload("https://example.com/page"),
     );
     // F3-5 chunk 1: post-action preview frame.
-    mock.expect_ok(
-        "Page.captureScreenshot",
-        json!({ "data": "iVBORw0KGgo=" }),
-    );
+    mock.expect_ok("Page.captureScreenshot", json!({ "data": "iVBORw0KGgo=" }));
     install_session("u_act_click", "r1", mock.clone()).await;
 
     let result = BrowserActTool::new()
@@ -259,10 +253,7 @@ async fn act_type_clicks_focus_then_inserts_text() {
         nav_history_payload("https://example.com/page"),
     );
     // F3-5 chunk 1: post-action preview frame.
-    mock.expect_ok(
-        "Page.captureScreenshot",
-        json!({ "data": "iVBORw0KGgo=" }),
-    );
+    mock.expect_ok("Page.captureScreenshot", json!({ "data": "iVBORw0KGgo=" }));
     install_session("u_act_type", "r1", mock.clone()).await;
 
     let result = BrowserActTool::new()
@@ -294,10 +285,7 @@ async fn act_scroll_dispatches_mouse_wheel() {
         nav_history_payload("https://example.com/page"),
     );
     // F3-5 chunk 1: post-action preview frame.
-    mock.expect_ok(
-        "Page.captureScreenshot",
-        json!({ "data": "iVBORw0KGgo=" }),
-    );
+    mock.expect_ok("Page.captureScreenshot", json!({ "data": "iVBORw0KGgo=" }));
     install_session("u_act_scroll", "r1", mock.clone()).await;
 
     let result = BrowserActTool::new()
@@ -779,10 +767,7 @@ async fn act_without_dry_run_flag_dispatches_normally() {
         nav_history_payload("https://example.com/page"),
     );
     // F3-5 chunk 1: post-action preview frame.
-    mock.expect_ok(
-        "Page.captureScreenshot",
-        json!({ "data": "iVBORw0KGgo=" }),
-    );
+    mock.expect_ok("Page.captureScreenshot", json!({ "data": "iVBORw0KGgo=" }));
     install_session("u_no_dry", "r1", mock.clone()).await;
     // NB: deliberately NOT calling set_meta — exercise the default.
 
