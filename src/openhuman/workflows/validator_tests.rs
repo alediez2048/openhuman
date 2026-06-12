@@ -1232,7 +1232,10 @@ fn browser_action_wall_clock_cap_clamped_to_30_3600_range() {
     cfg.max_session_wall_clock_secs = 86_400; // above ceiling
     p.nodes = vec![browser_node("b1", cfg)];
     let err = validate(&p, &snap, 3).unwrap_err();
-    assert!(matches!(err, ProposalValidationError::InvalidNodeConfig { .. }));
+    assert!(matches!(
+        err,
+        ProposalValidationError::InvalidNodeConfig { .. }
+    ));
 }
 
 #[test]

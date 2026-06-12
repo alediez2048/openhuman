@@ -48,17 +48,15 @@ pub const SWEEP_INTERVAL_SECS: u64 = 60 * 60;
 pub fn run_purge_sweep(config: &Config) -> Result<u32> {
     let workflows_purged = run_purge_sweep_with_now(config, Utc::now, DEFAULT_RETENTION_DAYS)?;
     let audit_cutoff = Utc::now() - Duration::days(DEFAULT_RETENTION_DAYS);
-    let audit_purged = crate::openhuman::browser_agent::safety::audit_log::purge_older_than(
-        config,
-        audit_cutoff,
-    )
-    .unwrap_or_else(|err| {
-        tracing::warn!(
-            target: "workflows-retention",
-            "[workflows-retention] audit purge failed (swallowed): {err:#}"
-        );
-        0
-    });
+    let audit_purged =
+        crate::openhuman::browser_agent::safety::audit_log::purge_older_than(config, audit_cutoff)
+            .unwrap_or_else(|err| {
+                tracing::warn!(
+                    target: "workflows-retention",
+                    "[workflows-retention] audit purge failed (swallowed): {err:#}"
+                );
+                0
+            });
     Ok(workflows_purged + audit_purged)
 }
 

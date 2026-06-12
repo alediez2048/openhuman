@@ -520,9 +520,7 @@ pub fn validate(
                 // pathological configs from making the run unusable;
                 // 1h ceiling prevents accidental "leave it running"
                 // configs from gobbling LLM tokens for hours).
-                if cfg.max_session_wall_clock_secs < 30
-                    || cfg.max_session_wall_clock_secs > 3600
-                {
+                if cfg.max_session_wall_clock_secs < 30 || cfg.max_session_wall_clock_secs > 3600 {
                     return Err(ProposalValidationError::InvalidNodeConfig {
                         node_id: node.id.clone(),
                         node_kind: node.kind,

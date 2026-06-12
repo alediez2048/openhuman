@@ -445,8 +445,7 @@ async fn observe_short_circuits_when_wall_clock_cap_exceeded() {
             workspace_dir: None,
             wall_clock_cap: Some(crate::openhuman::browser_agent::registry::WallClockCap {
                 // Set started_at to 1h ago + max_secs = 1 → already exceeded.
-                started_at: std::time::Instant::now()
-                    - std::time::Duration::from_secs(3600),
+                started_at: std::time::Instant::now() - std::time::Duration::from_secs(3600),
                 max_secs: 1,
             }),
         },
@@ -478,8 +477,7 @@ async fn act_short_circuits_when_wall_clock_cap_exceeded() {
             dry_run: false,
             workspace_dir: None,
             wall_clock_cap: Some(crate::openhuman::browser_agent::registry::WallClockCap {
-                started_at: std::time::Instant::now()
-                    - std::time::Duration::from_secs(3600),
+                started_at: std::time::Instant::now() - std::time::Duration::from_secs(3600),
                 max_secs: 1,
             }),
         },
