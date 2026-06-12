@@ -28,6 +28,8 @@
 
 pub mod audit_log;
 pub mod preamble;
+pub mod redaction;
 
 pub use audit_log::{list_for_run, write_entry, AuditLogEntry};
 pub use preamble::safety_preamble;
+pub use redaction::{redact_args_str, redact_url};

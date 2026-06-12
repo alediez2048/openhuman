@@ -208,12 +208,19 @@ pub(super) fn emit_audit(
         return;
     };
     let args_json = serde_json::to_string(args).unwrap_or_else(|_| "{}".into());
-    let entry = crate::openhuman::browser_agent::safety::AuditLogEntry::new(
+    // F3-6 chunk 4a: sweep sensitive fields out of args before
+    // persistence. Each redacted field counts toward
+    // `redacted_fields_count` on the row so the run-detail UI can
+    // surface that redaction ran.
+    let (redacted_args, redacted_count) =
+        crate::openhuman::browser_agent::safety::redact_args_str(&args_json);
+    let mut entry = crate::openhuman::browser_agent::safety::AuditLogEntry::new(
         run_id,
         tool_name,
-        args_json,
+        redacted_args,
         result_summary,
     );
+    entry.redacted_fields_count = redacted_count;
     let _ = crate::openhuman::browser_agent::safety::audit_log::write_entry_at(&workspace, entry);
 }
 
