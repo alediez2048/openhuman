@@ -1,6 +1,6 @@
 # Workflows & Automations — Current State
 
-**Last updated:** 2026-06-09 (Phase 4 backend + UI baseline shipped to fork)
+**Last updated:** 2026-06-22 (Phase 2.5 closure logged retroactively — shipped 2026-06-07; Phase 3.1 backend shipped 2026-06-12; Phase 4 backend + UI baseline shipped 2026-06-09)
 **Branch:** `main` on `alediez2048/openhuman` (the user's fork). Upstream `tinyhumansai/openhuman` not pushed to yet — this is private dev so far. Phase 1 + 2 rollup PR is the next upstream push.
 
 A fresh session should read this file first to know where the initiative stands.
@@ -15,7 +15,9 @@ A fresh session should read this file first to know where the initiative stands.
 
 **Phase 2 (Execution Depth) is SHIPPED** to `alediez2048/main` on 2026-05-26 (F2-1 → F2-17 + F2-7b + F2-9b + F2-16b). Multi-node chains, webhook/composio/channel triggers, retry policy, active_hours gate, 30-day soft-delete + retention sweep, 5 starter templates RU-5..RU-9, Appium live-test spec. See `Automations/Tickets/phase-2-execution/DEVLOG.md` for the full closure log.
 
-**Implementation order (revised 2026-05-26):** Phase 2 ✅ → **Phase 4 (Campaigns)** → Phase 3 (Browser Agent) → Phase 5 (Business Entities) → Phase 6 (Proactive Agent). Phase 4's slot was previously held by Canvas but Canvas was demand-gated and the demand never materialised; the 2026-05-26 grill replaced it with **Campaigns + Workflow UX** which is the user's actual ask. Canvas drafts preserved at `phase-4-canvas/` but marked superseded.
+**Phase 2.5 (Trust UX) is SHIPPED** to `alediez2048/main` on 2026-06-07 (T-1 → T-4 + T-2b). Drafted and closed in a single one-day burst (`8c71a155` draft → `53715266` final). Closes the user-facing trust gap exposed by the 2026-06-05/07 morning-email-digest debugging sessions: pre-flight validation on Save & Enable (model + tool slugs + connection auth probed synchronously, blocks save on failure), per-run outcome cards with delivery-receipt rendering + deep links, structured `FailureReason` catalog (`agent_narrated_without_acting`, `composio_upstream_rejected`, `model_unavailable`, `connection_expired`, `tool_slug_invalid`, `unknown`) persisted on every Failed run. Commits: `ee4ed025` (T-1), `465dec16` (T-2), `362d4595` (T-2b), `d5bc11f6` (T-3), `53715266` (T-4). See `Automations/Tickets/phase-2.5-trust-ux/README.md` for the gating rationale.
+
+**Implementation order (revised 2026-05-26):** Phase 2 ✅ → Phase 2.5 ✅ → **Phase 4 (Campaigns)** ✅ baseline → **Phase 3.1 (Browser Agent)** ✅ backend → Phase 3.2 / Phase 4 polish (NEXT) → Phase 5 (Business Entities) → Phase 6 (Proactive Agent). Phase 4's slot was previously held by Canvas but Canvas was demand-gated and the demand never materialised; the 2026-05-26 grill replaced it with **Campaigns + Workflow UX** which is the user's actual ask. Phase 2.5 was inserted between Phase 2 and Phase 4 on 2026-06-07 after the morning-email-digest debugging sessions exposed that workflow-status honesty (F-16/F-21) wasn't enough without the outcome-visibility UI on top. Canvas drafts preserved at `phase-4-canvas/` but marked superseded.
 
 **🟡 Phase 4 (Campaigns) backend + UI baseline SHIPPED to fork on 2026-06-09.** Hero stack landed in 12 ship cycles: F4-1 (types) → F4-2 (store) → F4-3a/b (ops + RPC + agent tools) → F4-4 (EntityStore trait) → F4-5 (Sheets) → F4-6 (Attio) → F4-7 (`for_each` executor) → F4-8 (throttle) → F4-9 (approval queue) → F4-10 (drafter prompt + `entity_schema_inspect`) → F4-11 (`/campaigns` list) → F4-12 (`/campaigns/:id` detail) → F4-13 (inline editors) → F4-17 (3 starter templates RU-10/11/12) → F4-18 (closure docs).
 
@@ -222,7 +224,7 @@ These predate the F-17..F-21 work and are confirmed reproducible on `29e662f5` w
 
 ## What a fresh session should do first
 
-**Default next action: start Phase 2.** F-17, F-18, F-19, F-20, F-21 all landed locally; Phase 1.5 is complete. Domain-scoped test sweeps all green: 524 composio + 202 workflows + 61 connections + 602 memory_tree + 68 agent + 12 mcp.
+**Default next action: pick between Phase 3.2 (Browser Agent frontend) and Phase 4 polish (F4-14..F4-18 hero E2E).** Phases 1, 2, 2.5, 4 baseline, and 3.1 backend are all shipped to fork. The remaining work is split between (a) the React `BrowserPreviewPanel` + per-action confirmation gate for Browser Agent so it can be used outside smoke tests, and (b) Phase 4 UI polish (per-node-kind editors, connection modal launcher, pinned chat context, hero E2E). The user's lived-experience pain point as of 2026-06-22 is restart stability — worth surfacing in the brainstorm before stacking more features. Domain-scoped test sweeps last verified green: 524 composio + 202 workflows + 61 connections + 602 memory_tree + 68 agent + 12 mcp.
 
 1. Read this file (`Automations/STATE.md`) to know where the initiative stands.
 2. Read `CLAUDE.md` for the repo-level commands + conventions.
